@@ -1,0 +1,16 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/core",
+    "crates/macros",
+    "crates/qbrs",
+    "crates/qbrs-sqlx",
+    "examples",
+    "tests/compile-bench",
+]
+
+[workspace.package]
+version = "0.0.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/RyutaroYako/qbrs"

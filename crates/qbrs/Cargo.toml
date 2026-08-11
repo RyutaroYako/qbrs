@@ -1,0 +1,10 @@
+[package]
+name = "qbrs"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "A Drizzle-style, type-safe SQL query builder for Rust."
+
+[dependencies]
+qbrs-core = { path = "../core" }
+qbrs-macros = { path = "../macros" }

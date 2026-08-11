@@ -1,0 +1,11 @@
+[package]
+name = "qbrs-examples"
+version.workspace = true
+edition.workspace = true
+publish = false
+
+[dependencies]
+qbrs = { path = "../crates/qbrs" }
+qbrs-sqlx = { path = "../crates/qbrs-sqlx" }
+sqlx = { version = "0.9", default-features = false, features = ["postgres", "runtime-tokio", "tls-rustls"] }
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }

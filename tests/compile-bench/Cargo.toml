@@ -1,0 +1,8 @@
+[package]
+name = "compile-bench"
+version.workspace = true
+edition.workspace = true
+publish = false
+
+[dependencies]
+qbrs-core = { path = "../../crates/core" }

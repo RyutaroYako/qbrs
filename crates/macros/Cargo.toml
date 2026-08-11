@@ -1,0 +1,14 @@
+[package]
+name = "qbrs-macros"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Proc macros for qbrs (schema derive, sql! escape hatch)."
+
+[lib]
+proc-macro = true
+
+[dependencies]
+proc-macro2 = "1.0.107"
+quote = "1.0.47"
+syn = { version = "3.0.3", features = ["full", "extra-traits"] }

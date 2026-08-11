@@ -1,0 +1,187 @@
+//! Hand-written `InsertRow`/`UpdateRow` impls (standing in for the derive
+//! macro) to validate INSERT/UPDATE/DELETE end-to-end.
+
+use qbrs_core::delete::delete;
+use qbrs_core::dialect::Postgres;
+use qbrs_core::expr::{ExprMethods, Value};
+use qbrs_core::insert::{Defaultable, InsertRow, InsertValue, insert};
+use qbrs_core::scope::Table as TableTrait;
+use qbrs_core::update::{UpdateRow, update};
+
+pub struct UsersMarker;
+impl TableTrait for UsersMarker {
+    const NAME: &'static str = "users";
+}
+
+#[allow(non_upper_case_globals, dead_code)]
+mod users {
+    use super::UsersMarker;
+    use qbrs_core::expr::{Column, Integer, Text};
+
+    pub const Table: UsersMarker = UsersMarker;
+    pub const id: Column<UsersMarker, Integer> = Column::new("id");
+    pub const email: Column<UsersMarker, Text> = Column::new("email");
+    pub const display_name: Column<UsersMarker, Text> = Column::new("display_name");
+}
+
+// What #[derive(Table)] will generate for:
+//   #[column(primary_key, generated)] id: i64
+//   #[column(not_null)]               email: String
+//   #[column(nullable)]               display_name: Option<String>
+//   #[column(not_null, default)]      created_at: String   (kept as String to avoid a chrono dep here)
+struct UsersInsert {
+    email: String,
+    display_name: Option<String>,
+    created_at: Defaultable<String>,
+}
+
+impl UsersInsert {
+    fn new(email: impl Into<String>) -> Self {
+        UsersInsert {
+            email: email.into(),
+            display_name: None,
+            created_at: Defaultable::Default,
+        }
+    }
+}
+
+impl InsertRow for UsersInsert {
+    type Table = UsersMarker;
+    const COLUMNS: &'static [&'static str] = &["email", "display_name", "created_at"];
+    fn into_values(self) -> Vec<InsertValue> {
+        vec![
+            InsertValue::Value(self.email.into()),
+            match self.display_name {
+                Some(v) => InsertValue::Value(v.into()),
+                None => InsertValue::Value(Value::NullText),
+            },
+            self.created_at.into(),
+        ]
+    }
+}
+
+#[derive(Default)]
+struct UsersUpdate {
+    email: Option<String>,
+    display_name: Option<Option<String>>,
+}
+
+impl UpdateRow for UsersUpdate {
+    type Table = UsersMarker;
+    fn sets(self) -> Vec<(&'static str, Value)> {
+        let mut v = Vec::new();
+        if let Some(email) = self.email {
+            v.push(("email", email.into()));
+        }
+        if let Some(display_name) = self.display_name {
+            v.push((
+                "display_name",
+                match display_name {
+                    Some(s) => s.into(),
+                    None => Value::NullText,
+                },
+            ));
+        }
+        v
+    }
+}
+
+#[test]
+fn insert_omits_default_as_the_default_keyword() {
+    let (sql, params) = insert::<Postgres, _>(users::Table)
+        .values(UsersInsert::new("a@example.com"))
+        .to_sql();
+    assert_eq!(
+        sql,
+        "INSERT INTO \"users\" (\"email\", \"display_name\", \"created_at\") VALUES ($1, $2, DEFAULT)"
+    );
+    assert_eq!(
+        params,
+        vec![Value::Text("a@example.com".into()), Value::NullText]
+    );
+}
+
+#[test]
+fn insert_bulk_and_returning() {
+    let (sql, _params) = insert::<Postgres, _>(users::Table)
+        .values(UsersInsert::new("a@example.com"))
+        .values(UsersInsert::new("b@example.com"))
+        .returning(users::id)
+        .to_sql();
+    assert_eq!(
+        sql,
+        "INSERT INTO \"users\" (\"email\", \"display_name\", \"created_at\") VALUES ($1, $2, DEFAULT), ($3, $4, DEFAULT) RETURNING \"users\".\"id\""
+    );
+}
+
+#[test]
+fn update_only_touches_set_fields() {
+    let (sql, params) = update::<Postgres, _>(users::Table)
+        .set(UsersUpdate {
+            email: Some("new@example.com".into()),
+            display_name: None,
+        })
+        .filter(users::id.eq(1))
+        .to_sql();
+    assert_eq!(
+        sql,
+        "UPDATE \"users\" SET \"email\" = $1 WHERE (\"users\".\"id\" = $2)"
+    );
+    assert_eq!(
+        params,
+        vec![Value::Text("new@example.com".into()), Value::I32(1)]
+    );
+}
+
+#[test]
+fn upsert_do_nothing_renders_conflict_target() {
+    let (sql, params) = insert::<Postgres, _>(users::Table)
+        .values(UsersInsert::new("a@example.com"))
+        .on_conflict_do_nothing(users::email)
+        .to_sql();
+    assert_eq!(
+        sql,
+        "INSERT INTO \"users\" (\"email\", \"display_name\", \"created_at\") VALUES ($1, $2, DEFAULT) ON CONFLICT (\"email\") DO NOTHING"
+    );
+    assert_eq!(
+        params,
+        vec![Value::Text("a@example.com".into()), Value::NullText]
+    );
+}
+
+#[test]
+fn upsert_do_update_reuses_update_row_and_supports_returning() {
+    let (sql, params) = insert::<Postgres, _>(users::Table)
+        .values(UsersInsert::new("a@example.com"))
+        .on_conflict_do_update(
+            users::email,
+            UsersUpdate {
+                display_name: Some(Some("A".into())),
+                ..Default::default()
+            },
+        )
+        .returning(users::id)
+        .to_sql();
+    assert_eq!(
+        sql,
+        "INSERT INTO \"users\" (\"email\", \"display_name\", \"created_at\") VALUES ($1, $2, DEFAULT) \
+         ON CONFLICT (\"email\") DO UPDATE SET \"display_name\" = $3 RETURNING \"users\".\"id\""
+    );
+    assert_eq!(
+        params,
+        vec![
+            Value::Text("a@example.com".into()),
+            Value::NullText,
+            Value::Text("A".into()),
+        ]
+    );
+}
+
+#[test]
+fn delete_renders_where() {
+    let (sql, params) = delete::<Postgres, _>(users::Table)
+        .filter(users::id.eq(1))
+        .to_sql();
+    assert_eq!(sql, "DELETE FROM \"users\" WHERE (\"users\".\"id\" = $1)");
+    assert_eq!(params, vec![Value::I32(1)]);
+}

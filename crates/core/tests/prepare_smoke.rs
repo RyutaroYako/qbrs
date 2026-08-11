@@ -1,0 +1,80 @@
+//! `prepare!{}`: named, typed placeholders resolved at `.execute()` time
+//! rather than baked in at query-build time — the last Phase 2 item.
+
+use qbrs_core::dialect::Postgres;
+use qbrs_core::expr::{ExprMethods, Text};
+use qbrs_core::prepare;
+use qbrs_core::scope::Table as TableTrait;
+use qbrs_core::select::select;
+
+pub struct UsersMarker;
+impl TableTrait for UsersMarker {
+    const NAME: &'static str = "users";
+}
+
+#[allow(non_upper_case_globals)]
+mod users {
+    use super::UsersMarker;
+    use qbrs_core::expr::{Column, Text};
+    pub const Table: UsersMarker = UsersMarker;
+    pub const email: Column<UsersMarker, Text> = Column::new("email");
+}
+
+prepare! {
+    struct ByEmail { email: Text }
+}
+
+#[test]
+fn prepared_query_resolves_named_placeholder() {
+    let query = select((users::email,))
+        .from::<Postgres, _>(users::Table)
+        .filter(users::email.eq(ByEmail::email()))
+        .prepare::<ByEmail, _>();
+
+    let (sql, params) = query
+        .resolve(ByEmail {
+            email: "a@example.com".to_string(),
+        })
+        .expect("resolve");
+    assert_eq!(
+        sql,
+        "SELECT \"users\".\"email\" FROM \"users\" WHERE (\"users\".\"email\" = $1)"
+    );
+    assert_eq!(
+        params,
+        vec![qbrs_core::expr::Value::Text("a@example.com".to_string())]
+    );
+
+    // Same `Prepared` value, reused with a different `Params` — the SQL
+    // text (and its placeholder position) doesn't change, only the bound
+    // value does.
+    let (sql2, params2) = query
+        .resolve(ByEmail {
+            email: "b@example.com".to_string(),
+        })
+        .expect("resolve again");
+    assert_eq!(sql2, sql);
+    assert_eq!(
+        params2,
+        vec![qbrs_core::expr::Value::Text("b@example.com".to_string())]
+    );
+}
+
+#[test]
+fn missing_placeholder_is_a_typed_error_not_a_panic() {
+    // Hand-built with a name that doesn't match `ByEmail`'s field, bypassing
+    // the macro's by-construction guarantee on purpose, to prove the
+    // mismatch is a recoverable `Result::Err`, not a panic.
+    let bogus = qbrs_core::expr::placeholder::<Text>("not_email");
+    let query = select((users::email,))
+        .from::<Postgres, _>(users::Table)
+        .filter(users::email.eq(bogus))
+        .prepare::<ByEmail, _>();
+
+    let err = query
+        .resolve(ByEmail {
+            email: "a@example.com".to_string(),
+        })
+        .unwrap_err();
+    assert_eq!(err.0, "not_email");
+}

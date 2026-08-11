@@ -1,0 +1,19 @@
+[package]
+name = "qbrs-sqlx"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "sqlx-based execution integration for qbrs (Postgres)."
+
+[dependencies]
+qbrs-core = { path = "../core" }
+
+[dependencies.sqlx]
+version = "0.9"
+default-features = false
+features = ["postgres", "runtime-tokio", "tls-rustls"]
+
+[dev-dependencies]
+postgresql_embedded = { version = "0.21.0", features = ["tokio"] }
+qbrs = { path = "../qbrs" }
+tokio = { version = "1.53.1", features = ["full"] }

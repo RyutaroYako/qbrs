@@ -1,0 +1,122 @@
+//! `UNION`/`UNION ALL`/`INTERSECT`/`EXCEPT` between two `Select`s with
+//! different `Scope`s (different source tables) but the same output shape.
+
+use qbrs_core::dialect::Postgres;
+use qbrs_core::expr::ExprMethods;
+use qbrs_core::scope::Table as TableTrait;
+use qbrs_core::select::select;
+
+pub struct UsersMarker;
+impl TableTrait for UsersMarker {
+    const NAME: &'static str = "users";
+}
+
+pub struct ArchivedUsersMarker;
+impl TableTrait for ArchivedUsersMarker {
+    const NAME: &'static str = "archived_users";
+}
+
+#[allow(non_upper_case_globals)]
+mod users {
+    use super::UsersMarker;
+    use qbrs_core::expr::{Column, Integer, Text};
+
+    pub const Table: UsersMarker = UsersMarker;
+    pub const id: Column<UsersMarker, Integer> = Column::new("id");
+    pub const email: Column<UsersMarker, Text> = Column::new("email");
+}
+
+#[allow(non_upper_case_globals)]
+mod archived_users {
+    use super::ArchivedUsersMarker;
+    use qbrs_core::expr::{Column, Integer, Text};
+
+    pub const Table: ArchivedUsersMarker = ArchivedUsersMarker;
+    pub const id: Column<ArchivedUsersMarker, Integer> = Column::new("id");
+    pub const email: Column<ArchivedUsersMarker, Text> = Column::new("email");
+}
+
+#[test]
+fn union_combines_two_different_scopes_and_renumbers_params() {
+    // Each branch has its own bound parameter — proves placeholders get
+    // renumbered across the splice, not just copied verbatim (which would
+    // collide on `$1` twice).
+    let live = select((users::id, users::email))
+        .from::<Postgres, _>(users::Table)
+        .filter(users::id.gt(10));
+    let archived = select((archived_users::id, archived_users::email))
+        .from::<Postgres, _>(archived_users::Table)
+        .filter(archived_users::id.gt(20));
+
+    let (sql, params) = live.union(&archived).to_sql();
+    assert_eq!(
+        sql,
+        "(SELECT \"users\".\"id\", \"users\".\"email\" FROM \"users\" WHERE (\"users\".\"id\" > $1)) \
+         UNION \
+         (SELECT \"archived_users\".\"id\", \"archived_users\".\"email\" FROM \"archived_users\" WHERE (\"archived_users\".\"id\" > $2))"
+    );
+    assert_eq!(
+        params,
+        vec![
+            qbrs_core::expr::Value::I32(10),
+            qbrs_core::expr::Value::I32(20)
+        ]
+    );
+}
+
+#[test]
+fn union_all_intersect_except_use_their_own_keywords() {
+    let a = select((users::id,)).from::<Postgres, _>(users::Table);
+    let b = select((archived_users::id,)).from::<Postgres, _>(archived_users::Table);
+
+    assert_eq!(
+        a.union_all(&b).to_sql().0,
+        "(SELECT \"users\".\"id\" FROM \"users\") UNION ALL (SELECT \"archived_users\".\"id\" FROM \"archived_users\")"
+    );
+    assert_eq!(
+        a.intersect(&b).to_sql().0,
+        "(SELECT \"users\".\"id\" FROM \"users\") INTERSECT (SELECT \"archived_users\".\"id\" FROM \"archived_users\")"
+    );
+    assert_eq!(
+        a.except(&b).to_sql().0,
+        "(SELECT \"users\".\"id\" FROM \"users\") EXCEPT (SELECT \"archived_users\".\"id\" FROM \"archived_users\")"
+    );
+}
+
+#[test]
+fn chained_set_ops_and_ordinal_order_by_limit_offset() {
+    let a = select((users::id,)).from::<Postgres, _>(users::Table);
+    let b = select((archived_users::id,)).from::<Postgres, _>(archived_users::Table);
+    let c = select((users::id,))
+        .from::<Postgres, _>(users::Table)
+        .filter(users::id.eq(1));
+
+    let (sql, params) = a
+        .union(&b)
+        .union_all(&c)
+        .order_by(1, qbrs_core::select::SortDir::Desc)
+        .limit(5)
+        .offset(2)
+        .to_sql();
+    assert_eq!(
+        sql,
+        "(SELECT \"users\".\"id\" FROM \"users\") \
+         UNION (SELECT \"archived_users\".\"id\" FROM \"archived_users\") \
+         UNION ALL (SELECT \"users\".\"id\" FROM \"users\" WHERE (\"users\".\"id\" = $1)) \
+         ORDER BY 1 DESC LIMIT 5 OFFSET 2"
+    );
+    assert_eq!(params, vec![qbrs_core::expr::Value::I32(1)]);
+}
+
+// Uncomment to eyeball the compile error for mismatched output shapes
+// (confirmed working — kept out of the normal test run since it's meant to
+// fail): `users::email` (Text) vs. `archived_users::id` (Integer) — the two
+// branches' `Selection::Output` types differ, so this is a compile error,
+// not a runtime "column count/type mismatch" surprise.
+//
+// #[test]
+// fn mismatched_output_shape_is_a_compile_error() {
+//     let a = select((users::email,)).from::<Postgres, _>(users::Table);
+//     let b = select((archived_users::id,)).from::<Postgres, _>(archived_users::Table);
+//     let _ = a.union(&b); // error[E0271]: type mismatch resolving `<... as Selection<...>>::Output == (String,)`
+// }
