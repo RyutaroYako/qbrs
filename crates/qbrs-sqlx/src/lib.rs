@@ -16,6 +16,35 @@ use qbrs_core::update::{Update, UpdateReturning};
 use sqlx::Row;
 use sqlx::postgres::PgRow;
 
+/// Errors from executing a qbrs query against Postgres via `sqlx`.
+///
+/// Kept as a real enum (rather than surfacing raw `sqlx::Error` for
+/// everything) so a qbrs-level misuse — an unresolved `prepare!{}`
+/// placeholder — is distinguishable from an actual driver/database error
+/// without string-matching a message. Previously both cases collapsed into
+/// `sqlx::Error::Configuration(String)`, which looked identical to a real
+/// sqlx-level configuration problem.
+#[derive(Debug, thiserror::Error)]
+pub enum Error {
+    /// A real error from Postgres or the `sqlx` driver: a failed
+    /// connection, constraint violation, decode failure, etc.
+    #[error(transparent)]
+    Sqlx(#[from] sqlx::Error),
+
+    /// A named placeholder built via `prepare!{}` was never resolved
+    /// before execution — either `Prepared::resolve()` found no matching
+    /// field in `Params`, or `.load()`/`.execute()` was called directly on
+    /// a query still holding an unresolved `Value::Placeholder` instead of
+    /// going through `.prepare()` + `Prepared::resolve()`. Not a driver
+    /// error, so kept out of the `Sqlx` variant.
+    #[error(transparent)]
+    UnresolvedPlaceholder(#[from] qbrs_core::select::UnresolvedPlaceholder),
+}
+
+/// This crate's `Result`, parameterized only over the success type — same
+/// shape as `sqlx::Result`, with `qbrs_sqlx::Error` as the fixed error type.
+pub type Result<T> = std::result::Result<T, Error>;
+
 /// Binds a closed `Value` to a real Postgres query parameter. Typed `NullX`
 /// variants (see `qbrs_core::expr::Value`'s doc comment) are what make this
 /// possible without knowing the surrounding column's type separately —
@@ -28,13 +57,13 @@ use sqlx::postgres::PgRow;
 /// `Prepared::resolve()` before execution (e.g. `.load()` was called
 /// directly on a query built with the low-level, doc-hidden
 /// `expr::placeholder()` instead of going through `.prepare()`) — a real
-/// misuse this crate can't prevent at compile time, so it's surfaced as a
-/// `sqlx::Error` here rather than silently binding the wrong thing or
-/// panicking.
+/// misuse this crate can't prevent at compile time, so it's surfaced as an
+/// `Error::UnresolvedPlaceholder` here rather than silently binding the
+/// wrong thing or panicking.
 fn bind_value<'q>(
     query: sqlx::query::Query<'q, sqlx::Postgres, sqlx::postgres::PgArguments>,
     v: Value,
-) -> sqlx::Result<sqlx::query::Query<'q, sqlx::Postgres, sqlx::postgres::PgArguments>> {
+) -> Result<sqlx::query::Query<'q, sqlx::Postgres, sqlx::postgres::PgArguments>> {
     Ok(match v {
         Value::I32(x) => query.bind(x),
         Value::I64(x) => query.bind(x),
@@ -49,14 +78,7 @@ fn bind_value<'q>(
         Value::NullBool => query.bind(None::<bool>),
         Value::NullBytes => query.bind(None::<Vec<u8>>),
         Value::Placeholder(name) => {
-            return Err(sqlx::Error::Configuration(
-                format!(
-                    "unresolved placeholder `{name}` reached execution — \
-                     did you mean to call `.prepare()` + `Prepared::resolve(params)` \
-                     instead of executing this query directly?"
-                )
-                .into(),
-            ));
+            return Err(qbrs_core::select::UnresolvedPlaceholder(name).into());
         }
     })
 }
@@ -64,7 +86,7 @@ fn bind_value<'q>(
 fn bind_all<'q>(
     mut query: sqlx::query::Query<'q, sqlx::Postgres, sqlx::postgres::PgArguments>,
     params: Vec<Value>,
-) -> sqlx::Result<sqlx::query::Query<'q, sqlx::Postgres, sqlx::postgres::PgArguments>> {
+) -> Result<sqlx::query::Query<'q, sqlx::Postgres, sqlx::postgres::PgArguments>> {
     for p in params {
         query = bind_value(query, p)?;
     }
@@ -198,29 +220,33 @@ async fn fetch_all<'e, Scope, Idx, Sel: PgDecode<Scope, Idx>, E: sqlx::PgExecuto
     executor: E,
     sql: &str,
     params: Vec<Value>,
-) -> sqlx::Result<Vec<Sel::Output>> {
+) -> Result<Vec<Sel::Output>> {
     let rows = bind_all(sqlx::query(sqlx::AssertSqlSafe(sql)), params)?
         .fetch_all(executor)
         .await?;
-    rows.iter().map(|row| Sel::decode_at(row, &mut 0)).collect()
+    rows.iter()
+        .map(|row| Sel::decode_at(row, &mut 0).map_err(Error::from))
+        .collect()
 }
 
 async fn fetch_optional<'e, Scope, Idx, Sel: PgDecode<Scope, Idx>, E: sqlx::PgExecutor<'e>>(
     executor: E,
     sql: &str,
     params: Vec<Value>,
-) -> sqlx::Result<Option<Sel::Output>> {
+) -> Result<Option<Sel::Output>> {
     let row = bind_all(sqlx::query(sqlx::AssertSqlSafe(sql)), params)?
         .fetch_optional(executor)
         .await?;
-    row.as_ref().map(|r| Sel::decode_at(r, &mut 0)).transpose()
+    row.as_ref()
+        .map(|r| Sel::decode_at(r, &mut 0).map_err(Error::from))
+        .transpose()
 }
 
 async fn execute_only<'e, E: sqlx::PgExecutor<'e>>(
     executor: E,
     sql: &str,
     params: Vec<Value>,
-) -> sqlx::Result<u64> {
+) -> Result<u64> {
     let result = bind_all(sqlx::query(sqlx::AssertSqlSafe(sql)), params)?
         .execute(executor)
         .await?;
@@ -240,20 +266,17 @@ pub trait LoadExt<Idx> {
     fn load<'e, E: sqlx::PgExecutor<'e>>(
         &self,
         executor: E,
-    ) -> impl std::future::Future<Output = sqlx::Result<Vec<Self::Output>>>;
+    ) -> impl std::future::Future<Output = Result<Vec<Self::Output>>>;
     fn load_one<'e, E: sqlx::PgExecutor<'e>>(
         &self,
         executor: E,
-    ) -> impl std::future::Future<Output = sqlx::Result<Option<Self::Output>>>;
+    ) -> impl std::future::Future<Output = Result<Option<Self::Output>>>;
 }
 
 impl<Scope, Sel: PgDecode<Scope, Idx>, Idx> LoadExt<Idx> for Select<Postgres, Scope, Sel> {
     type Output = Sel::Output;
 
-    async fn load<'e, E: sqlx::PgExecutor<'e>>(
-        &self,
-        executor: E,
-    ) -> sqlx::Result<Vec<Self::Output>> {
+    async fn load<'e, E: sqlx::PgExecutor<'e>>(&self, executor: E) -> Result<Vec<Self::Output>> {
         let (sql, params) = self.to_sql::<Idx>();
         fetch_all::<Scope, Idx, Sel, E>(executor, &sql, params).await
     }
@@ -261,7 +284,7 @@ impl<Scope, Sel: PgDecode<Scope, Idx>, Idx> LoadExt<Idx> for Select<Postgres, Sc
     async fn load_one<'e, E: sqlx::PgExecutor<'e>>(
         &self,
         executor: E,
-    ) -> sqlx::Result<Option<Self::Output>> {
+    ) -> Result<Option<Self::Output>> {
         let (sql, params) = self.to_sql::<Idx>();
         fetch_optional::<Scope, Idx, Sel, E>(executor, &sql, params).await
     }
@@ -271,25 +294,25 @@ pub trait ExecuteExt {
     fn execute<'e, E: sqlx::PgExecutor<'e>>(
         &self,
         executor: E,
-    ) -> impl std::future::Future<Output = sqlx::Result<u64>>;
+    ) -> impl std::future::Future<Output = Result<u64>>;
 }
 
 impl<T: Table, R: InsertRow<Table = T>> ExecuteExt for Insert<Postgres, T, R> {
-    async fn execute<'e, E: sqlx::PgExecutor<'e>>(&self, executor: E) -> sqlx::Result<u64> {
+    async fn execute<'e, E: sqlx::PgExecutor<'e>>(&self, executor: E) -> Result<u64> {
         let (sql, params) = self.to_sql();
         execute_only(executor, &sql, params).await
     }
 }
 
 impl<T: Table> ExecuteExt for Update<Postgres, T> {
-    async fn execute<'e, E: sqlx::PgExecutor<'e>>(&self, executor: E) -> sqlx::Result<u64> {
+    async fn execute<'e, E: sqlx::PgExecutor<'e>>(&self, executor: E) -> Result<u64> {
         let (sql, params) = self.to_sql();
         execute_only(executor, &sql, params).await
     }
 }
 
 impl<T: Table> ExecuteExt for Delete<Postgres, T> {
-    async fn execute<'e, E: sqlx::PgExecutor<'e>>(&self, executor: E) -> sqlx::Result<u64> {
+    async fn execute<'e, E: sqlx::PgExecutor<'e>>(&self, executor: E) -> Result<u64> {
         let (sql, params) = self.to_sql();
         execute_only(executor, &sql, params).await
     }
@@ -300,7 +323,7 @@ pub trait LoadReturningExt<Idx> {
     fn load<'e, E: sqlx::PgExecutor<'e>>(
         &self,
         executor: E,
-    ) -> impl std::future::Future<Output = sqlx::Result<Vec<Self::Output>>>;
+    ) -> impl std::future::Future<Output = Result<Vec<Self::Output>>>;
 }
 
 impl<T: Table, R: InsertRow<Table = T>, Sel, Idx> LoadReturningExt<Idx>
@@ -315,10 +338,7 @@ where
         >,
 {
     type Output = Sel::Output;
-    async fn load<'e, E: sqlx::PgExecutor<'e>>(
-        &self,
-        executor: E,
-    ) -> sqlx::Result<Vec<Self::Output>> {
+    async fn load<'e, E: sqlx::PgExecutor<'e>>(&self, executor: E) -> Result<Vec<Self::Output>> {
         let (sql, params) = self.to_sql();
         fetch_all::<
             qbrs_core::scope::Cons<
@@ -344,10 +364,7 @@ where
         >,
 {
     type Output = Sel::Output;
-    async fn load<'e, E: sqlx::PgExecutor<'e>>(
-        &self,
-        executor: E,
-    ) -> sqlx::Result<Vec<Self::Output>> {
+    async fn load<'e, E: sqlx::PgExecutor<'e>>(&self, executor: E) -> Result<Vec<Self::Output>> {
         let (sql, params) = self.to_sql();
         fetch_all::<
             qbrs_core::scope::Cons<
@@ -373,10 +390,7 @@ where
         >,
 {
     type Output = Sel::Output;
-    async fn load<'e, E: sqlx::PgExecutor<'e>>(
-        &self,
-        executor: E,
-    ) -> sqlx::Result<Vec<Self::Output>> {
+    async fn load<'e, E: sqlx::PgExecutor<'e>>(&self, executor: E) -> Result<Vec<Self::Output>> {
         let (sql, params) = self.to_sql();
         fetch_all::<
             qbrs_core::scope::Cons<
@@ -476,18 +490,18 @@ pub trait LoadDynExt {
     fn load<'e, E: sqlx::PgExecutor<'e>>(
         &self,
         executor: E,
-    ) -> impl std::future::Future<Output = sqlx::Result<Vec<Self::Output>>>;
+    ) -> impl std::future::Future<Output = Result<Vec<Self::Output>>>;
 }
 
 impl<Output: DecodeRow> LoadDynExt for DynSelect<Postgres, Output> {
     type Output = Output;
-    async fn load<'e, E: sqlx::PgExecutor<'e>>(&self, executor: E) -> sqlx::Result<Vec<Output>> {
+    async fn load<'e, E: sqlx::PgExecutor<'e>>(&self, executor: E) -> Result<Vec<Output>> {
         let (sql, params) = self.to_sql();
         let rows = bind_all(sqlx::query(sqlx::AssertSqlSafe(sql.as_str())), params)?
             .fetch_all(executor)
             .await?;
         rows.iter()
-            .map(|row| Output::decode_at(row, &mut 0))
+            .map(|row| Output::decode_at(row, &mut 0).map_err(Error::from))
             .collect()
     }
 }
@@ -504,18 +518,18 @@ pub trait LoadSetOpExt {
     fn load<'e, E: sqlx::PgExecutor<'e>>(
         &self,
         executor: E,
-    ) -> impl std::future::Future<Output = sqlx::Result<Vec<Self::Output>>>;
+    ) -> impl std::future::Future<Output = Result<Vec<Self::Output>>>;
 }
 
 impl<Output: DecodeRow> LoadSetOpExt for SetOp<Postgres, Output> {
     type Output = Output;
-    async fn load<'e, E: sqlx::PgExecutor<'e>>(&self, executor: E) -> sqlx::Result<Vec<Output>> {
+    async fn load<'e, E: sqlx::PgExecutor<'e>>(&self, executor: E) -> Result<Vec<Output>> {
         let (sql, params) = self.to_sql();
         let rows = bind_all(sqlx::query(sqlx::AssertSqlSafe(sql.as_str())), params)?
             .fetch_all(executor)
             .await?;
         rows.iter()
-            .map(|row| Output::decode_at(row, &mut 0))
+            .map(|row| Output::decode_at(row, &mut 0).map_err(Error::from))
             .collect()
     }
 }
@@ -531,7 +545,7 @@ pub trait PreparedExt<Params> {
         &self,
         executor: E,
         params: Params,
-    ) -> impl std::future::Future<Output = sqlx::Result<Vec<Self::Output>>>;
+    ) -> impl std::future::Future<Output = Result<Vec<Self::Output>>>;
 }
 
 impl<Params: PreparedParams, Output: DecodeRow> PreparedExt<Params> for Prepared<Params, Output> {
@@ -540,15 +554,46 @@ impl<Params: PreparedParams, Output: DecodeRow> PreparedExt<Params> for Prepared
         &self,
         executor: E,
         params: Params,
-    ) -> sqlx::Result<Vec<Output>> {
-        let (sql, values) = self
-            .resolve(params)
-            .map_err(|e| sqlx::Error::Configuration(e.to_string().into()))?;
+    ) -> Result<Vec<Output>> {
+        let (sql, values) = self.resolve(params)?;
         let rows = bind_all(sqlx::query(sqlx::AssertSqlSafe(sql.as_str())), values)?
             .fetch_all(executor)
             .await?;
         rows.iter()
-            .map(|row| Output::decode_at(row, &mut 0))
+            .map(|row| Output::decode_at(row, &mut 0).map_err(Error::from))
             .collect()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // No real Postgres needed: `bind_all`/`bind_value` only inspect the
+    // `Value` enum before ever reaching the network, so the misuse case
+    // (executing a query with an unresolved `prepare!{}` placeholder) is
+    // reachable — and its error type checkable — without a live DB.
+    #[test]
+    fn unresolved_placeholder_is_a_typed_error_not_a_sqlx_configuration_string() {
+        let query = sqlx::query(sqlx::AssertSqlSafe("SELECT $1"));
+        let err = match bind_all(query, vec![Value::Placeholder("email")]) {
+            Err(e) => e,
+            Ok(_) => panic!("unresolved placeholder must fail to bind"),
+        };
+
+        assert!(matches!(
+            err,
+            Error::UnresolvedPlaceholder(qbrs_core::select::UnresolvedPlaceholder("email"))
+        ));
+        // `Error` is a real `std::error::Error`, not just a `Debug`/`Display`
+        // pair, so callers can use it with `anyhow`/`Box<dyn Error>`/etc.
+        let _: &dyn std::error::Error = &err;
+        assert_eq!(err.to_string(), "no value provided for placeholder `email`");
+    }
+
+    #[test]
+    fn sqlx_errors_convert_via_from() {
+        let err: Error = sqlx::Error::RowNotFound.into();
+        assert!(matches!(err, Error::Sqlx(sqlx::Error::RowNotFound)));
     }
 }

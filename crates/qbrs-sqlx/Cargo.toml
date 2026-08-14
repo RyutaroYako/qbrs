@@ -7,6 +7,7 @@ description = "sqlx-based execution integration for qbrs (Postgres)."
 
 [dependencies]
 qbrs-core = { path = "../core" }
+thiserror = "2"
 
 [dependencies.sqlx]
 version = "0.9"
