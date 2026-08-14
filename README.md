@@ -159,6 +159,13 @@ complete, runnable code for everything below.
       .await?;
   tx.commit().await?;
   ```
+- **Errors** — every `.load()`/`.execute()` returns `qbrs_sqlx::Result<T>`
+  (`= Result<T, qbrs_sqlx::Error>`), not a raw `sqlx::Result`. `Error` has
+  two variants: `Sqlx` (a real driver/database error) and
+  `UnresolvedPlaceholder` (a `prepare!{}` placeholder with no matching
+  value — a qbrs-level misuse, not a database error). Keeping these
+  distinct means a caller can `match` on the cause instead of
+  string-matching an error message.
 
 ## Known limitations
 

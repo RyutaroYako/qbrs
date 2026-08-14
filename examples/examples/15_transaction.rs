@@ -11,7 +11,7 @@ use qbrs_sqlx::{ExecuteExt, LoadExt, LoadReturningExt};
 
 #[tokio::main]
 async fn main() {
-    let pool = setup_db().await;
+    let (pool, _db) = setup_db().await;
 
     // Commit: an order only exists once the user that owns it does, so both
     // inserts either land together or not at all.
