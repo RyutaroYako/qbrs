@@ -13,8 +13,8 @@ use qbrs_core::insert::{Insert, InsertReturning, InsertRow};
 use qbrs_core::scope::{Superset, Table};
 use qbrs_core::select::{DynSelect, Prepared, PreparedParams, Select, Selection, SetOp};
 use qbrs_core::update::{Update, UpdateReturning};
+use sqlx::Row;
 use sqlx::postgres::PgRow;
-use sqlx::{PgPool, Row};
 
 /// Binds a closed `Value` to a real Postgres query parameter. Typed `NullX`
 /// variants (see `qbrs_core::expr::Value`'s doc comment) are what make this
@@ -188,31 +188,41 @@ impl<
     }
 }
 
-async fn fetch_all<Scope, Idx, Sel: PgDecode<Scope, Idx>>(
-    pool: &PgPool,
+/// Generic over `E: sqlx::PgExecutor` (rather than hardcoding `&PgPool`) so
+/// every public `.load()`/`.execute()` method here works unchanged against
+/// either a plain `&PgPool` or a `&mut sqlx::PgTransaction<'_>` — sqlx
+/// itself only implements `Executor` for `&mut PgConnection` (which
+/// `Transaction` derefs to), not `Transaction` directly, so callers pass
+/// `&mut *tx`, matching sqlx's own transaction usage pattern.
+async fn fetch_all<'e, Scope, Idx, Sel: PgDecode<Scope, Idx>, E: sqlx::PgExecutor<'e>>(
+    executor: E,
     sql: &str,
     params: Vec<Value>,
 ) -> sqlx::Result<Vec<Sel::Output>> {
     let rows = bind_all(sqlx::query(sqlx::AssertSqlSafe(sql)), params)?
-        .fetch_all(pool)
+        .fetch_all(executor)
         .await?;
     rows.iter().map(|row| Sel::decode_at(row, &mut 0)).collect()
 }
 
-async fn fetch_optional<Scope, Idx, Sel: PgDecode<Scope, Idx>>(
-    pool: &PgPool,
+async fn fetch_optional<'e, Scope, Idx, Sel: PgDecode<Scope, Idx>, E: sqlx::PgExecutor<'e>>(
+    executor: E,
     sql: &str,
     params: Vec<Value>,
 ) -> sqlx::Result<Option<Sel::Output>> {
     let row = bind_all(sqlx::query(sqlx::AssertSqlSafe(sql)), params)?
-        .fetch_optional(pool)
+        .fetch_optional(executor)
         .await?;
     row.as_ref().map(|r| Sel::decode_at(r, &mut 0)).transpose()
 }
 
-async fn execute_only(pool: &PgPool, sql: &str, params: Vec<Value>) -> sqlx::Result<u64> {
+async fn execute_only<'e, E: sqlx::PgExecutor<'e>>(
+    executor: E,
+    sql: &str,
+    params: Vec<Value>,
+) -> sqlx::Result<u64> {
     let result = bind_all(sqlx::query(sqlx::AssertSqlSafe(sql)), params)?
-        .execute(pool)
+        .execute(executor)
         .await?;
     Ok(result.rows_affected())
 }
@@ -227,60 +237,69 @@ async fn execute_only(pool: &PgPool, sql: &str, params: Vec<Value>) -> sqlx::Res
 /// `Superset`'s own indices.
 pub trait LoadExt<Idx> {
     type Output;
-    fn load(
+    fn load<'e, E: sqlx::PgExecutor<'e>>(
         &self,
-        pool: &PgPool,
+        executor: E,
     ) -> impl std::future::Future<Output = sqlx::Result<Vec<Self::Output>>>;
-    fn load_one(
+    fn load_one<'e, E: sqlx::PgExecutor<'e>>(
         &self,
-        pool: &PgPool,
+        executor: E,
     ) -> impl std::future::Future<Output = sqlx::Result<Option<Self::Output>>>;
 }
 
 impl<Scope, Sel: PgDecode<Scope, Idx>, Idx> LoadExt<Idx> for Select<Postgres, Scope, Sel> {
     type Output = Sel::Output;
 
-    async fn load(&self, pool: &PgPool) -> sqlx::Result<Vec<Self::Output>> {
+    async fn load<'e, E: sqlx::PgExecutor<'e>>(
+        &self,
+        executor: E,
+    ) -> sqlx::Result<Vec<Self::Output>> {
         let (sql, params) = self.to_sql::<Idx>();
-        fetch_all::<Scope, Idx, Sel>(pool, &sql, params).await
+        fetch_all::<Scope, Idx, Sel, E>(executor, &sql, params).await
     }
 
-    async fn load_one(&self, pool: &PgPool) -> sqlx::Result<Option<Self::Output>> {
+    async fn load_one<'e, E: sqlx::PgExecutor<'e>>(
+        &self,
+        executor: E,
+    ) -> sqlx::Result<Option<Self::Output>> {
         let (sql, params) = self.to_sql::<Idx>();
-        fetch_optional::<Scope, Idx, Sel>(pool, &sql, params).await
+        fetch_optional::<Scope, Idx, Sel, E>(executor, &sql, params).await
     }
 }
 
 pub trait ExecuteExt {
-    fn execute(&self, pool: &PgPool) -> impl std::future::Future<Output = sqlx::Result<u64>>;
+    fn execute<'e, E: sqlx::PgExecutor<'e>>(
+        &self,
+        executor: E,
+    ) -> impl std::future::Future<Output = sqlx::Result<u64>>;
 }
 
 impl<T: Table, R: InsertRow<Table = T>> ExecuteExt for Insert<Postgres, T, R> {
-    async fn execute(&self, pool: &PgPool) -> sqlx::Result<u64> {
+    async fn execute<'e, E: sqlx::PgExecutor<'e>>(&self, executor: E) -> sqlx::Result<u64> {
         let (sql, params) = self.to_sql();
-        execute_only(pool, &sql, params).await
+        execute_only(executor, &sql, params).await
     }
 }
 
 impl<T: Table> ExecuteExt for Update<Postgres, T> {
-    async fn execute(&self, pool: &PgPool) -> sqlx::Result<u64> {
+    async fn execute<'e, E: sqlx::PgExecutor<'e>>(&self, executor: E) -> sqlx::Result<u64> {
         let (sql, params) = self.to_sql();
-        execute_only(pool, &sql, params).await
+        execute_only(executor, &sql, params).await
     }
 }
 
 impl<T: Table> ExecuteExt for Delete<Postgres, T> {
-    async fn execute(&self, pool: &PgPool) -> sqlx::Result<u64> {
+    async fn execute<'e, E: sqlx::PgExecutor<'e>>(&self, executor: E) -> sqlx::Result<u64> {
         let (sql, params) = self.to_sql();
-        execute_only(pool, &sql, params).await
+        execute_only(executor, &sql, params).await
     }
 }
 
 pub trait LoadReturningExt<Idx> {
     type Output;
-    fn load(
+    fn load<'e, E: sqlx::PgExecutor<'e>>(
         &self,
-        pool: &PgPool,
+        executor: E,
     ) -> impl std::future::Future<Output = sqlx::Result<Vec<Self::Output>>>;
 }
 
@@ -296,7 +315,10 @@ where
         >,
 {
     type Output = Sel::Output;
-    async fn load(&self, pool: &PgPool) -> sqlx::Result<Vec<Self::Output>> {
+    async fn load<'e, E: sqlx::PgExecutor<'e>>(
+        &self,
+        executor: E,
+    ) -> sqlx::Result<Vec<Self::Output>> {
         let (sql, params) = self.to_sql();
         fetch_all::<
             qbrs_core::scope::Cons<
@@ -305,7 +327,8 @@ where
             >,
             Idx,
             Sel,
-        >(pool, &sql, params)
+            E,
+        >(executor, &sql, params)
         .await
     }
 }
@@ -321,7 +344,10 @@ where
         >,
 {
     type Output = Sel::Output;
-    async fn load(&self, pool: &PgPool) -> sqlx::Result<Vec<Self::Output>> {
+    async fn load<'e, E: sqlx::PgExecutor<'e>>(
+        &self,
+        executor: E,
+    ) -> sqlx::Result<Vec<Self::Output>> {
         let (sql, params) = self.to_sql();
         fetch_all::<
             qbrs_core::scope::Cons<
@@ -330,7 +356,8 @@ where
             >,
             Idx,
             Sel,
-        >(pool, &sql, params)
+            E,
+        >(executor, &sql, params)
         .await
     }
 }
@@ -346,7 +373,10 @@ where
         >,
 {
     type Output = Sel::Output;
-    async fn load(&self, pool: &PgPool) -> sqlx::Result<Vec<Self::Output>> {
+    async fn load<'e, E: sqlx::PgExecutor<'e>>(
+        &self,
+        executor: E,
+    ) -> sqlx::Result<Vec<Self::Output>> {
         let (sql, params) = self.to_sql();
         fetch_all::<
             qbrs_core::scope::Cons<
@@ -355,7 +385,8 @@ where
             >,
             Idx,
             Sel,
-        >(pool, &sql, params)
+            E,
+        >(executor, &sql, params)
         .await
     }
 }
@@ -442,18 +473,18 @@ impl<A: DecodeRow, B: DecodeRow, C: DecodeRow, D: DecodeRow, E: DecodeRow> Decod
 
 pub trait LoadDynExt {
     type Output;
-    fn load(
+    fn load<'e, E: sqlx::PgExecutor<'e>>(
         &self,
-        pool: &PgPool,
+        executor: E,
     ) -> impl std::future::Future<Output = sqlx::Result<Vec<Self::Output>>>;
 }
 
 impl<Output: DecodeRow> LoadDynExt for DynSelect<Postgres, Output> {
     type Output = Output;
-    async fn load(&self, pool: &PgPool) -> sqlx::Result<Vec<Output>> {
+    async fn load<'e, E: sqlx::PgExecutor<'e>>(&self, executor: E) -> sqlx::Result<Vec<Output>> {
         let (sql, params) = self.to_sql();
         let rows = bind_all(sqlx::query(sqlx::AssertSqlSafe(sql.as_str())), params)?
-            .fetch_all(pool)
+            .fetch_all(executor)
             .await?;
         rows.iter()
             .map(|row| Output::decode_at(row, &mut 0))
@@ -470,18 +501,18 @@ impl<Output: DecodeRow> LoadDynExt for DynSelect<Postgres, Output> {
 /// erased situation `DynSelect` is already in.
 pub trait LoadSetOpExt {
     type Output;
-    fn load(
+    fn load<'e, E: sqlx::PgExecutor<'e>>(
         &self,
-        pool: &PgPool,
+        executor: E,
     ) -> impl std::future::Future<Output = sqlx::Result<Vec<Self::Output>>>;
 }
 
 impl<Output: DecodeRow> LoadSetOpExt for SetOp<Postgres, Output> {
     type Output = Output;
-    async fn load(&self, pool: &PgPool) -> sqlx::Result<Vec<Output>> {
+    async fn load<'e, E: sqlx::PgExecutor<'e>>(&self, executor: E) -> sqlx::Result<Vec<Output>> {
         let (sql, params) = self.to_sql();
         let rows = bind_all(sqlx::query(sqlx::AssertSqlSafe(sql.as_str())), params)?
-            .fetch_all(pool)
+            .fetch_all(executor)
             .await?;
         rows.iter()
             .map(|row| Output::decode_at(row, &mut 0))
@@ -496,21 +527,25 @@ impl<Output: DecodeRow> LoadSetOpExt for SetOp<Postgres, Output> {
 /// template, not re-render the SQL text.
 pub trait PreparedExt<Params> {
     type Output;
-    fn execute(
+    fn execute<'e, E: sqlx::PgExecutor<'e>>(
         &self,
-        pool: &PgPool,
+        executor: E,
         params: Params,
     ) -> impl std::future::Future<Output = sqlx::Result<Vec<Self::Output>>>;
 }
 
 impl<Params: PreparedParams, Output: DecodeRow> PreparedExt<Params> for Prepared<Params, Output> {
     type Output = Output;
-    async fn execute(&self, pool: &PgPool, params: Params) -> sqlx::Result<Vec<Output>> {
+    async fn execute<'e, E: sqlx::PgExecutor<'e>>(
+        &self,
+        executor: E,
+        params: Params,
+    ) -> sqlx::Result<Vec<Output>> {
         let (sql, values) = self
             .resolve(params)
             .map_err(|e| sqlx::Error::Configuration(e.to_string().into()))?;
         let rows = bind_all(sqlx::query(sqlx::AssertSqlSafe(sql.as_str())), values)?
-            .fetch_all(pool)
+            .fetch_all(executor)
             .await?;
         rows.iter()
             .map(|row| Output::decode_at(row, &mut 0))
