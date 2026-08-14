@@ -15,22 +15,8 @@ env:
 jobs:
   check:
     runs-on: ubuntu-latest
-    services:
-      postgres:
-        image: postgres:18-alpine
-        env:
-          POSTGRES_USER: postgres
-          POSTGRES_PASSWORD: postgres
-          POSTGRES_DB: qbrs_test
-        ports:
-          - 55432:5432
-        options: >-
-          --health-cmd "pg_isready -U postgres"
-          --health-interval 2s
-          --health-timeout 3s
-          --health-retries 10
-    env:
-      DATABASE_URL: postgres://postgres:postgres@localhost:55432/qbrs_test
+    # No Postgres service: the real-DB tests start an in-process WASM
+    # Postgres themselves (see crates/qbrs-sqlx/tests/common/mod.rs).
     steps:
       # actions/* are maintained by GitHub itself, so we track the latest
       # release tag directly. Third-party actions below are pinned to a

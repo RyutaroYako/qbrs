@@ -51,7 +51,7 @@ async fn full_crud_roundtrip_against_real_postgres() {
     let (pool, guard) = common::test_pool("qbrs_test").await;
 
     // Idempotent so this test can run repeatedly against a persistent
-    // docker-compose Postgres, not just a fresh throwaway embedded one.
+    // `DATABASE_URL` Postgres, not just a fresh throwaway embedded one.
     sqlx::query("DROP TABLE IF EXISTS orders")
         .execute(&pool)
         .await

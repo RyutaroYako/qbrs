@@ -5,23 +5,29 @@ Each one is a standalone `cargo run` target under [`examples/`](examples).
 
 ## Setup
 
-These examples (and the `qbrs-sqlx` integration test) need a real Postgres.
-
-**Docker** (recommended for CI / sandboxed environments):
+None. Just run one:
 
 ```sh
-cd examples
-docker compose up -d
-cd -
 cargo run -p qbrs-examples --example 01_select_basic
 ```
 
-**No Docker** — omit `DATABASE_URL` and the examples (and
-`cargo test -p qbrs-sqlx`) will download and run a real, cached, native
-Postgres binary via [`postgresql_embedded`](https://docs.rs/postgresql_embedded)
-on first use. (Needs normal outbound internet access — some sandboxed
-environments block the binary CDN specifically even when Docker Hub is
-reachable; if it times out, use the Docker path above instead.)
+Each example starts its own throwaway PostgreSQL 17.5 in-process, via
+[`pglite-oxide`](https://crates.io/crates/pglite-oxide) — the PGlite WASM
+build of Postgres running on a WASIX runtime, reached over a normal local
+Postgres connection. No Docker, no Postgres install, and no download at run
+time: the runtime ships inside the crate, so `cargo fetch` is the only
+network access involved.
+
+To run against an external Postgres instead, set `DATABASE_URL`:
+
+```sh
+DATABASE_URL=postgres://postgres:postgres@localhost:5432/qbrs_test \
+  cargo run -p qbrs-examples --example 01_select_basic
+```
+
+Note that the WASIX backend serves one connection at a time, so the pool is
+capped at `max_connections(1)`; the examples are sequential, so this is not
+a constraint in practice.
 
 ## Examples
 
