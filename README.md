@@ -146,6 +146,19 @@ complete, runnable code for everything below.
   [`10_prepared`](examples/examples/10_prepared.rs). Typed, so a
   missing/misspelled bind is a compile error, unlike Drizzle's
   `sql.placeholder()`.
+- **Transactions** —
+  [`15_transaction`](examples/examples/15_transaction.rs). Every
+  `.load()`/`.execute()` method is generic over `sqlx::PgExecutor`, so a
+  `sqlx::PgTransaction` from `pool.begin()` works everywhere a `&PgPool`
+  does — no separate transactional API to learn:
+  ```rust
+  let mut tx = pool.begin().await?;
+  insert::<Postgres, _>(users::Table)
+      .values(UsersInsert::new("ada@example.com"))
+      .execute(&mut *tx)
+      .await?;
+  tx.commit().await?;
+  ```
 
 ## Known limitations
 
@@ -167,6 +180,7 @@ complete, runnable code for everything below.
 | Query building & SQL rendering                                              |    ✅    |   ✅    |   ✅    |
 | Dialect capability gating (`RETURNING`, `ON CONFLICT`, `RIGHT`/`FULL JOIN`) |    ✅    |   ✅    |   ✅    |
 | Execution (via `qbrs-sqlx`)                                                 |    ✅    | not yet | not yet |
+| Transactions (via `qbrs-sqlx`)                                              |    ✅    | not yet | not yet |
 
 `SELECT`/`INSERT`/`UPDATE`/`DELETE`, all JOIN kinds, `GROUP BY`/`HAVING`,
 correlated subqueries (`EXISTS`/`NOT EXISTS`), the `sql!{}` escape hatch,
