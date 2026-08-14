@@ -1,21 +1,21 @@
-//! End-to-end test against a *real* Postgres. See the design plan's DB-setup
-//! decision: PGlite turned out to require a Node.js sidecar to speak the
-//! Postgres wire protocol from Rust (its only wire-protocol mode is
-//! `@electric-sql/pglite-socket`, a Node package), so it isn't realistically
-//! drivable from a Rust test harness. Two supported paths instead:
+//! End-to-end test against a *real* Postgres. Revisiting the design plan's
+//! DB-setup decision: PGlite previously needed a Node.js sidecar to speak
+//! the Postgres wire protocol (`@electric-sql/pglite-socket`), which is why
+//! it was passed over. That is no longer true — `pglite-oxide` runs the
+//! PGlite WASM build on a WASIX runtime *in-process* and exposes a normal
+//! Postgres TCP endpoint, so no Node and no Docker are involved.
 //!
-//! - **No Docker**: `postgresql_embedded` downloads and caches a real,
-//!   native Postgres binary on first run (used when `DATABASE_URL` is unset).
-//! - **Docker**: `cd examples && docker compose up -d`, then set
-//!   `DATABASE_URL=postgres://postgres:postgres@localhost:55432/qbrs_test`.
-//!   This is what CI and sandboxed dev environments without open internet
-//!   access to the embedded-binary download host should use — that's
-//!   exactly the situation this crate's own development environment hit
-//!   (DNS for the binary CDN was blocked, while the Docker registry
-//!   wasn't), which is precisely the tradeoff the design plan flagged when
-//!   picking `postgresql_embedded` over PGlite: no single no-Docker option
-//!   is guaranteed to work in every network environment, so both paths are
-//!   kept and neither is assumed to always be available.
+//! - **Default (no setup)**: with `DATABASE_URL` unset, a throwaway WASM
+//!   Postgres 17.5 is started in-process. The runtime is vendored in the
+//!   crate, so unlike the previous `postgresql_embedded` path it needs no
+//!   network at test time — which matters, because this crate's own
+//!   development environment blocks the binary CDN `postgresql_embedded`
+//!   downloads from.
+//! - **External Postgres**: set `DATABASE_URL` to run the same tests
+//!   against a real server (Docker, a local install, CI service, ...).
+//!
+//! Note the WASIX backend accepts one client connection at a time; see
+//! `common::test_pool` for why the pool is capped at 1.
 
 mod common;
 

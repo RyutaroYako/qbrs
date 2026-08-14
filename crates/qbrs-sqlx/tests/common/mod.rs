@@ -4,19 +4,19 @@
 //! part of the crate's own API surface — each test binary that does `mod
 //! common;` gets its own compiled copy, but the *source* isn't duplicated.
 
-/// Either connects to `DATABASE_URL` directly (docker-compose path) or
-/// provisions a throwaway embedded Postgres (no-Docker path), returning a
-/// pool plus a guard that shuts the embedded instance down on drop.
+/// Either connects to `DATABASE_URL` directly (external-Postgres path) or
+/// starts a throwaway WASM Postgres (default path), returning a pool plus a
+/// guard that shuts the embedded instance down on drop.
 pub enum PgGuard {
     External,
-    // Boxed: `postgresql_embedded::PostgreSQL` is much larger than the
-    // unit `External` variant, and clippy's `large_enum_variant` lint is
-    // right that leaving it unboxed would make every `PgGuard` pay for the
-    // biggest variant's size even when it's `External`.
-    Embedded(Box<postgresql_embedded::PostgreSQL>),
+    // Boxed for the same reason the old `postgresql_embedded` guard was:
+    // the running-server variant is far larger than the unit `External`
+    // one, and clippy's `large_enum_variant` lint is right that leaving it
+    // unboxed makes every `PgGuard` pay for the biggest variant's size.
+    Wasm(Box<pglite_oxide::PgliteServer>),
 }
 
-pub async fn test_pool(db_name: &str) -> (sqlx::PgPool, PgGuard) {
+pub async fn test_pool(_db_name: &str) -> (sqlx::PgPool, PgGuard) {
     if let Ok(url) = std::env::var("DATABASE_URL") {
         let pool = sqlx::PgPool::connect(&url)
             .await
@@ -24,25 +24,23 @@ pub async fn test_pool(db_name: &str) -> (sqlx::PgPool, PgGuard) {
         return (pool, PgGuard::External);
     }
 
-    let mut pg = postgresql_embedded::PostgreSQL::default();
-    pg.setup().await.expect(
-        "download/setup embedded postgres (no DATABASE_URL set, and this network environment \
-         can't reach the embedded-binary download host — try \
-         `cd examples && docker compose up -d` and set \
-         DATABASE_URL=postgres://postgres:postgres@localhost:55432/qbrs_test instead)",
-    );
-    pg.start().await.expect("start embedded postgres");
-    pg.create_database(db_name).await.expect("create database");
-    let url = pg.settings().url(db_name);
-    let pool = sqlx::PgPool::connect(&url)
+    let server = pglite_oxide::PgliteServer::temporary_tcp().expect("start WASM postgres");
+    // The WASIX Postgres backend is a single-backend build: it accepts
+    // exactly one client connection at a time, and a second concurrent
+    // connect just hangs until the first is released. sqlx's default pool
+    // (max 10) will happily try to open a second one and dead-lock itself,
+    // so the pool has to be capped at 1.
+    let pool = sqlx::postgres::PgPoolOptions::new()
+        .max_connections(1)
+        .connect(&server.database_url())
         .await
-        .expect("connect to embedded postgres");
-    (pool, PgGuard::Embedded(Box::new(pg)))
+        .expect("connect to WASM postgres");
+    (pool, PgGuard::Wasm(Box::new(server)))
 }
 
 pub async fn shutdown(pool: sqlx::PgPool, guard: PgGuard) {
     pool.close().await;
-    if let PgGuard::Embedded(pg) = guard {
-        pg.stop().await.ok();
+    if let PgGuard::Wasm(server) = guard {
+        server.shutdown().ok();
     }
 }

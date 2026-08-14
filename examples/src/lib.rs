@@ -27,14 +27,32 @@ pub struct Orders {
     pub shipped: bool,
 }
 
-/// Connects (via `DATABASE_URL`, defaulting to the compose service)
-/// and resets the schema so every example starts from the same known data.
+/// Connects to `DATABASE_URL` if set, otherwise starts a throwaway WASM
+/// Postgres, and resets the schema so every example starts from the same
+/// known data.
 pub async fn setup_db() -> sqlx::PgPool {
-    let url = std::env::var("DATABASE_URL")
-        .unwrap_or_else(|_| "postgres://postgres:postgres@localhost:55432/qbrs_test".to_string());
-    let pool = sqlx::PgPool::connect(&url).await.unwrap_or_else(|e| {
-        panic!("connect to {url}: {e}\n(hint: `docker compose up -d` at the repo root)")
-    });
+    let pool = match std::env::var("DATABASE_URL") {
+        Ok(url) => sqlx::PgPool::connect(&url)
+            .await
+            .unwrap_or_else(|e| panic!("connect to {url}: {e}")),
+        Err(_) => {
+            let server = pglite_oxide::PgliteServer::temporary_tcp().expect("start WASM postgres");
+            let url = server.database_url();
+            // Each example is a short-lived process that wants the server up
+            // until it exits, so the server is leaked rather than threaded
+            // back through every example's `main` as a guard. The temporary
+            // data directory is cleaned up by the OS, not by us.
+            std::mem::forget(server);
+            // The WASIX Postgres backend accepts exactly one client
+            // connection at a time; sqlx's default pool (max 10) would try
+            // to open a second one and dead-lock, so it is capped at 1.
+            sqlx::postgres::PgPoolOptions::new()
+                .max_connections(1)
+                .connect(&url)
+                .await
+                .unwrap_or_else(|e| panic!("connect to WASM postgres at {url}: {e}"))
+        }
+    };
 
     sqlx::query("DROP TABLE IF EXISTS orders")
         .execute(&pool)
