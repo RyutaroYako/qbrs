@@ -232,6 +232,28 @@ DATABASE_URL=postgres://postgres:postgres@localhost:5432/qbrs_test \
   cargo test -p qbrs-sqlx
 ```
 
+### Coverage
+
+CI measures line/region/function coverage with
+[`cargo-llvm-cov`](https://github.com/taiki-e/cargo-llvm-cov) and posts the
+result as a single, self-updating comment on each pull request. To reproduce
+it locally:
+
+```sh
+cargo install cargo-llvm-cov
+rustup component add llvm-tools-preview
+
+cargo llvm-cov --workspace --exclude qbrs-examples --exclude compile-bench --open
+```
+
+`qbrs-examples` and `compile-bench` are excluded because they exist to be
+compiled, not run. To render the PR comment from a local run:
+
+```sh
+cargo llvm-cov report --summary-only --json --output-path coverage-summary.json
+python3 .github/scripts/coverage_report.py --summary coverage-summary.json
+```
+
 ## License
 
 Dual-licensed under [MIT](LICENSE-MIT) or [Apache-2.0](LICENSE-APACHE), at

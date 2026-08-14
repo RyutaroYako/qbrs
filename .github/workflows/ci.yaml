@@ -9,8 +9,18 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+permissions:
+  contents: read
+
 env:
   CARGO_TERM_COLOR: always
+  # Pinned rather than tracking `latest`, and checked against the SHA-256 of
+  # the release asset, so a compromised or swapped-out upload can't silently
+  # execute in CI. Both values move together when bumping the version:
+  #   curl -fsSLO https://github.com/taiki-e/cargo-llvm-cov/releases/download/vX.Y.Z/cargo-llvm-cov-x86_64-unknown-linux-gnu.tar.gz
+  #   sha256sum cargo-llvm-cov-x86_64-unknown-linux-gnu.tar.gz
+  CARGO_LLVM_COV_VERSION: "0.8.7"
+  CARGO_LLVM_COV_SHA256: "9a75fe29538d3800b3da57f6f6efb64cba5c720a257bf0cb8b51f39d495a9168"
 
 jobs:
   check:
@@ -44,3 +54,150 @@ jobs:
 
       - name: Test
         run: cargo test --workspace --locked
+
+  coverage:
+    runs-on: ubuntu-latest
+    # Separate from `check` on purpose: `check` must run the tests in their
+    # normal, uninstrumented configuration, so coverage instrumentation can
+    # never be the reason a test passes or fails there.
+    permissions:
+      contents: read
+      # For the sticky coverage comment. Pull requests from forks get a
+      # read-only token regardless, which the comment step accounts for.
+      pull-requests: write
+      # For `gh run list`/`gh run download`, which fetch the base branch's
+      # coverage artifact to diff against.
+      actions: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7.0.1
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # master (2026-08-05)
+        with:
+          toolchain: stable
+          # llvm-tools ships the `llvm-profdata`/`llvm-cov` binaries that
+          # cargo-llvm-cov drives; it is not installed by default.
+          components: llvm-tools-preview
+
+      - name: Cache cargo/target
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+
+      # Installed from the release tarball rather than via a third-party
+      # action or `cargo install`: no new action to audit, and no multi-minute
+      # source build on every run.
+      - name: Install cargo-llvm-cov
+        run: |
+          set -euo pipefail
+          url="https://github.com/taiki-e/cargo-llvm-cov/releases/download/v${CARGO_LLVM_COV_VERSION}/cargo-llvm-cov-x86_64-unknown-linux-gnu.tar.gz"
+          curl -fsSL --retry 3 --retry-delay 2 "$url" -o cargo-llvm-cov.tar.gz
+          echo "${CARGO_LLVM_COV_SHA256}  cargo-llvm-cov.tar.gz" | sha256sum --check --strict
+          tar xzf cargo-llvm-cov.tar.gz -C "$HOME/.cargo/bin"
+          rm cargo-llvm-cov.tar.gz
+
+      # `qbrs-examples` and `compile-bench` are excluded because they exist to
+      # be *compiled* (they prove the public API and the type-level machinery
+      # still build); nothing runs their code under `cargo test`, so including
+      # them would report a large block of permanently-uncovered lines.
+      - name: Run tests with coverage
+        run: |
+          cargo llvm-cov --no-report --workspace --locked \
+            --exclude qbrs-examples --exclude compile-bench
+
+      - name: Generate reports
+        run: |
+          set -euo pipefail
+          cargo llvm-cov report --summary-only --json --output-path coverage-summary.json
+          cargo llvm-cov report --lcov --output-path lcov.info
+          # Lands in coverage/html/index.html.
+          cargo llvm-cov report --html --output-dir coverage
+          # Also print the table into the job log, so a failing/slow run is
+          # still readable without downloading anything.
+          cargo llvm-cov report --summary-only
+
+      # The delta column compares against the newest successful run on the
+      # base branch. Best-effort: a first run, an expired artifact or a
+      # never-yet-green base branch all just mean no delta is shown.
+      - name: Download base-branch coverage
+        if: github.event_name == 'pull_request'
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          BASE_REF: ${{ github.event.pull_request.base.ref }}
+        run: |
+          set -uo pipefail
+          run_id=$(gh run list --repo "$GITHUB_REPOSITORY" --workflow ci.yaml \
+            --branch "$BASE_REF" --event push --status success \
+            --limit 1 --json databaseId --jq '.[0].databaseId // empty')
+          if [ -z "$run_id" ]; then
+            echo "no successful $BASE_REF run to compare against"
+            exit 0
+          fi
+          gh run download "$run_id" --repo "$GITHUB_REPOSITORY" \
+            --name coverage-summary --dir baseline \
+            || echo "run $run_id has no coverage-summary artifact"
+
+      - name: List files changed by this PR
+        if: github.event_name == 'pull_request'
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          gh pr view "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" \
+            --json files --jq '.files[].path' > changed-files.txt
+
+      - name: Build coverage report
+        run: |
+          python3 .github/scripts/coverage_report.py \
+            --summary coverage-summary.json \
+            --baseline baseline/coverage-summary.json \
+            --changed-files changed-files.txt \
+            --root "$GITHUB_WORKSPACE" \
+            --output coverage-comment.md
+          cat coverage-comment.md >> "$GITHUB_STEP_SUMMARY"
+
+      # Fork pull requests run with a read-only token, so posting would fail;
+      # the step summary above still carries the full report for those.
+      - name: Comment on the pull request
+        if: >-
+          github.event_name == 'pull_request' &&
+          github.event.pull_request.head.repo.full_name == github.repository
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          set -euo pipefail
+          # Update this job's own previous comment instead of appending a new
+          # one per push, so the PR keeps a single live coverage report.
+          existing=$(gh api "repos/$GITHUB_REPOSITORY/issues/$PR_NUMBER/comments" --paginate \
+            --jq '.[] | select(.body | startswith("<!-- qbrs-coverage-report -->")) | .id')
+          # Keep the first match only. Trimmed with a parameter expansion
+          # rather than `| head -1`, which would SIGPIPE `gh` mid-pagination
+          # and trip `pipefail`.
+          existing=${existing%%$'\n'*}
+          if [ -n "$existing" ]; then
+            gh api -X PATCH "repos/$GITHUB_REPOSITORY/issues/comments/$existing" \
+              -F body=@coverage-comment.md --silent
+          else
+            gh api -X POST "repos/$GITHUB_REPOSITORY/issues/$PR_NUMBER/comments" \
+              -F body=@coverage-comment.md --silent
+          fi
+
+      # Uploaded on push as well as on pull requests: the push-to-main run is
+      # what the next pull request downloads as its baseline.
+      - name: Upload coverage summary
+        uses: actions/upload-artifact@v7.0.1
+        with:
+          name: coverage-summary
+          path: coverage-summary.json
+          if-no-files-found: error
+
+      - name: Upload full coverage report
+        uses: actions/upload-artifact@v7.0.1
+        with:
+          name: coverage-report
+          path: |
+            coverage/html
+            lcov.info
+          if-no-files-found: error

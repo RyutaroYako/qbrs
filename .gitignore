@@ -1,2 +1,12 @@
 /target
 .env
+
+# Local `cargo llvm-cov` output (CI writes the same names into its workspace).
+/coverage
+/coverage-summary.json
+/coverage-comment.md
+/changed-files.txt
+/lcov.info
+
+# Byte-compiled helper scripts under .github/scripts.
+__pycache__/
