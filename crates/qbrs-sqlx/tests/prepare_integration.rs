@@ -1,7 +1,7 @@
 //! `prepare!{}` executed against a real Postgres: one rendered query,
 //! reused across multiple `.execute(params)` calls with different values.
-//! See `postgres_integration.rs` for the DB-setup rationale (Docker vs.
-//! `postgresql_embedded`).
+//! See `postgres_integration.rs` for the DB-setup rationale (in-process
+//! WASM Postgres vs. an external `DATABASE_URL`).
 
 mod common;
 

@@ -208,13 +208,21 @@ query-building layer has been stable for a while).
 ## Running the examples & tests
 
 Runnable, end-to-end examples live in [`examples`](examples) —
-see [its README](examples/README.md) for Postgres setup and the full
-list of examples.
+see [its README](examples/README.md) for the full list.
 
 ```sh
-cargo test --workspace                                    # everything except the real-DB test
-DATABASE_URL=postgres://postgres:postgres@localhost:55432/qbrs_test \
-  cargo test -p qbrs-sqlx --test postgres_integration      # needs a running Postgres (see examples README)
+cargo test --workspace   # everything, including the real-Postgres tests
+```
+
+No setup is required: the real-DB tests start their own throwaway
+PostgreSQL 17.5, embedded via [`pglite-rs`](https://crates.io/crates/pglite-rs),
+so there is no Docker, no service to launch, and nothing to download at test
+time. To run the same tests against an external Postgres instead, set
+`DATABASE_URL`:
+
+```sh
+DATABASE_URL=postgres://postgres:postgres@localhost:5432/qbrs_test \
+  cargo test -p qbrs-sqlx
 ```
 
 ## License

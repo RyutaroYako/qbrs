@@ -11,7 +11,7 @@ use qbrs_sqlx::LoadExt;
 
 #[tokio::main]
 async fn main() {
-    let pool = setup_db().await;
+    let (pool, _db) = setup_db().await;
     seed(&pool).await;
 
     // `sql!` builds an `Expr<Nil, Bool>` — a raw fragment exempt from

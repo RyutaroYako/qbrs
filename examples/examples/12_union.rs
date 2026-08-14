@@ -14,7 +14,7 @@ use qbrs_sqlx::LoadSetOpExt;
 
 #[tokio::main]
 async fn main() {
-    let pool = setup_db().await;
+    let (pool, _db) = setup_db().await;
     seed(&pool).await;
 
     // Two structurally unrelated queries — one over `users`, one over

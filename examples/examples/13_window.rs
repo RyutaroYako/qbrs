@@ -16,7 +16,7 @@ use qbrs_sqlx::LoadExt;
 
 #[tokio::main]
 async fn main() {
-    let pool = setup_db().await;
+    let (pool, _db) = setup_db().await;
     seed(&pool).await;
 
     // Rank each user's own orders by size, largest first — `PARTITION BY`

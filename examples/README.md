@@ -5,23 +5,34 @@ Each one is a standalone `cargo run` target under [`examples/`](examples).
 
 ## Setup
 
-These examples (and the `qbrs-sqlx` integration test) need a real Postgres.
-
-**Docker** (recommended for CI / sandboxed environments):
+None. Just run one:
 
 ```sh
-cd examples
-docker compose up -d
-cd -
 cargo run -p qbrs-examples --example 01_select_basic
 ```
 
-**No Docker** — omit `DATABASE_URL` and the examples (and
-`cargo test -p qbrs-sqlx`) will download and run a real, cached, native
-Postgres binary via [`postgresql_embedded`](https://docs.rs/postgresql_embedded)
-on first use. (Needs normal outbound internet access — some sandboxed
-environments block the binary CDN specifically even when Docker Hub is
-reachable; if it times out, use the Docker path above instead.)
+Each example starts its own throwaway PostgreSQL 17.5, embedded via
+[`pglite-rs`](https://crates.io/crates/pglite-rs) — the `postgres-pglite`
+engine linked into the binary and served over a unix socket, so `sqlx`
+connects to it exactly as it would to any Postgres. No Docker, no Postgres
+install, and nothing fetched at run time; the server is torn down when the
+example exits.
+
+That teardown is why `setup_db()` hands back a second value:
+
+```rust
+let (pool, _db) = setup_db().await;
+```
+
+`_db` owns the server, so it has to stay bound for the body of the example —
+dropping it early would stop Postgres out from under the pool.
+
+To run against an external Postgres instead, set `DATABASE_URL`:
+
+```sh
+DATABASE_URL=postgres://postgres:postgres@localhost:5432/qbrs_test \
+  cargo run -p qbrs-examples --example 01_select_basic
+```
 
 ## Examples
 

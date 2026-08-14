@@ -27,14 +27,39 @@ pub struct Orders {
     pub shipped: bool,
 }
 
-/// Connects (via `DATABASE_URL`, defaulting to the compose service)
-/// and resets the schema so every example starts from the same known data.
-pub async fn setup_db() -> sqlx::PgPool {
-    let url = std::env::var("DATABASE_URL")
-        .unwrap_or_else(|_| "postgres://postgres:postgres@localhost:55432/qbrs_test".to_string());
-    let pool = sqlx::PgPool::connect(&url).await.unwrap_or_else(|e| {
-        panic!("connect to {url}: {e}\n(hint: `docker compose up -d` at the repo root)")
-    });
+/// Keeps the embedded Postgres — and the temp directory holding its data —
+/// alive for as long as an example is running. Dropping it stops the
+/// server, so examples bind it (`let (pool, _db) = ...`) rather than
+/// discarding it; the postmaster is a child process and would otherwise
+/// outlive the example.
+pub struct Db(#[allow(dead_code)] Option<(pglite::PGlite, tempfile::TempDir)>);
+
+/// Connects to `DATABASE_URL` if set, otherwise starts a throwaway embedded
+/// Postgres, and resets the schema so every example starts from the same
+/// known data.
+pub async fn setup_db() -> (sqlx::PgPool, Db) {
+    let (pool, db) = match std::env::var("DATABASE_URL") {
+        Ok(url) => {
+            let pool = sqlx::PgPool::connect(&url)
+                .await
+                .unwrap_or_else(|e| panic!("connect to {url}: {e}"));
+            (pool, Db(None))
+        }
+        Err(_) => {
+            let dir = tempfile::tempdir().expect("create temp data dir");
+            let db = pglite::PGlite::open_multi_process(
+                dir.path(),
+                pglite::MultiProcessOptions::default(),
+            )
+            .await
+            .expect("start embedded postgres");
+            let url = db.unix_uri().await.expect("embedded postgres socket uri");
+            let pool = sqlx::PgPool::connect(&url)
+                .await
+                .unwrap_or_else(|e| panic!("connect to embedded postgres at {url}: {e}"));
+            (pool, Db(Some((db, dir))))
+        }
+    };
 
     sqlx::query("DROP TABLE IF EXISTS orders")
         .execute(&pool)
@@ -67,7 +92,7 @@ pub async fn setup_db() -> sqlx::PgPool {
     .await
     .unwrap();
 
-    pool
+    (pool, db)
 }
 
 /// Seeds a small, fixed dataset used by every example: three users (one

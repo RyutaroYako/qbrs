@@ -1,21 +1,19 @@
-//! End-to-end test against a *real* Postgres. See the design plan's DB-setup
-//! decision: PGlite turned out to require a Node.js sidecar to speak the
-//! Postgres wire protocol from Rust (its only wire-protocol mode is
-//! `@electric-sql/pglite-socket`, a Node package), so it isn't realistically
-//! drivable from a Rust test harness. Two supported paths instead:
+//! End-to-end test against a *real* Postgres. Revisiting the design plan's
+//! DB-setup decision: PGlite was passed over because it needed a Node.js
+//! sidecar to speak the Postgres wire protocol
+//! (`@electric-sql/pglite-socket`). That is no longer true — `pglite-rs`
+//! links the `postgres-pglite` engine straight into the test binary and
+//! serves it over a unix socket, so no Node and no Docker are involved.
 //!
-//! - **No Docker**: `postgresql_embedded` downloads and caches a real,
-//!   native Postgres binary on first run (used when `DATABASE_URL` is unset).
-//! - **Docker**: `cd examples && docker compose up -d`, then set
-//!   `DATABASE_URL=postgres://postgres:postgres@localhost:55432/qbrs_test`.
-//!   This is what CI and sandboxed dev environments without open internet
-//!   access to the embedded-binary download host should use — that's
-//!   exactly the situation this crate's own development environment hit
-//!   (DNS for the binary CDN was blocked, while the Docker registry
-//!   wasn't), which is precisely the tradeoff the design plan flagged when
-//!   picking `postgresql_embedded` over PGlite: no single no-Docker option
-//!   is guaranteed to work in every network environment, so both paths are
-//!   kept and neither is assumed to always be available.
+//! - **Default (no setup)**: with `DATABASE_URL` unset, a throwaway
+//!   PostgreSQL 17.5 is started in a temp directory and torn down after.
+//!   The engine is linked in at build time, so nothing is downloaded at
+//!   test time — which matters, because this crate's own development
+//!   environment blocks the CDN `postgresql_embedded` used to fetch from.
+//! - **External Postgres**: set `DATABASE_URL` to run the same tests
+//!   against a real server (a local install, a CI service, ...).
+//!
+//! See `common::test_pool` for why this uses multi-process mode.
 
 mod common;
 
@@ -51,7 +49,7 @@ async fn full_crud_roundtrip_against_real_postgres() {
     let (pool, guard) = common::test_pool("qbrs_test").await;
 
     // Idempotent so this test can run repeatedly against a persistent
-    // docker-compose Postgres, not just a fresh throwaway embedded one.
+    // `DATABASE_URL` Postgres, not just a fresh throwaway embedded one.
     sqlx::query("DROP TABLE IF EXISTS orders")
         .execute(&pool)
         .await

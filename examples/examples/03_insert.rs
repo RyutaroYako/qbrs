@@ -8,7 +8,7 @@ use qbrs_sqlx::LoadReturningExt;
 
 #[tokio::main]
 async fn main() {
-    let pool = setup_db().await;
+    let (pool, _db) = setup_db().await;
 
     // `email` is required (NOT NULL, no default) — `new()` only asks for
     // that. `display_name` is nullable with no default, so it's omitted
