@@ -200,10 +200,10 @@ see [its README](examples/README.md) for the full list.
 cargo test --workspace   # everything, including the real-Postgres tests
 ```
 
-No setup is required: the real-DB tests start an in-process WASM Postgres
-(PostgreSQL 17.5 via [`pglite-oxide`](https://crates.io/crates/pglite-oxide)),
-so there is no Docker, no service to launch, and no binary to download at
-test time. To run the same tests against an external Postgres instead, set
+No setup is required: the real-DB tests start their own throwaway
+PostgreSQL 17.5, embedded via [`pglite-rs`](https://crates.io/crates/pglite-rs),
+so there is no Docker, no service to launch, and nothing to download at test
+time. To run the same tests against an external Postgres instead, set
 `DATABASE_URL`:
 
 ```sh

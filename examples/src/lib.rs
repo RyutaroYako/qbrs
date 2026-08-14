@@ -27,30 +27,37 @@ pub struct Orders {
     pub shipped: bool,
 }
 
-/// Connects to `DATABASE_URL` if set, otherwise starts a throwaway WASM
+/// Keeps the embedded Postgres — and the temp directory holding its data —
+/// alive for as long as an example is running. Dropping it stops the
+/// server, so examples bind it (`let (pool, _db) = ...`) rather than
+/// discarding it; the postmaster is a child process and would otherwise
+/// outlive the example.
+pub struct Db(#[allow(dead_code)] Option<(pglite::PGlite, tempfile::TempDir)>);
+
+/// Connects to `DATABASE_URL` if set, otherwise starts a throwaway embedded
 /// Postgres, and resets the schema so every example starts from the same
 /// known data.
-pub async fn setup_db() -> sqlx::PgPool {
-    let pool = match std::env::var("DATABASE_URL") {
-        Ok(url) => sqlx::PgPool::connect(&url)
-            .await
-            .unwrap_or_else(|e| panic!("connect to {url}: {e}")),
-        Err(_) => {
-            let server = pglite_oxide::PgliteServer::temporary_tcp().expect("start WASM postgres");
-            let url = server.database_url();
-            // Each example is a short-lived process that wants the server up
-            // until it exits, so the server is leaked rather than threaded
-            // back through every example's `main` as a guard. The temporary
-            // data directory is cleaned up by the OS, not by us.
-            std::mem::forget(server);
-            // The WASIX Postgres backend accepts exactly one client
-            // connection at a time; sqlx's default pool (max 10) would try
-            // to open a second one and dead-lock, so it is capped at 1.
-            sqlx::postgres::PgPoolOptions::new()
-                .max_connections(1)
-                .connect(&url)
+pub async fn setup_db() -> (sqlx::PgPool, Db) {
+    let (pool, db) = match std::env::var("DATABASE_URL") {
+        Ok(url) => {
+            let pool = sqlx::PgPool::connect(&url)
                 .await
-                .unwrap_or_else(|e| panic!("connect to WASM postgres at {url}: {e}"))
+                .unwrap_or_else(|e| panic!("connect to {url}: {e}"));
+            (pool, Db(None))
+        }
+        Err(_) => {
+            let dir = tempfile::tempdir().expect("create temp data dir");
+            let db = pglite::PGlite::open_multi_process(
+                dir.path(),
+                pglite::MultiProcessOptions::default(),
+            )
+            .await
+            .expect("start embedded postgres");
+            let url = db.unix_uri().await.expect("embedded postgres socket uri");
+            let pool = sqlx::PgPool::connect(&url)
+                .await
+                .unwrap_or_else(|e| panic!("connect to embedded postgres at {url}: {e}"));
+            (pool, Db(Some((db, dir))))
         }
     };
 
@@ -85,7 +92,7 @@ pub async fn setup_db() -> sqlx::PgPool {
     .await
     .unwrap();
 
-    pool
+    (pool, db)
 }
 
 /// Seeds a small, fixed dataset used by every example: three users (one

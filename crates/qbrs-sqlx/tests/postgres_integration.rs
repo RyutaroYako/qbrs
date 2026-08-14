@@ -1,21 +1,19 @@
 //! End-to-end test against a *real* Postgres. Revisiting the design plan's
-//! DB-setup decision: PGlite previously needed a Node.js sidecar to speak
-//! the Postgres wire protocol (`@electric-sql/pglite-socket`), which is why
-//! it was passed over. That is no longer true — `pglite-oxide` runs the
-//! PGlite WASM build on a WASIX runtime *in-process* and exposes a normal
-//! Postgres TCP endpoint, so no Node and no Docker are involved.
+//! DB-setup decision: PGlite was passed over because it needed a Node.js
+//! sidecar to speak the Postgres wire protocol
+//! (`@electric-sql/pglite-socket`). That is no longer true — `pglite-rs`
+//! links the `postgres-pglite` engine straight into the test binary and
+//! serves it over a unix socket, so no Node and no Docker are involved.
 //!
-//! - **Default (no setup)**: with `DATABASE_URL` unset, a throwaway WASM
-//!   Postgres 17.5 is started in-process. The runtime is vendored in the
-//!   crate, so unlike the previous `postgresql_embedded` path it needs no
-//!   network at test time — which matters, because this crate's own
-//!   development environment blocks the binary CDN `postgresql_embedded`
-//!   downloads from.
+//! - **Default (no setup)**: with `DATABASE_URL` unset, a throwaway
+//!   PostgreSQL 17.5 is started in a temp directory and torn down after.
+//!   The engine is linked in at build time, so nothing is downloaded at
+//!   test time — which matters, because this crate's own development
+//!   environment blocks the CDN `postgresql_embedded` used to fetch from.
 //! - **External Postgres**: set `DATABASE_URL` to run the same tests
-//!   against a real server (Docker, a local install, CI service, ...).
+//!   against a real server (a local install, a CI service, ...).
 //!
-//! Note the WASIX backend accepts one client connection at a time; see
-//! `common::test_pool` for why the pool is capped at 1.
+//! See `common::test_pool` for why this uses multi-process mode.
 
 mod common;
 

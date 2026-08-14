@@ -15,8 +15,8 @@ env:
 jobs:
   check:
     runs-on: ubuntu-latest
-    # No Postgres service: the real-DB tests start an in-process WASM
-    # Postgres themselves (see crates/qbrs-sqlx/tests/common/mod.rs).
+    # No Postgres service: the real-DB tests start their own embedded
+    # Postgres (see crates/qbrs-sqlx/tests/common/mod.rs).
     steps:
       # actions/* are maintained by GitHub itself, so we track the latest
       # release tag directly. Third-party actions below are pinned to a

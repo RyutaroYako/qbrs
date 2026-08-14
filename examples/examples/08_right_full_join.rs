@@ -10,7 +10,7 @@ use qbrs_sqlx::LoadExt;
 
 #[tokio::main]
 async fn main() {
-    let pool = setup_db().await;
+    let (pool, _db) = setup_db().await;
     seed(&pool).await;
 
     // FROM orders, RIGHT JOIN users: `orders` was in scope first (from the

@@ -11,12 +11,21 @@ None. Just run one:
 cargo run -p qbrs-examples --example 01_select_basic
 ```
 
-Each example starts its own throwaway PostgreSQL 17.5 in-process, via
-[`pglite-oxide`](https://crates.io/crates/pglite-oxide) — the PGlite WASM
-build of Postgres running on a WASIX runtime, reached over a normal local
-Postgres connection. No Docker, no Postgres install, and no download at run
-time: the runtime ships inside the crate, so `cargo fetch` is the only
-network access involved.
+Each example starts its own throwaway PostgreSQL 17.5, embedded via
+[`pglite-rs`](https://crates.io/crates/pglite-rs) — the `postgres-pglite`
+engine linked into the binary and served over a unix socket, so `sqlx`
+connects to it exactly as it would to any Postgres. No Docker, no Postgres
+install, and nothing fetched at run time; the server is torn down when the
+example exits.
+
+That teardown is why `setup_db()` hands back a second value:
+
+```rust
+let (pool, _db) = setup_db().await;
+```
+
+`_db` owns the server, so it has to stay bound for the body of the example —
+dropping it early would stop Postgres out from under the pool.
 
 To run against an external Postgres instead, set `DATABASE_URL`:
 
@@ -24,10 +33,6 @@ To run against an external Postgres instead, set `DATABASE_URL`:
 DATABASE_URL=postgres://postgres:postgres@localhost:5432/qbrs_test \
   cargo run -p qbrs-examples --example 01_select_basic
 ```
-
-Note that the WASIX backend serves one connection at a time, so the pool is
-capped at `max_connections(1)`; the examples are sequential, so this is not
-a constraint in practice.
 
 ## Examples
 

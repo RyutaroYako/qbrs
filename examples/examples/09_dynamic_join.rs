@@ -23,7 +23,7 @@ fn build_query(include_orders: bool) -> DynSelect<Postgres, (String,)> {
 
 #[tokio::main]
 async fn main() {
-    let pool = setup_db().await;
+    let (pool, _db) = setup_db().await;
     seed(&pool).await;
 
     let without_join: Vec<(String,)> = build_query(false).load(&pool).await.expect("without join");

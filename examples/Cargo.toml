@@ -9,4 +9,5 @@ qbrs = { path = "../crates/qbrs" }
 qbrs-sqlx = { path = "../crates/qbrs-sqlx" }
 sqlx = { version = "0.9", default-features = false, features = ["postgres", "runtime-tokio", "tls-rustls"] }
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
-pglite-oxide = "0.5.1"
+pglite-rs = { version = "0.2.7", features = ["multiple-process"] }
+tempfile = "3.27.0"

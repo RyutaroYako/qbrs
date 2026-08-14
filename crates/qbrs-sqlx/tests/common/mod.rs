@@ -5,15 +5,17 @@
 //! common;` gets its own compiled copy, but the *source* isn't duplicated.
 
 /// Either connects to `DATABASE_URL` directly (external-Postgres path) or
-/// starts a throwaway WASM Postgres (default path), returning a pool plus a
-/// guard that shuts the embedded instance down on drop.
+/// starts a throwaway embedded Postgres (default path), returning a pool
+/// plus a guard that shuts the embedded instance down.
 pub enum PgGuard {
     External,
-    // Boxed for the same reason the old `postgresql_embedded` guard was:
-    // the running-server variant is far larger than the unit `External`
-    // one, and clippy's `large_enum_variant` lint is right that leaving it
-    // unboxed makes every `PgGuard` pay for the biggest variant's size.
-    Wasm(Box<pglite_oxide::PgliteServer>),
+    // Both the server and its data directory have to outlive the pool, so
+    // the guard owns them. Boxed for the same reason the previous guard
+    // was: the running-server variant is far larger than the unit
+    // `External` one, and clippy's `large_enum_variant` lint is right that
+    // leaving it unboxed makes every `PgGuard` pay the biggest variant's
+    // size.
+    Embedded(Box<(pglite::PGlite, tempfile::TempDir)>),
 }
 
 pub async fn test_pool(_db_name: &str) -> (sqlx::PgPool, PgGuard) {
@@ -24,23 +26,30 @@ pub async fn test_pool(_db_name: &str) -> (sqlx::PgPool, PgGuard) {
         return (pool, PgGuard::External);
     }
 
-    let server = pglite_oxide::PgliteServer::temporary_tcp().expect("start WASM postgres");
-    // The WASIX Postgres backend is a single-backend build: it accepts
-    // exactly one client connection at a time, and a second concurrent
-    // connect just hangs until the first is released. sqlx's default pool
-    // (max 10) will happily try to open a second one and dead-lock itself,
-    // so the pool has to be capped at 1.
-    let pool = sqlx::postgres::PgPoolOptions::new()
-        .max_connections(1)
-        .connect(&server.database_url())
+    let dir = tempfile::tempdir().expect("create temp data dir");
+    // Multi-process mode (a real postmaster over a unix socket) rather than
+    // the single in-process backend: the in-process one can only ever be
+    // opened once per process and serves a single connection, so it would
+    // cap every pool at 1 and quietly break the moment a second real-DB
+    // test lands in the same test binary.
+    let db = pglite::PGlite::open_multi_process(dir.path(), pglite::MultiProcessOptions::default())
         .await
-        .expect("connect to WASM postgres");
-    (pool, PgGuard::Wasm(Box::new(server)))
+        .expect("start embedded postgres");
+    let url = db.unix_uri().await.expect("embedded postgres socket uri");
+    let pool = sqlx::PgPool::connect(&url)
+        .await
+        .expect("connect to embedded postgres");
+    (pool, PgGuard::Embedded(Box::new((db, dir))))
 }
 
 pub async fn shutdown(pool: sqlx::PgPool, guard: PgGuard) {
     pool.close().await;
-    if let PgGuard::Wasm(server) = guard {
-        server.shutdown().ok();
+    if let PgGuard::Embedded(embedded) = guard {
+        // Not just tidiness: the postmaster is a child process, so skipping
+        // this would leave it (and its workers) running after the test
+        // binary exits.
+        let (db, dir) = *embedded;
+        db.close().await.ok();
+        drop(dir);
     }
 }
