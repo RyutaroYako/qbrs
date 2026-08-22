@@ -415,16 +415,30 @@ impl<D: Dialect, Scope, Sel> Select<D, Scope, Sel> {
         self.render_as::<D, Idx>()
     }
 
-    /// `SELECT count(*)` over this query's `FROM`/`JOIN`/`WHERE`/`GROUP BY`,
-    /// dropping its `ORDER BY`/`LIMIT`/`OFFSET` — a total is about the rows
-    /// that match, not the page being shown. `reselect(count())` keeps them,
-    /// which is what makes it the wrong tool for a paginated total.
+    /// How many rows this query would return, ignoring its
+    /// `ORDER BY`/`LIMIT`/`OFFSET` — a total is about what matches, not about
+    /// the page being shown. `reselect(count())` keeps them, which is what
+    /// makes it the wrong tool for a paginated total.
+    ///
+    /// A grouped query counts its *groups*, since that is what a page of it
+    /// would show, so the body becomes a subquery rather than having its
+    /// `GROUP BY` dropped or kept.
     pub fn count_sql(&self) -> (String, Vec<Value>) {
         let mut body = self.body.clone();
         body.order_by.clear();
         body.limit = None;
         body.offset = None;
-        body.render::<D>(&[crate::expr::count_item()])
+        let grouped = !body.group_by.is_empty();
+        let (sql, params) = body.render::<D>(&[crate::expr::count_item()]);
+        if grouped {
+            let mut wrapped = String::from("SELECT count(*) FROM (");
+            wrapped.push_str(&sql);
+            wrapped.push_str(") AS ");
+            crate::render::render_ident::<D>(&mut wrapped, "qbrs_total");
+            (wrapped, params)
+        } else {
+            (sql, params)
+        }
     }
 
     /// This query as an embeddable `Fragment`: an `EXISTS (..)` subquery, a

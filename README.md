@@ -178,9 +178,11 @@ A schema is a `#[derive(Table)]` struct, shown in the
   query's plus its own table, so referencing an outer column is legal; the
   resulting `EXISTS` is tagged with those tables, so filtering it onto a
   query that doesn't have them is a compile error.
-- **One query, two shapes** — `Select` is `Clone`, and `.reselect(sel)`
-  swaps the selection while keeping every clause, which is how one built-up
-  query serves both a `count()` and a page.
+- **One query, two shapes** — `.count(&pool)` answers "how many rows would
+  this return", ignoring `ORDER BY`/`LIMIT`/`OFFSET` and counting *groups*
+  for a grouped query; it borrows, so a paginated endpoint needs no clone.
+  `Select` is also `Clone`, and `.reselect(sel)` swaps the selection while
+  keeping every clause — for when the second shape isn't a count.
 - **Dynamic composition, no escape hatch** —
   [`07_dynamic_filters`](examples/examples/07_dynamic_filters.rs).
   `.filter()` doesn't change `Select`'s type, so it can be called

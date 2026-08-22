@@ -230,6 +230,18 @@ fn a_row_can_be_walked_by_a_downstream_trait() {
 }
 
 #[test]
+fn a_grouped_count_counts_groups_not_the_first_group() {
+    let (sql, _) = select((users::id, count()))
+        .from::<Postgres, _>(users::Table)
+        .group_by(users::id)
+        .count_sql();
+    assert_eq!(
+        sql,
+        "SELECT count(*) FROM (SELECT (count(*)) FROM \"users\" GROUP BY \"users\".\"id\") AS \"qbrs_total\""
+    );
+}
+
+#[test]
 fn a_count_drops_the_paging_the_page_needed() {
     let base = select((users::email,))
         .from::<Postgres, _>(users::Table)

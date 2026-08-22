@@ -35,11 +35,16 @@ pub enum Error {
 /// `qbrs_sqlx::Error` as the fixed error type.
 pub type Result<T> = std::result::Result<T, Error>;
 
-/// Every extension trait that puts a `.load()`/`.execute()` on a builder.
-/// Which one applies depends on the builder, so importing them one at a
-/// time is bookkeeping with no decision in it.
+/// Every extension trait that puts a terminal method on a builder, plus the
+/// error type a caller's own signatures have to name. Which trait applies
+/// depends on the builder, so importing them one at a time is bookkeeping
+/// with no decision in it — and `count` in particular resolves against
+/// `Iterator::count` with a confusing message until `CountExt` is in scope.
 pub mod prelude {
-    pub use crate::{ExecuteExt, LoadDynExt, LoadExt, LoadReturningExt, LoadSetOpExt, PreparedExt};
+    pub use crate::{
+        CountExt, ExecuteExt, LoadDynExt, LoadExt, LoadReturningExt, LoadSetOpExt, PreparedExt,
+    };
+    pub use crate::{Error, Result};
 }
 
 /// Binds a `Value` to a Postgres query parameter. `Value`'s typed `NullX`

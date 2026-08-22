@@ -16,6 +16,7 @@ pub mod prelude {
     pub use qbrs_core::delete::delete;
     pub use qbrs_core::dialect::{MySql, Postgres, Sqlite};
     pub use qbrs_core::expr::Column;
+    pub use qbrs_core::expr::Expr;
     pub use qbrs_core::expr::{
         AliasExt, BigInt, Bool, Bytes, ExprMethods, HasCount, Integer, Real, SortDir, Text,
         TextExprMethods, avg, count, count_of, max, min, sum,

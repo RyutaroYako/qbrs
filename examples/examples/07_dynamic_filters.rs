@@ -92,4 +92,18 @@ async fn main() {
         .await
         .expect("collected predicates");
     println!("active users with a big order: {big:?}");
+
+    // `.count()` answers "how many rows would this return" — the same
+    // FROM/JOIN/WHERE, with any ORDER BY/LIMIT/OFFSET ignored, so a
+    // paginated endpoint can report a total without cloning the query.
+    let page = select(users::email)
+        .from::<Postgres, _>(users::Table)
+        .filter(users::active.eq(true))
+        .order_by(users::id.asc())
+        .limit(1u32);
+    println!(
+        "page of {} shows {:?}",
+        page.count(&pool).await.expect("total"),
+        page.load(&pool).await.expect("page")
+    );
 }
