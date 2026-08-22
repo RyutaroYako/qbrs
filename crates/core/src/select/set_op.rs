@@ -116,13 +116,13 @@ impl<D: Dialect, Output> SetOp<D, Output> {
         self
     }
 
-    pub fn limit(mut self, n: impl Into<i64>) -> Self {
-        self.limit = Some(n.into());
+    pub fn limit(mut self, n: impl crate::row::IntoLimit) -> Self {
+        self.limit = Some(n.into_limit());
         self
     }
 
-    pub fn offset(mut self, n: impl Into<i64>) -> Self {
-        self.offset = Some(n.into());
+    pub fn offset(mut self, n: impl crate::row::IntoLimit) -> Self {
+        self.offset = Some(n.into_limit());
         self
     }
 

@@ -2,10 +2,9 @@
 //!
 //! A CTE's column names are just positions in a `SELECT` list, with nothing
 //! at the type level for `.from(some_cte)` to check against. `with!{}`
-//! (`core/src/with_macro.rs`) declares them, generating the same `Table`
-//! marker and `Column` consts `#[derive(Table)]` does — so a bound CTE *is*
-//! a real table to `Scope`/`Find`/`Superset`/`Selection`, with no parallel
-//! virtual-table machinery.
+//! declares them, generating everything `#[derive(Table)]` does — so a bound
+//! CTE *is* a real table to `Scope`/`Find`/`Superset`/`Selection`, with no
+//! parallel virtual-table machinery.
 //!
 //! Being syntactic, `with!{}` can't see the query it will be paired with.
 //! `with()` checks that the body produces the declared columns: the same
@@ -31,9 +30,9 @@ use crate::select::{Select, Selection};
 /// pinning down the exact tuple of native types its CTE body must produce.
 ///
 /// `COLUMN_NAMES` is rendered as an explicit column list
-/// (`WITH name (col1, col2) AS (..)`) so the outer query sees the declared
-/// names whatever the inner query produced — a computed expression like
-/// `sql!(BigInt, "sum(orders.total)")` has no usable name of its own.
+/// (`WITH name (col1, col2) AS (..)`), so the outer query refers to the
+/// declared names rather than to whatever Postgres would have called the
+/// body's columns.
 pub trait CteShape: Table {
     type Shape;
     /// The declared columns as a key list, so a body that selects the right

@@ -13,7 +13,7 @@ use qbrs_examples::*;
 use qbrs_sqlx::prelude::*;
 
 with! {
-    struct big_spenders { user_id: qbrs::expr::BigInt, total: qbrs::expr::BigInt }
+    struct big_spenders { user_id: BigInt, total: Nullable<BigInt> }
 }
 
 #[tokio::main]
@@ -22,26 +22,15 @@ async fn main() {
     seed(&pool).await;
 
     // The CTE body: total spend per user, restricted to users who've spent
-    // over 1000. `sum(..)` isn't a typed builtin yet (see `count()`'s doc
-    // comment for why), so it's built via the `sql!{}` escape hatch here —
-    // `big_spenders::Table` only exists once `cte::with(..)` binds a query
-    // to it, and nothing else in the crate needs to know a CTE is involved,
-    // since `big_spenders::Table` is a real `scope::Table` impl just like
-    // `users::Table`.
-    // Postgres's `sum(bigint)` returns `numeric`, not `bigint` — cast back
-    // explicitly so it decodes as a plain `i64` on the Rust side.
-    // The CTE declares a column called `total`, so the body has to produce
-    // one called `total`. A `sql!{}` fragment has no name of its own, so
-    // `label!` gives it one — the same thing that makes it readable by key.
-    qbrs::label!(total);
-
-    let totals = select((
-        orders::user_id,
-        sql!(BigInt, "sum(orders.total)::bigint").alias(label::total),
-    ))
-    .from::<Postgres, _>(orders::Table)
-    .group_by(orders::user_id)
-    .having(sql!(BigInt, "sum(orders.total)::bigint").gt(1000i64));
+    // over 1000. `sum(col)` is a real aggregate over a real column, so a
+    // missing join is a compile error here just as it is anywhere else, and
+    // the result is named after its column — which is what satisfies the
+    // CTE's declared `total` with nothing aliased. It decodes as
+    // `Option<i64>`: a sum over zero rows is NULL, whatever the column says.
+    let totals = select((orders::user_id, sum(orders::total)))
+        .from::<Postgres, _>(orders::Table)
+        .group_by(orders::user_id)
+        .having(sum(orders::total).gt(1000i64));
 
     let rows = select((users::email, big_spenders::total))
         .with(qbrs::cte::with(big_spenders::Table, &totals))
@@ -53,6 +42,6 @@ async fn main() {
 
     println!("users who've spent over 1000 (email, total):");
     for row in &rows {
-        println!("  ({:?}, {})", row.email(), row.get(big_spenders::total));
+        println!("  ({:?}, {:?})", row.email(), row.get(big_spenders::total));
     }
 }

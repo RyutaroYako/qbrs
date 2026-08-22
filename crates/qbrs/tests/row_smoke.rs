@@ -69,7 +69,7 @@ fn derive_generates_a_per_column_accessor() {
 
 /// Width subtyping: this accepts any row that carries `users::email`,
 /// whatever else it holds. `Idx` is the inferred lookup index every
-/// `GetField`/`Find` bound carries; callers never write it.
+/// `Field`/`Find` bound carries; callers never write it.
 fn masked<Idx, R: users::HasEmail<Idx, Value = String>>(row: &R) -> String {
     format!("{}***", &row.email()[..1])
 }

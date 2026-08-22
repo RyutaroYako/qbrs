@@ -112,6 +112,22 @@ where
 {
 }
 
+/// A scope's tables without their nullability: the `Req` list an expression
+/// carries. `Select::correlated`'s `EXISTS` needs it to say "this condition
+/// references everything the outer query had in scope", so a subquery can't
+/// be filtered onto a query that never joined those tables.
+pub trait ScopeTables {
+    type Tables;
+}
+
+impl ScopeTables for Nil {
+    type Tables = Nil;
+}
+
+impl<T: Table, N: Nullability, Tail: ScopeTables> ScopeTables for Cons<TableSlot<T, N>, Tail> {
+    type Tables = Cons<T, Tail::Tables>;
+}
+
 /// Flip every table already in a scope to `MaybeNull`. Used by RIGHT/FULL
 /// JOIN, which must retroactively make every previously-joined table
 /// nullable (mirrors Drizzle's `AppendToNullabilityMap`), before adding the

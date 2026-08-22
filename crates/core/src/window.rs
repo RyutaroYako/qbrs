@@ -5,9 +5,9 @@
 //! method is `.over()`, so `.over()` can't be reached from an arbitrary
 //! expression that would render nonsense SQL.
 //!
-//! **Known limitation**: only niladic ranking functions. `sum(col).over(..)`
-//! and friends need the real function-call design already deferred for
-//! `expr::count()`, since they recurse into an inner column reference.
+//! **Known limitation**: only the ranking functions. An aggregate used as a
+//! window function (`sum(col) OVER (..)`) needs `.over()` on the aggregate
+//! itself, which is a different builder shape from `WindowFunc`.
 
 use std::marker::PhantomData;
 

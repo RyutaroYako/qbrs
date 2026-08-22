@@ -12,14 +12,17 @@ pub mod prelude {
     pub use crate::{FromRow, Table, label, with};
     pub use qbrs_core::delete::delete;
     pub use qbrs_core::dialect::{MySql, Postgres, Sqlite};
+    pub use qbrs_core::expr::Column;
     pub use qbrs_core::expr::{
         AliasExt, BigInt, Bool, Bytes, ExprMethods, HasCount, Integer, IntoExpr, Real, SortDir,
-        Text, TextExprMethods, count,
+        Text, TextExprMethods, avg, count, count_of, max, min, sum,
     };
     pub use qbrs_core::insert::insert;
-    pub use qbrs_core::row::{IntoStructs, IntoTuples, Row};
-    pub use qbrs_core::scope::{Find, Nullable};
-    pub use qbrs_core::select::{DynSelect, OrderExt, Select, predicate, select};
+    pub use qbrs_core::row::{IntoLimit, IntoStructs, IntoTuples, Row, RowCons, RowNil};
+    pub use qbrs_core::scope::{Cons, Find, Nil, NotNull, Nullable, TableSlot};
+    pub use qbrs_core::select::{
+        Correlated, DynSelect, OrderExt, Predicate, Select, predicate, select,
+    };
     pub use qbrs_core::update::update;
     pub use qbrs_core::window::{
         HasDenseRank, HasRank, HasRowNumber, dense_rank, rank, row_number, window,

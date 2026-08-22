@@ -131,6 +131,7 @@ pub trait Named {
 /// spell, so a by-name lookup can never land on it.
 pub struct Anon;
 
+#[doc(hidden)]
 impl Named for Anon {
     type Name = NameEnd;
     const NAME: &'static str = "?";
@@ -193,10 +194,6 @@ impl<L: RowKeys> RowKeys for Row<L> {
 }
 
 /// One column can stand in for another: they are called the same thing.
-///
-/// `do_not_recommend` keeps the spelling out of the diagnostic — without it
-/// the reported obligation is the `Named::Name` equality, which prints the
-/// whole `NameChar` chain.
 #[diagnostic::on_unimplemented(
     message = "column `{Self}` can't stand in for `{Declared}`",
     label = "these two columns must have the same name",
@@ -274,6 +271,10 @@ impl<K, Req, S: SqlType> RowKey for Keyed<K, Req, S> {
 
 impl<K, Inner> RowKey for Aliased<K, Inner> {
     type Key = K;
+}
+
+impl<Req, S: SqlType> RowKey for crate::expr::Expr<Req, S> {
+    type Key = Anon;
 }
 
 /// A decoded row. Its fields are fixed by the query's selection list, and
@@ -422,6 +423,17 @@ impl<L: PartialEq> PartialEq for Row<L> {
 
 impl<L: Eq> Eq for Row<L> {}
 
+/// A limit or offset. A trait rather than `Into<i64>` so a `usize` page size
+/// — the shape a paginated handler already has — goes in without a cast.
+pub trait IntoLimit {
+    fn into_limit(self) -> i64;
+}
+
+macro_rules! into_limit {
+    ($($ty:ty),+) => { $( impl IntoLimit for $ty { fn into_limit(self) -> i64 { self as i64 } } )+ };
+}
+into_limit!(i32, i64, u8, u16, u32, usize);
+
 /// A row's fields as a plain tuple, in selection order.
 pub trait RowValues {
     type Values;
@@ -531,6 +543,7 @@ macro_rules! expr_key {
         #[derive(Clone, Copy)]
         pub struct $key;
 
+        #[doc(hidden)]
         impl $crate::row::Named for $key {
             type Name = $crate::type_name!($($ch),+);
             const NAME: &'static str = concat!($($ch),+);

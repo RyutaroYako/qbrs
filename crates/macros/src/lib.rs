@@ -6,12 +6,13 @@
 //! `#[column(generated)]`, and `#[column(default)]` are the only per-field
 //! attributes.
 //!
-//! `label!` declares output-column names for computed selections, and
-//! `#[derive(FromRow)]` maps a row into a plain struct by field name. All
-//! three live here rather than as `macro_rules!` in `qbrs-core` (where
-//! `sql!`, `prepare!`, and `with!` live) because all three turn an
-//! identifier into something a declarative macro cannot produce: another
-//! identifier (`HasEmail` from `email`), or its type-level spelling.
+//! `with!` declares a CTE's pseudo-table, `label!` declares output-column
+//! names for computed selections, and `#[derive(FromRow)]` maps a row into a
+//! plain struct by field name. All four live here rather than as
+//! `macro_rules!` in `qbrs-core` (where `sql!` and `prepare!` live) because
+//! all four turn an identifier into something a declarative macro cannot
+//! produce: another identifier (`HasEmail` from `email`), or its type-level
+//! spelling.
 
 use proc_macro::TokenStream;
 use proc_macro2::TokenStream as TokenStream2;
@@ -255,9 +256,10 @@ fn gen_schema_mod(
 }
 
 /// One column's `row.<name>()` accessor. The `Idx` parameter is the same
-/// inferred lookup index `row::GetField` and `scope::Find` carry; it can't
-/// be hidden, since an impl generic constrained only by a `where` clause
-/// isn't accepted.
+/// inferred lookup index `row::Field` and `scope::Find` carry; it can't be
+/// hidden, since an impl generic constrained only by a `where` clause isn't
+/// accepted. A helper reading two columns needs two of them — one index
+/// records one position.
 fn accessor_trait(trait_ident: &Ident, method: &Ident, key: &TokenStream2) -> TokenStream2 {
     quote! {
         pub trait #trait_ident<Idx> {

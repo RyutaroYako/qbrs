@@ -43,13 +43,13 @@ impl<D, Output> DynSelect<D, Output> {
     /// row count needs no proof that a table is joined. `order_by` doesn't
     /// follow them here — a sort key is a column reference, and the scope
     /// that would justify it is exactly what `.erase()` gave up.
-    pub fn limit(mut self, n: impl Into<i64>) -> Self {
-        self.body.limit = Some(n.into());
+    pub fn limit(mut self, n: impl crate::row::IntoLimit) -> Self {
+        self.body.limit = Some(n.into_limit());
         self
     }
 
-    pub fn offset(mut self, n: impl Into<i64>) -> Self {
-        self.body.offset = Some(n.into());
+    pub fn offset(mut self, n: impl crate::row::IntoLimit) -> Self {
+        self.body.offset = Some(n.into_limit());
         self
     }
 }

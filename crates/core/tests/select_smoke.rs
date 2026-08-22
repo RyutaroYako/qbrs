@@ -260,3 +260,45 @@ fn an_empty_in_list_renders_false_rather_than_invalid_sql() {
     let (sql, _) = q.to_sql();
     assert_eq!(sql, "SELECT \"users\".\"id\" FROM \"users\" WHERE FALSE");
 }
+
+#[test]
+fn aggregates_render_as_function_calls_over_real_columns() {
+    let q = select((users::id, qbrs_core::expr::count_of(orders::total)))
+        .from::<Postgres, _>(users::Table)
+        .inner_join(orders::Table, orders::user_id.eq(users::id))
+        .group_by(users::id);
+    let (sql, _) = q.to_sql();
+    assert_eq!(
+        sql,
+        "SELECT \"users\".\"id\", count(\"orders\".\"total\") FROM \"users\" INNER JOIN \"orders\" ON (\"orders\".\"user_id\" = \"users\".\"id\") GROUP BY \"users\".\"id\""
+    );
+}
+
+#[test]
+fn a_doubled_question_mark_is_a_literal_one() {
+    let q = select((users::id,))
+        .from::<Postgres, _>(users::Table)
+        .filter(qbrs_core::sql!(
+            Bool,
+            "users.name LIKE 'who??' OR users.name LIKE ?",
+            "a%"
+        ));
+    let (sql, params) = q.to_sql();
+    assert_eq!(
+        sql,
+        "SELECT \"users\".\"id\" FROM \"users\" WHERE (users.name LIKE 'who?' OR users.name LIKE $1)"
+    );
+    assert_eq!(params.len(), 1);
+}
+
+#[test]
+fn a_nullable_column_compares_against_a_non_nullable_one() {
+    // `users::name` is Text, `orders::total` is Integer; the point is that
+    // a Nullable<S> and an S are comparable, both ways round.
+    let q = select((users::id,))
+        .from::<Postgres, _>(users::Table)
+        .inner_join(orders::Table, orders::user_id.eq(users::id))
+        .filter(users::created_at.eq(orders::total));
+    let (sql, _) = q.to_sql();
+    assert!(sql.contains("\"users\".\"created_at\" = \"orders\".\"total\""));
+}

@@ -5,11 +5,11 @@
 
 use qbrs_core::delete::{Delete, DeleteReturning};
 use qbrs_core::dialect::Postgres;
-use qbrs_core::expr::{Aliased, Column, ColumnKey, Expr, Keyed, SqlType, Value};
+use qbrs_core::expr::Value;
 use qbrs_core::insert::{Insert, InsertReturning, InsertRow};
 use qbrs_core::row::{Row, RowCons, RowNil};
 use qbrs_core::scope::Table;
-use qbrs_core::select::{DynSelect, Prepared, PreparedParams, RowField, Select, Selection, SetOp};
+use qbrs_core::select::{DynSelect, Prepared, PreparedParams, Select, Selection, SetOp};
 use qbrs_core::update::{Update, UpdateReturning};
 use sqlx::Row as _;
 use sqlx::postgres::PgRow;
@@ -81,128 +81,32 @@ fn bind_all<'q>(
     Ok(query)
 }
 
-/// Decodes one selected item positionally out of a `PgRow`. Separate from
-/// `RowField` so `qbrs-core` never depends on `sqlx`: each impl adds a
-/// `Decode`/`Type` bound to an existing `RowField` impl. Join-derived
-/// `Option<T>` needs no special handling — `RowField::Value` already
-/// resolved it, and sqlx decodes `Option<T>` for free.
-pub trait PgDecodeField<Scope, Idx>: RowField<Scope, Idx> {
-    #[doc(hidden)]
-    fn decode_field(row: &PgRow, idx: &mut usize) -> sqlx::Result<Self::Value>;
-}
-
-macro_rules! decode_field {
-    (impl[$($generics:tt)*] $ty:ty) => {
-        impl<$($generics)*, Scope, Idx> PgDecodeField<Scope, Idx> for $ty
-        where
-            $ty: RowField<Scope, Idx>,
-            <$ty as RowField<Scope, Idx>>::Value:
-                for<'r> sqlx::Decode<'r, sqlx::Postgres> + sqlx::Type<sqlx::Postgres>,
-        {
-            fn decode_field(row: &PgRow, idx: &mut usize) -> sqlx::Result<Self::Value> {
-                let v = row.try_get::<Self::Value, _>(*idx)?;
-                *idx += 1;
-                Ok(v)
-            }
-        }
-    };
-}
-decode_field!(impl[C: ColumnKey] Column<C>);
-decode_field!(impl[Req, S: SqlType] Expr<Req, S>);
-decode_field!(impl[K, Req, S: SqlType] Keyed<K, Req, S>);
-decode_field!(impl[K, Inner] Aliased<K, Inner>);
-
-/// Decodes a whole `Selection<Scope, Idx>` out of a `PgRow`, positionally.
-pub trait PgDecode<Scope, Idx>: Selection<Scope, Idx> {
-    #[doc(hidden)]
-    fn decode_at(row: &PgRow, idx: &mut usize) -> sqlx::Result<Self::Output>;
-}
-
-macro_rules! decode_scalar {
-    (impl[$($generics:tt)*] $ty:ty) => {
-        impl<$($generics)*, Scope, Idx> PgDecode<Scope, Idx> for $ty
-        where
-            $ty: Selection<Scope, Idx> + PgDecodeField<Scope, Idx>,
-            $ty: Selection<Scope, Idx, Output = <$ty as RowField<Scope, Idx>>::Value>,
-        {
-            fn decode_at(row: &PgRow, idx: &mut usize) -> sqlx::Result<Self::Output> {
-                <$ty as PgDecodeField<Scope, Idx>>::decode_field(row, idx)
-            }
-        }
-    };
-}
-decode_scalar!(impl[C: ColumnKey] Column<C>);
-decode_scalar!(impl[Req, S: SqlType] Expr<Req, S>);
-decode_scalar!(impl[K, Req, S: SqlType] Keyed<K, Req, S>);
-decode_scalar!(impl[K, Inner] Aliased<K, Inner>);
-
-macro_rules! decode_row_chain {
-    ($row:ident, $idx:ident, $n:ident $i:ident) => {
-        RowCons::new(<$n as PgDecodeField<Scope, $i>>::decode_field($row, $idx)?, RowNil)
-    };
-    ($row:ident, $idx:ident, $n:ident $i:ident, $($rest:tt)*) => {
-        RowCons::new(
-            <$n as PgDecodeField<Scope, $i>>::decode_field($row, $idx)?,
-            decode_row_chain!($row, $idx, $($rest)*),
-        )
-    };
-}
-
-macro_rules! decode_tuple {
-    ($($n:ident $i:ident),+) => {
-        impl<Scope, $($n,)+ $($i,)+> PgDecode<Scope, ($($i,)+)> for ($($n,)+)
-        where
-            $($n: PgDecodeField<Scope, $i>,)+
-        {
-            fn decode_at(row: &PgRow, idx: &mut usize) -> sqlx::Result<Self::Output> {
-                Ok(Row::new(decode_row_chain!(row, idx, $($n $i),+)))
-            }
-        }
-    };
-}
-decode_tuple!(A IA);
-decode_tuple!(A IA, B IB);
-decode_tuple!(A IA, B IB, C IC);
-decode_tuple!(A IA, B IB, C IC, D ID);
-decode_tuple!(A IA, B IB, C IC, D ID, E IE);
-decode_tuple!(A IA, B IB, C IC, D ID, E IE, F IF);
-decode_tuple!(A IA, B IB, C IC, D ID, E IE, F IF, G IG);
-decode_tuple!(A IA, B IB, C IC, D ID, E IE, F IF, G IG, H IH);
-decode_tuple!(A IA, B IB, C IC, D ID, E IE, F IF, G IG, H IH, I II);
-decode_tuple!(A IA, B IB, C IC, D ID, E IE, F IF, G IG, H IH, I II, J IJ);
-decode_tuple!(A IA, B IB, C IC, D ID, E IE, F IF, G IG, H IH, I II, J IJ, K IK);
-decode_tuple!(A IA, B IB, C IC, D ID, E IE, F IF, G IG, H IH, I II, J IJ, K IK, L IL);
-decode_tuple!(A IA, B IB, C IC, D ID, E IE, F IF, G IG, H IH, I II, J IJ, K IK, L IL, M IM);
-decode_tuple!(A IA, B IB, C IC, D ID, E IE, F IF, G IG, H IH, I II, J IJ, K IK, L IL, M IM, N IN);
-decode_tuple!(A IA, B IB, C IC, D ID, E IE, F IF, G IG, H IH, I II, J IJ, K IK, L IL, M IM, N IN, O IO);
-decode_tuple!(A IA, B IB, C IC, D ID, E IE, F IF, G IG, H IH, I II, J IJ, K IK, L IL, M IM, N IN, O IO, P IP);
-
 /// Generic over `E: sqlx::PgExecutor` so every `.load()`/`.execute()` works
 /// against a `&PgPool` or a transaction alike. sqlx implements `Executor` for
 /// `&mut PgConnection`, not `Transaction`, so callers pass `&mut *tx`.
-async fn fetch_all<'e, Scope, Idx, Sel: PgDecode<Scope, Idx>, E: sqlx::PgExecutor<'e>>(
+async fn fetch_all<'e, T: DecodeRow, E: sqlx::PgExecutor<'e>>(
     executor: E,
     sql: &str,
     params: Vec<Value>,
-) -> Result<Vec<Sel::Output>> {
+) -> Result<Vec<T>> {
     let rows = bind_all(sqlx::query(sqlx::AssertSqlSafe(sql)), params)?
         .fetch_all(executor)
         .await?;
     rows.iter()
-        .map(|row| Sel::decode_at(row, &mut 0).map_err(Error::from))
+        .map(|row| T::decode_at(row, &mut 0).map_err(Error::from))
         .collect()
 }
 
-async fn fetch_optional<'e, Scope, Idx, Sel: PgDecode<Scope, Idx>, E: sqlx::PgExecutor<'e>>(
+async fn fetch_optional<'e, T: DecodeRow, E: sqlx::PgExecutor<'e>>(
     executor: E,
     sql: &str,
     params: Vec<Value>,
-) -> Result<Option<Sel::Output>> {
+) -> Result<Option<T>> {
     let row = bind_all(sqlx::query(sqlx::AssertSqlSafe(sql)), params)?
         .fetch_optional(executor)
         .await?;
     row.as_ref()
-        .map(|r| Sel::decode_at(r, &mut 0).map_err(Error::from))
+        .map(|r| T::decode_at(r, &mut 0).map_err(Error::from))
         .transpose()
 }
 
@@ -231,12 +135,16 @@ pub trait LoadExt<Idx> {
     ) -> impl std::future::Future<Output = Result<Option<Self::Output>>>;
 }
 
-impl<Scope, Sel: PgDecode<Scope, Idx>, Idx> LoadExt<Idx> for Select<Postgres, Scope, Sel> {
+impl<Scope, Sel, Idx> LoadExt<Idx> for Select<Postgres, Scope, Sel>
+where
+    Sel: Selection<Scope, Idx>,
+    Sel::Output: DecodeRow,
+{
     type Output = Sel::Output;
 
     async fn load<'e, E: sqlx::PgExecutor<'e>>(&self, executor: E) -> Result<Vec<Self::Output>> {
         let (sql, params) = self.to_sql::<Idx>();
-        fetch_all::<Scope, Idx, Sel, E>(executor, &sql, params).await
+        fetch_all::<Sel::Output, E>(executor, &sql, params).await
     }
 
     async fn load_one<'e, E: sqlx::PgExecutor<'e>>(
@@ -244,7 +152,7 @@ impl<Scope, Sel: PgDecode<Scope, Idx>, Idx> LoadExt<Idx> for Select<Postgres, Sc
         executor: E,
     ) -> Result<Option<Self::Output>> {
         let (sql, params) = self.to_sql::<Idx>();
-        fetch_optional::<Scope, Idx, Sel, E>(executor, &sql, params).await
+        fetch_optional::<Sel::Output, E>(executor, &sql, params).await
     }
 }
 
@@ -276,6 +184,13 @@ impl<T: Table> ExecuteExt for Delete<Postgres, T> {
     }
 }
 
+/// The scope a `RETURNING` clause is checked against: just the table being
+/// written to.
+type TableScope<T> = qbrs_core::scope::Cons<
+    qbrs_core::scope::TableSlot<T, qbrs_core::scope::NotNull>,
+    qbrs_core::scope::Nil,
+>;
+
 pub trait LoadReturningExt<Idx> {
     type Output;
     fn load<'e, E: sqlx::PgExecutor<'e>>(
@@ -287,79 +202,37 @@ pub trait LoadReturningExt<Idx> {
 impl<T: Table, R: InsertRow<Table = T>, Sel, Idx> LoadReturningExt<Idx>
     for InsertReturning<Postgres, T, R, Sel>
 where
-    Sel: PgDecode<
-            qbrs_core::scope::Cons<
-                qbrs_core::scope::TableSlot<T, qbrs_core::scope::NotNull>,
-                qbrs_core::scope::Nil,
-            >,
-            Idx,
-        >,
+    Sel: Selection<TableScope<T>, Idx>,
+    Sel::Output: DecodeRow,
 {
     type Output = Sel::Output;
     async fn load<'e, E: sqlx::PgExecutor<'e>>(&self, executor: E) -> Result<Vec<Self::Output>> {
         let (sql, params) = self.to_sql();
-        fetch_all::<
-            qbrs_core::scope::Cons<
-                qbrs_core::scope::TableSlot<T, qbrs_core::scope::NotNull>,
-                qbrs_core::scope::Nil,
-            >,
-            Idx,
-            Sel,
-            E,
-        >(executor, &sql, params)
-        .await
+        fetch_all::<Sel::Output, E>(executor, &sql, params).await
     }
 }
 
 impl<T: Table, Sel, Idx> LoadReturningExt<Idx> for UpdateReturning<Postgres, T, Sel>
 where
-    Sel: PgDecode<
-            qbrs_core::scope::Cons<
-                qbrs_core::scope::TableSlot<T, qbrs_core::scope::NotNull>,
-                qbrs_core::scope::Nil,
-            >,
-            Idx,
-        >,
+    Sel: Selection<TableScope<T>, Idx>,
+    Sel::Output: DecodeRow,
 {
     type Output = Sel::Output;
     async fn load<'e, E: sqlx::PgExecutor<'e>>(&self, executor: E) -> Result<Vec<Self::Output>> {
         let (sql, params) = self.to_sql();
-        fetch_all::<
-            qbrs_core::scope::Cons<
-                qbrs_core::scope::TableSlot<T, qbrs_core::scope::NotNull>,
-                qbrs_core::scope::Nil,
-            >,
-            Idx,
-            Sel,
-            E,
-        >(executor, &sql, params)
-        .await
+        fetch_all::<Sel::Output, E>(executor, &sql, params).await
     }
 }
 
 impl<T: Table, Sel, Idx> LoadReturningExt<Idx> for DeleteReturning<Postgres, T, Sel>
 where
-    Sel: PgDecode<
-            qbrs_core::scope::Cons<
-                qbrs_core::scope::TableSlot<T, qbrs_core::scope::NotNull>,
-                qbrs_core::scope::Nil,
-            >,
-            Idx,
-        >,
+    Sel: Selection<TableScope<T>, Idx>,
+    Sel::Output: DecodeRow,
 {
     type Output = Sel::Output;
     async fn load<'e, E: sqlx::PgExecutor<'e>>(&self, executor: E) -> Result<Vec<Self::Output>> {
         let (sql, params) = self.to_sql();
-        fetch_all::<
-            qbrs_core::scope::Cons<
-                qbrs_core::scope::TableSlot<T, qbrs_core::scope::NotNull>,
-                qbrs_core::scope::Nil,
-            >,
-            Idx,
-            Sel,
-            E,
-        >(executor, &sql, params)
-        .await
+        fetch_all::<Sel::Output, E>(executor, &sql, params).await
     }
 }
 

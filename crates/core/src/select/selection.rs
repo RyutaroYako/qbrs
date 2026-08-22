@@ -2,7 +2,7 @@
 
 use crate::expr::{AliasKey, Aliased, Column, ColumnKey, Expr, ExprKind, Keyed, SqlType};
 use crate::render::SelectItem;
-use crate::row::{Anon, Named, Row, RowCons, RowNil};
+use crate::row::{Named, Row, RowCons, RowKey, RowNil};
 use crate::scope::{Find, Superset, Table, WrapNullable};
 
 /// One element of a selection list: the key its value is filed under in the
@@ -16,8 +16,7 @@ use crate::scope::{Find, Superset, Table, WrapNullable};
 /// Scope membership is proven as a side effect of this trait type-checking
 /// at all, through the `Find`/`Superset` bounds below — so callers need no
 /// separate check.
-pub trait RowField<Scope, Idx> {
-    type Key;
+pub trait RowField<Scope, Idx>: RowKey {
     type Value;
     fn item(&self) -> SelectItem;
 }
@@ -28,7 +27,6 @@ where
     C::Sql: WrapNullable<<Scope as Find<C::Table, Idx>>::Nullability>,
     <C::Sql as WrapNullable<<Scope as Find<C::Table, Idx>>::Nullability>>::Output: SqlType,
 {
-    type Key = C;
     type Value = <<C::Sql as WrapNullable<
         <Scope as Find<C::Table, Idx>>::Nullability,
     >>::Output as SqlType>::Native;
@@ -48,7 +46,6 @@ impl<Req, S: SqlType, Scope, Idx> RowField<Scope, Idx> for Expr<Req, S>
 where
     Scope: Superset<Req, Idx>,
 {
-    type Key = Anon;
     type Value = S::Native;
     fn item(&self) -> SelectItem {
         SelectItem::bare(self.kind.clone())
@@ -59,7 +56,6 @@ impl<K, Req, S: SqlType, Scope, Idx> RowField<Scope, Idx> for Keyed<K, Req, S>
 where
     Scope: Superset<Req, Idx>,
 {
-    type Key = K;
     type Value = S::Native;
     fn item(&self) -> SelectItem {
         SelectItem::bare(self.kind.clone())
@@ -70,7 +66,6 @@ impl<K: AliasKey, Inner, Scope, Idx> RowField<Scope, Idx> for Aliased<K, Inner>
 where
     Inner: RowField<Scope, Idx>,
 {
-    type Key = K;
     type Value = <Inner as RowField<Scope, Idx>>::Value;
     fn item(&self) -> SelectItem {
         SelectItem::labeled(self.inner.item().kind, <K as Named>::NAME)
@@ -80,6 +75,11 @@ where
 /// A whole `SELECT` list. A tuple decodes to a `row::Row` keyed by each
 /// element's `RowField::Key`; a single un-tupled element decodes to its bare
 /// value, since there is nothing to key it against.
+#[diagnostic::on_unimplemented(
+    message = "`{Self}` isn't a valid selection list here",
+    label = "a selection is a column, an expression, or a tuple of up to 16 of them",
+    note = "every element also has to be in scope: `.from(..)`/`.join(..)` the tables it names"
+)]
 pub trait Selection<Scope, Idx> {
     type Output;
     fn items(&self) -> Vec<SelectItem>;
@@ -105,11 +105,11 @@ scalar_selection!(impl[K, Inner] Aliased<K, Inner>);
 
 macro_rules! row_chain {
     ($n:ident $i:ident) => {
-        RowCons<<$n as RowField<Scope, $i>>::Key, <$n as RowField<Scope, $i>>::Value, RowNil>
+        RowCons<<$n as RowKey>::Key, <$n as RowField<Scope, $i>>::Value, RowNil>
     };
     ($n:ident $i:ident, $($rest:tt)*) => {
         RowCons<
-            <$n as RowField<Scope, $i>>::Key,
+            <$n as RowKey>::Key,
             <$n as RowField<Scope, $i>>::Value,
             row_chain!($($rest)*),
         >

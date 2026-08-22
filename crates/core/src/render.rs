@@ -40,6 +40,19 @@ pub fn render_expr<D: Dialect>(expr: &ExprKind, out: &mut String, params: &mut V
             render_expr::<D>(inner, out, params);
             out.push(')');
         }
+        ExprKind::Cast { expr, sql_type } => {
+            out.push_str("CAST(");
+            render_expr::<D>(expr, out, params);
+            out.push_str(" AS ");
+            out.push_str(sql_type);
+            out.push(')');
+        }
+        ExprKind::Func { name, arg } => {
+            out.push_str(name);
+            out.push('(');
+            render_expr::<D>(arg, out, params);
+            out.push(')');
+        }
         ExprKind::IsNull { expr, negated } => {
             out.push('(');
             render_expr::<D>(expr, out, params);
@@ -180,16 +193,27 @@ impl Fragment {
     }
 
     /// Appends this fragment to a query being rendered, renumbering its
-    /// placeholders to continue `params`' sequence.
+    /// placeholders to continue `params`' sequence. `??` is a literal `?`,
+    /// which is what makes Postgres's `jsonb` operators and a `?` inside a
+    /// string literal reachable through `sql!{}`.
     pub(crate) fn splice_into<D: Dialect>(&self, out: &mut String, params: &mut Vec<Value>) {
         let mut next = self.params.iter();
-        for c in self.sql.chars() {
-            if c == '?' {
-                params.push(next.next().expect("one param per `?`").clone());
-                out.push_str(&D::placeholder(params.len()));
-            } else {
+        let mut chars = self.sql.chars().peekable();
+        while let Some(c) = chars.next() {
+            if c != '?' {
                 out.push(c);
+                continue;
             }
+            if chars.peek() == Some(&'?') {
+                chars.next();
+                out.push('?');
+                continue;
+            }
+            let value = next
+                .next()
+                .expect("`sql!` was given fewer values than it has `?` placeholders (write `??` for a literal `?`)");
+            params.push(value.clone());
+            out.push_str(&D::placeholder(params.len()));
         }
     }
 }

@@ -170,9 +170,17 @@ A schema is a `#[derive(Table)]` struct, shown in the
   an `Expr` type, so a collection of them goes through `predicate(..)` and
   `.filter_all(..)`, which discharges the scope requirement up front.
 - **Predicates** — `.eq()`/`.ne()`/`.lt()`/`.gt()`/`.like()`, plus
-  `.is_null()`/`.is_not_null()` and `.is_in([..])`. Comparing to NULL with
-  `=` is never true in SQL, so `.eq(None)` isn't expressible: the question
-  is `.is_null()`.
+  `.is_null()`/`.is_not_null()` and `.is_in([..])`. A nullable column and a
+  non-nullable one compare freely, so an optional foreign key joins like any
+  other. Comparing to NULL with `=` is never true in SQL, so `.eq(None)`
+  isn't expressible: the question is `.is_null()`.
+- **Aggregates** — `count()` (`count(*)`), plus `count_of(col)`, `sum(col)`,
+  `avg(col)`, `min(col)`, `max(col)`. Each takes a real column, so a missing
+  join is a compile error rather than a `must appear in the GROUP BY clause`
+  at run time, and each is named after its column, so it reads back as
+  `row.get(sum(orders::total))` and satisfies a CTE or DTO field called
+  `total`. All are nullable except `count`: an aggregate over zero rows is
+  NULL.
 - **Raw SQL escape hatch** (`sql!{}`) —
   [`06_raw_sql`](examples/examples/06_raw_sql.rs). Values still bind as real
   parameters, never spliced as text.
@@ -230,8 +238,20 @@ A schema is a `#[derive(Table)]` struct, shown in the
   filled from a `LEFT JOIN` declares `Option<T>` where one filled from an
   `INNER JOIN` declares `T`. It names no column and no table, but it does
   pin the join's nullability.
-- Aggregates over a column (`count(col)`, `sum(col)`) aren't built yet;
-  `count()` is `count(*)`, which counts rows, not non-NULL values.
+- `count()` is `count(*)` — rows, not non-NULL values; `count_of(col)` is
+  the latter. `sum`/`avg` on a `BIGINT` column render a `CAST` back from the
+  wider type the database picks, which can overflow where the raw sum would
+  not.
+- Two selections are compared by column name, so a `UNION` of branches whose
+  columns are named differently, or a CTE body with a computed column, needs
+  a `label!` alias on one side. A `UNION` also needs both branches to be
+  tuple selections, and to agree on nullability.
+- No table aliasing, so a table can't be joined to itself.
+- A correlated `EXISTS` is tagged with the outer query's tables, so it can
+  only be filtered onto that query — but `prepare!{}` doesn't tie its
+  `Params` struct to the query it was built from, and a mismatch surfaces at
+  `.execute()` as `UnresolvedPlaceholder` rather than at compile time.
+- `sql!{}` treats `?` as a bind slot; write `??` for a literal one.
 
 ## Status
 
@@ -246,11 +266,11 @@ A schema is a `#[derive(Table)]` struct, shown in the
 correlated subqueries (`EXISTS`/`NOT EXISTS`), the `sql!{}` escape hatch,
 reusable named-placeholder prepared statements (`prepare!{}`), upsert
 (`ON CONFLICT`), `UNION`/`INTERSECT`/`EXCEPT`, ranking window functions
-(`row_number()`/`rank()`/`dense_rank()`), non-recursive CTEs (`with!{}`),
-column-keyed result rows, and `#[derive(FromRow)]` struct mapping
+(`row_number()`/`rank()`/`dense_rank()`), aggregates, non-recursive CTEs
+(`with!{}`), column-keyed result rows, and `#[derive(FromRow)]` struct mapping
 are implemented and tested against a real Postgres instance. Not yet done:
-`WITH RECURSIVE`, aggregate-as-window-functions (`sum(col) OVER (..)`), and
-relations/eager-loading (intentionally scoped out until the core
+`WITH RECURSIVE`, aggregate-as-window-functions (`sum(col) OVER (..)`), table
+aliasing/self-joins, and relations/eager-loading (intentionally scoped out until the core
 query-building layer has been stable for a while).
 
 ## Workspace layout

@@ -7,7 +7,9 @@ use std::marker::PhantomData;
 use crate::dialect::{Dialect, RawEmbed, SupportsFullOuterJoin, SupportsRightJoin};
 use crate::expr::{Bool, Expr, ExprKind, IntoExpr, SqlType, Value};
 use crate::render::{Fragment, render_expr, render_select_list};
-use crate::scope::{Cons, MapNullable, MaybeNull, Nil, NotNull, Superset, Table, TableSlot};
+use crate::scope::{
+    Cons, MapNullable, MaybeNull, Nil, NotNull, ScopeTables, Superset, Table, TableSlot,
+};
 
 mod dyn_select;
 mod prepared;
@@ -214,6 +216,16 @@ impl<D, Scope, Sel> Select<D, Scope, Sel> {
         }
     }
 
+    /// Swaps the selection list, keeping every clause. With `Clone`, this is
+    /// how one built-up query serves both a count and a page.
+    pub fn reselect<NewSel>(self, selection: NewSel) -> Select<D, Scope, NewSel> {
+        Select {
+            body: self.body,
+            selection,
+            _marker: PhantomData,
+        }
+    }
+
     /// AND-folded, and callable any number of times — conditionally, in a
     /// loop, from a helper — without changing `Self`'s type, so the most
     /// common kind of dynamic query needs no escape hatch.
@@ -262,13 +274,13 @@ impl<D, Scope, Sel> Select<D, Scope, Sel> {
         self
     }
 
-    pub fn limit(mut self, n: impl Into<i64>) -> Self {
-        self.body.limit = Some(n.into());
+    pub fn limit(mut self, n: impl crate::row::IntoLimit) -> Self {
+        self.body.limit = Some(n.into_limit());
         self
     }
 
-    pub fn offset(mut self, n: impl Into<i64>) -> Self {
-        self.body.offset = Some(n.into());
+    pub fn offset(mut self, n: impl crate::row::IntoLimit) -> Self {
+        self.body.offset = Some(n.into_limit());
         self
     }
 
@@ -477,6 +489,15 @@ impl SelectBody {
     }
 }
 
+/// A subquery built against an outer query's scope. Distinct from `Select`
+/// so `EXISTS` can report the outer tables it references: those are exactly
+/// `Outer`'s, and an `EXISTS` condition is only usable where they are all in
+/// scope.
+pub struct Correlated<D, Outer, Scope, Sel> {
+    inner: Select<D, Scope, Sel>,
+    _marker: PhantomData<fn() -> Outer>,
+}
+
 impl<D, Scope, Sel> Select<D, Scope, Sel> {
     /// Starts a correlated subquery: a fresh `SELECT` whose scope is
     /// `Cons<TableSlot<T, NotNull>, Scope>` — the new table, prepended onto
@@ -490,37 +511,66 @@ impl<D, Scope, Sel> Select<D, Scope, Sel> {
         &self,
         _table: T,
         selection: InnerSel,
-    ) -> Select<D, Cons<TableSlot<T, NotNull>, Scope>, InnerSel> {
-        Select {
-            body: SelectBody::new(T::NAME, Vec::new()),
-            selection,
+    ) -> Correlated<D, Scope, Cons<TableSlot<T, NotNull>, Scope>, InnerSel> {
+        Correlated {
+            inner: Select {
+                body: SelectBody::new(T::NAME, Vec::new()),
+                selection,
+                _marker: PhantomData,
+            },
             _marker: PhantomData,
         }
     }
 }
 
-impl<D: Dialect, Scope, Sel> Select<D, Scope, Sel> {
-    /// `EXISTS (<this query>)`, usable as a `WHERE`/`HAVING` condition on
-    /// whatever outer query this subquery was built from (via
-    /// `.correlated()`). `Req = Nil`: the subquery is treated as an opaque,
-    /// already-validated fragment (its own `.filter()` calls were already
-    /// checked against `Cons<Inner, OuterScope>` when it was built) — the
-    /// same trust boundary `sql!{}` uses, not a new one.
-    pub fn exists<Idx>(&self) -> Expr<Nil, Bool>
+impl<D, Outer, Scope, Sel> Correlated<D, Outer, Scope, Sel> {
+    /// Checked against the subquery's own scope, which includes every table
+    /// the outer query had — that is what makes it *correlated*.
+    pub fn filter<Req, Idxs>(mut self, cond: Expr<Req, Bool>) -> Self
+    where
+        Scope: Superset<Req, Idxs>,
+    {
+        self.inner = self.inner.filter(cond);
+        self
+    }
+
+    pub fn inner_join<New: Table, Req, Idxs>(
+        self,
+        table: New,
+        on: Expr<Req, Bool>,
+    ) -> Correlated<D, Outer, Cons<TableSlot<New, NotNull>, Scope>, Sel>
+    where
+        Cons<TableSlot<New, NotNull>, Scope>: Superset<Req, Idxs>,
+    {
+        Correlated {
+            inner: self.inner.inner_join(table, on),
+            _marker: PhantomData,
+        }
+    }
+}
+
+impl<D: Dialect, Outer: ScopeTables, Scope, Sel> Correlated<D, Outer, Scope, Sel> {
+    /// `EXISTS (<this subquery>)`, tagged with the outer tables it
+    /// references so it can only be filtered onto a query that has them in
+    /// scope. Its own column references were already checked against
+    /// `Scope` when it was built.
+    pub fn exists<Idx>(&self) -> Expr<Outer::Tables, Bool>
     where
         Sel: Selection<Scope, Idx>,
     {
         Expr::from_kind(ExprKind::Raw(
-            self.fragment::<Idx>().enclosed_in("EXISTS (", ")"),
+            self.inner.fragment::<Idx>().enclosed_in("EXISTS (", ")"),
         ))
     }
 
-    pub fn not_exists<Idx>(&self) -> Expr<Nil, Bool>
+    pub fn not_exists<Idx>(&self) -> Expr<Outer::Tables, Bool>
     where
         Sel: Selection<Scope, Idx>,
     {
         Expr::from_kind(ExprKind::Raw(
-            self.fragment::<Idx>().enclosed_in("NOT EXISTS (", ")"),
+            self.inner
+                .fragment::<Idx>()
+                .enclosed_in("NOT EXISTS (", ")"),
         ))
     }
 }

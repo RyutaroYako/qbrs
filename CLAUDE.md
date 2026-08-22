@@ -200,12 +200,11 @@ Insert fields use `Defaultable<T>` (and `Defaultable<Option<T>>` for nullable-wi
 omit / explicit-NULL / explicit-value stay distinguishable; update fields use `Option<T>` /
 `Option<Option<T>>` for untouched / set-NULL / set-value.
 
-`with!{}` generates the same shape for a CTE pseudo-table, so a CTE *is* a real table to
-`Scope`/`Find`/`Superset` with no separate virtual-table machinery — minus accessor traits,
-since it's a `macro_rules!` and can't build a `HasFoo` identifier. Its declared column list
-is checked against the actual CTE body at `cte::with()` via
-`RowValues::Values = Marker::Shape` associated-type equality — the same trick `SetOp` uses
-for `UNION` branch compatibility.
+`with!{}` generates the same shape for a CTE pseudo-table — markers, consts, and accessor
+traits alike — so a CTE *is* a real table to `Scope`/`Find`/`Superset` with no separate
+virtual-table machinery. Its declared columns are checked against the actual body at
+`cte::with()` on both values (`RowValues`) and names (`row::SameNames`), the same pair
+`SetOp` requires of `UNION` branches.
 
 ### Execution layer (`crates/qbrs-sqlx`)
 
