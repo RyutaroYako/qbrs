@@ -33,13 +33,14 @@ pub mod prelude {
         Cons, Find, MaybeNull, Nil, NotNull, Nullable, Superset, TableSlot,
     };
     pub use qbrs_core::select::{
-        Correlated, DynSelect, OrderExt, Predicate, Prepared, Select, Selection, SetOp, nth,
-        predicate, select,
+        Condition, Correlated, DynSelect, OrderExt, OrderKey, Ordinal, OrdinalKey, Predicate,
+        Prepared, Select, Selection, SetOp, nth, predicate, select,
     };
     pub use qbrs_core::statement::{Returning, ReturningExt, Statement};
     pub use qbrs_core::update::{NothingToSet, Update, UpdateRow, update};
     pub use qbrs_core::window::{
-        HasDenseRank, HasRank, HasRowNumber, dense_rank, rank, row_number, window,
+        HasDenseRank, HasRank, HasRowNumber, Window, WindowFunc, dense_rank, rank, row_number,
+        window,
     };
     pub use qbrs_core::{prepare, sql};
 }

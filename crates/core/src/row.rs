@@ -139,9 +139,15 @@ pub trait Named {
     const NAME: &'static str;
 }
 
+/// A key someone wrote down: a column, a `label!`, or one of the built-in
+/// expression keys. `Anon` is deliberately not one, which is what keeps two
+/// unnamed columns from standing in for each other and keeps an unnamed
+/// field out of reach of `.get()`.
+pub trait Spelled: Named {}
+
 /// The key of a selected item that carries no name of its own — a bare
 /// `sql!{}` fragment. Its `Name` is the empty chain, which no identifier can
-/// spell, so a by-name lookup can never land on it.
+/// spell, so a by-name lookup can never land on it either.
 pub struct Anon;
 
 #[doc(hidden)]
@@ -210,15 +216,15 @@ impl<L: RowKeys> RowKeys for Row<L> {
 #[diagnostic::on_unimplemented(
     message = "column `{Self}` can't stand in for `{Declared}`",
     label = "these two columns must have the same name",
-    note = "the two sides are matched by name: `.label(label::..)` whichever one is spelled wrong"
+    note = "matched by name: `.label(label::..)` whichever side is spelled wrong — and an unnamed expression (`Anon`) has no name to match with at all"
 )]
 pub trait SameNameAs<Declared> {}
 
 #[diagnostic::do_not_recommend]
 impl<A, B> SameNameAs<B> for A
 where
-    A: Named,
-    B: Named<Name = <A as Named>::Name>,
+    A: Spelled,
+    B: Spelled<Name = <A as Named>::Name>,
 {
 }
 
@@ -294,10 +300,6 @@ impl<Req, S: SqlType> RowKey for crate::expr::Expr<Req, S> {
     type Key = Anon;
 }
 
-impl<Req, S: SqlType> RowKey for crate::expr::Declared<Req, S> {
-    type Key = Anon;
-}
-
 /// A value that can name a field at a `.get()`/`.take()` call. Every
 /// `RowKey` can *file* a field; only these can find one again, which is what
 /// keeps an unlabelled expression's `Anon` field out of reach of any other
@@ -310,7 +312,7 @@ impl<Req, S: SqlType> RowKey for crate::expr::Declared<Req, S> {
 pub trait LookupKey: RowKey {}
 
 impl<C: ColumnKey> LookupKey for Column<C> {}
-impl<K, Req, S: SqlType> LookupKey for Keyed<K, Req, S> {}
+impl<K: Spelled, Req, S: SqlType> LookupKey for Keyed<K, Req, S> {}
 impl<K, Inner> LookupKey for Labeled<K, Inner> {}
 
 /// A decoded row. Its fields are fixed by the query's selection list, and
@@ -585,6 +587,9 @@ macro_rules! expr_key {
             type Name = $crate::type_name!($($ch),+);
             const NAME: &'static str = concat!($($ch),+);
         }
+
+        #[doc(hidden)]
+        impl $crate::row::Spelled for $key {}
 
         #[doc = $doc]
         pub trait $accessor<Idx> {

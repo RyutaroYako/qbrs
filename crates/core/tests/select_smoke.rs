@@ -41,6 +41,7 @@ mod users {
             type Name = qbrs_core::type_name!('i', 'd');
             const NAME: &'static str = "id";
         }
+        impl qbrs_core::row::Spelled for id {}
         #[derive(Clone, Copy)]
         pub struct name;
         impl ColumnKey for name {
@@ -51,6 +52,7 @@ mod users {
             type Name = qbrs_core::type_name!('n', 'a', 'm', 'e');
             const NAME: &'static str = "name";
         }
+        impl qbrs_core::row::Spelled for name {}
         #[derive(Clone, Copy)]
         pub struct active;
         impl ColumnKey for active {
@@ -61,6 +63,7 @@ mod users {
             type Name = qbrs_core::type_name!('a', 'c', 't', 'i', 'v', 'e');
             const NAME: &'static str = "active";
         }
+        impl qbrs_core::row::Spelled for active {}
         #[derive(Clone, Copy)]
         pub struct created_at;
         impl ColumnKey for created_at {
@@ -71,6 +74,7 @@ mod users {
             type Name = qbrs_core::type_name!('c', 'r', 'e', 'a', 't', 'e', 'd', '_', 'a', 't');
             const NAME: &'static str = "created_at";
         }
+        impl qbrs_core::row::Spelled for created_at {}
     }
 
     pub const id: Column<columns::id> = Column::new();
@@ -99,6 +103,7 @@ mod orders {
             type Name = qbrs_core::type_name!('u', 's', 'e', 'r', '_', 'i', 'd');
             const NAME: &'static str = "user_id";
         }
+        impl qbrs_core::row::Spelled for user_id {}
         #[derive(Clone, Copy)]
         pub struct total;
         impl ColumnKey for total {
@@ -109,6 +114,7 @@ mod orders {
             type Name = qbrs_core::type_name!('t', 'o', 't', 'a', 'l');
             const NAME: &'static str = "total";
         }
+        impl qbrs_core::row::Spelled for total {}
     }
 
     pub const user_id: Column<columns::user_id> = Column::new();
@@ -327,20 +333,23 @@ fn aggregates_render_as_function_calls_over_real_columns() {
 }
 
 #[test]
-fn a_doubled_question_mark_is_a_literal_one() {
+fn a_literal_question_mark_travels_as_a_bound_value() {
+    // There is no `??` escape: MySQL and SQLite write their own bind
+    // parameters as `?`, so a `?` left in the text would be read as one.
     let q = select((users::id,))
         .from::<Postgres, _>(users::Table)
         .filter(qbrs_core::sql!(
             Bool,
-            "users.name LIKE 'who??' OR users.name LIKE ?",
+            "users.name LIKE ? OR users.name LIKE ?",
+            "who?",
             "a%"
         ));
     let (sql, params) = q.to_sql();
     assert_eq!(
         sql,
-        "SELECT \"users\".\"id\" FROM \"users\" WHERE (users.name LIKE 'who?' OR users.name LIKE $1)"
+        "SELECT \"users\".\"id\" FROM \"users\" WHERE (users.name LIKE $1 OR users.name LIKE $2)"
     );
-    assert_eq!(params.len(), 1);
+    assert_eq!(params.len(), 2);
 }
 
 #[test]

@@ -3,7 +3,7 @@
 //! linear as join count grows — diesel's join-tree is documented to blow up
 //! exponentially past ~7 joins (diesel#3223).
 //!
-//! `cols_*` binaries measure the other axis: `row::GetField` walks a
+//! `cols_*` binaries measure the other axis: `row::Field` walks a
 //! selection's key list the same way `Find` walks a scope, so selection
 //! width has its own linear cost that join count doesn't cover.
 
@@ -89,7 +89,7 @@ macro_rules! declare_columns {
 }
 
 /// Build a `Row<RowCons<..>>` type from a list of column keys, so the
-/// `GetField` walk can be measured past the arity a tuple selection allows.
+/// `Field` walk can be measured past the arity a tuple selection allows.
 #[macro_export]
 macro_rules! row_of {
     () => { $crate::__private::RowNil };
@@ -126,7 +126,7 @@ where
 /// over a scope of arbitrary depth.
 pub fn assert_map_nullable<S: MapNullable>() {}
 
-/// Exercises `row::GetField<K, _>` at whatever depth `L` puts `K` at — the
+/// Exercises `row::Field<K, _>` at whatever depth `L` puts `K` at — the
 /// selection-width counterpart to `assert_contains`.
 pub fn assert_field<L, K, I>()
 where

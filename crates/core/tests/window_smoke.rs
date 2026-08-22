@@ -40,6 +40,7 @@ mod employees {
             type Name = qbrs_core::type_name!('d', 'e', 'p', 'a', 'r', 't', 'm', 'e', 'n', 't');
             const NAME: &'static str = "department";
         }
+        impl qbrs_core::row::Spelled for department {}
         #[derive(Clone, Copy)]
         pub struct salary;
         impl ColumnKey for salary {
@@ -50,6 +51,7 @@ mod employees {
             type Name = qbrs_core::type_name!('s', 'a', 'l', 'a', 'r', 'y');
             const NAME: &'static str = "salary";
         }
+        impl qbrs_core::row::Spelled for salary {}
     }
 
     pub const department: Column<columns::department> = Column::new();
@@ -75,6 +77,7 @@ mod orders {
             type Name = qbrs_core::type_name!('t', 'o', 't', 'a', 'l');
             const NAME: &'static str = "total";
         }
+        impl qbrs_core::row::Spelled for total {}
     }
 
     pub const total: Column<columns::total> = Column::new();

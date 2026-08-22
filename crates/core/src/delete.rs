@@ -3,10 +3,10 @@
 use std::marker::PhantomData;
 
 use crate::dialect::Dialect;
-use crate::expr::{Bool, Expr, ExprKind};
+use crate::expr::ExprKind;
 use crate::render::{QuerySink, Sink, render_and_list, render_ident};
-use crate::scope::{BaseTable, Superset, Table};
-use crate::select::Predicate;
+use crate::scope::{BaseTable, Table};
+use crate::select::{Condition, Predicate};
 use crate::statement::{Statement, WrittenTable};
 
 pub fn delete<D, T: BaseTable>(_table: T) -> Delete<D, T> {
@@ -32,11 +32,8 @@ pub struct Delete<D, T: Table> {
 }
 
 impl<D, T: Table> Delete<D, T> {
-    pub fn filter<Req, Idxs>(mut self, cond: Expr<Req, Bool>) -> Self
-    where
-        WrittenTable<T>: Superset<Req, Idxs>,
-    {
-        self.wheres.push(cond.kind);
+    pub fn filter<C: Condition<WrittenTable<T>, Idxs>, Idxs>(mut self, cond: C) -> Self {
+        self.wheres.push(cond.into_predicate().into_kind());
         self
     }
 

@@ -182,8 +182,9 @@ async fn sqlite_executes_every_rendered_statement_shape() {
     .await;
     assert_eq!(offset_only.len(), 1);
 
-    // A branch that pages: SQLite reads a bare `LIMIT` as the whole
-    // operation's, so this one has to be written as a derived table.
+    // Branches that carry their own `ORDER BY`/`LIMIT`, or a `WITH`: each
+    // binds to the branch, not to the compound, which is what the derived
+    // table around every SQLite branch is for.
     let paged_union = run(
         &pool,
         select((users::email,))
@@ -195,6 +196,36 @@ async fn sqlite_executes_every_rendered_statement_shape() {
     )
     .await;
     assert_eq!(paged_union.len(), 2);
+
+    let ordered_union = run(
+        &pool,
+        select((users::email,))
+            .from::<Sqlite, _>(users::Table)
+            .order_by(users::id.asc())
+            .union(&select((users::email,)).from::<Sqlite, _>(users::Table))
+            .to_sql(),
+    )
+    .await;
+    assert_eq!(ordered_union.len(), 2);
+
+    let cte_branch = run(
+        &pool,
+        select((big_orders::user_id,))
+            .from::<Sqlite, _>(users::Table)
+            .inner_join(
+                with(
+                    big_orders::Table,
+                    &select((orders::user_id, sum(orders::total)))
+                        .from::<Sqlite, _>(orders::Table)
+                        .group_by(orders::user_id),
+                ),
+                big_orders::user_id.eq(users::id),
+            )
+            .union(&select((orders::user_id,)).from::<Sqlite, _>(orders::Table))
+            .to_sql(),
+    )
+    .await;
+    assert!(!cte_branch.is_empty());
 
     let union = run(
         &pool,

@@ -39,6 +39,7 @@ mod users {
             type Name = qbrs_core::type_name!('i', 'd');
             const NAME: &'static str = "id";
         }
+        impl qbrs_core::row::Spelled for id {}
     }
 
     pub const id: Column<columns::id> = Column::new();
@@ -63,6 +64,7 @@ mod orders {
             type Name = qbrs_core::type_name!('u', 's', 'e', 'r', '_', 'i', 'd');
             const NAME: &'static str = "user_id";
         }
+        impl qbrs_core::row::Spelled for user_id {}
     }
 
     pub const user_id: Column<columns::user_id> = Column::new();

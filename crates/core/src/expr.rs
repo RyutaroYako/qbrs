@@ -368,27 +368,18 @@ pub trait LabelKey: crate::row::Named + Copy + 'static {}
 /// says it decodes to. A computed expression's NULL-ability doesn't follow
 /// from any one column's join — `coalesce(o.total, 0)` isn't nullable and
 /// `o.total + 1` is — so it is the one thing the builder can't derive, and
-/// the call site is the only honest place to state it.
-pub struct Declared<Req, S: SqlType> {
-    pub(crate) kind: ExprKind,
-    _marker: PhantomData<fn() -> (Req, S)>,
-}
-
-impl<Req, S: SqlType> Clone for Declared<Req, S> {
-    fn clone(&self) -> Self {
-        Declared {
-            kind: self.kind.clone(),
-            _marker: PhantomData,
-        }
-    }
-}
+/// An expression that has stated what it decodes to but has no name: the
+/// anonymous `Keyed`, and so selectable, labellable and usable in a slot on
+/// exactly the same terms as any other keyed expression — except that
+/// `Anon` is not `Spelled`, so it can't be looked up or matched by name.
+pub type Declared<Req, S> = Keyed<crate::row::Anon, Req, S>;
 
 impl<Req, S: SqlType> Expr<Req, S> {
     /// States what this expression decodes to, which is what makes it
     /// selectable: `S` was inferred from whatever built the expression, and
     /// an inference can contradict the join the query actually has.
     pub fn decodes_as<S2: SqlType>(self) -> Declared<Req, S2> {
-        Declared {
+        Keyed {
             kind: self.kind,
             _marker: PhantomData,
         }
@@ -428,7 +419,6 @@ pub trait LabelExt: Sized {
 impl<C: ColumnKey> LabelExt for Column<C> {}
 impl<Req, S: SqlType> LabelExt for Expr<Req, S> {}
 impl<K, Req, S: SqlType> LabelExt for Keyed<K, Req, S> {}
-impl<Req, S: SqlType> LabelExt for Declared<Req, S> {}
 
 /// Comparison/boolean-combinator methods, blanket-implemented for anything
 /// convertible to a typed expression (columns, literals, and `Expr` itself).
@@ -667,6 +657,33 @@ macro_rules! sql_leaf_type {
             const NULL_VALUE: Value = Value::$null_variant;
         }
 
+        impl crate::insert::IntoNullable<$native> for $native {
+            fn into_nullable(self) -> ::std::option::Option<$native> {
+                ::std::option::Option::Some(self)
+            }
+        }
+
+        impl crate::insert::IntoNullable<$native> for ::std::option::Option<$native> {
+            fn into_nullable(self) -> ::std::option::Option<$native> {
+                self
+            }
+        }
+
+        impl crate::insert::IntoDefaultable<$native> for $native {
+            fn into_defaultable(self) -> crate::insert::Defaultable<$native> {
+                crate::insert::Defaultable::Value(self)
+            }
+        }
+
+        impl crate::insert::IntoDefaultable<$native> for ::std::option::Option<$native> {
+            fn into_defaultable(self) -> crate::insert::Defaultable<$native> {
+                match self {
+                    ::std::option::Option::Some(v) => crate::insert::Defaultable::Value(v),
+                    ::std::option::Option::None => crate::insert::Defaultable::Default,
+                }
+            }
+        }
+
         impl RawArg for $native {
             type Req = Nil;
             fn into_raw_arg(self) -> RawSlot {
@@ -732,6 +749,18 @@ impl IntoExpr<Text> for &str {
     type Req = Nil;
     fn into_expr(self) -> Expr<Nil, Text> {
         Expr::from_kind(ExprKind::Value(Value::Text(self.to_string())))
+    }
+}
+
+impl crate::insert::IntoNullable<String> for &str {
+    fn into_nullable(self) -> Option<String> {
+        Some(self.to_string())
+    }
+}
+
+impl crate::insert::IntoDefaultable<String> for &str {
+    fn into_defaultable(self) -> crate::insert::Defaultable<String> {
+        crate::insert::Defaultable::Value(self.to_string())
     }
 }
 
@@ -825,11 +854,16 @@ impl<Op, C> Clone for Agg<Op, C> {
 }
 impl<Op, C> Copy for Agg<Op, C> {}
 
+// An aggregate is filed under the column it aggregates: `sum(orders::total)`
+// reads back as `total`, and matches a CTE or DTO field of that name.
 #[doc(hidden)]
 impl<Op: 'static, C: crate::row::Named + 'static> crate::row::Named for Agg<Op, C> {
     type Name = <C as crate::row::Named>::Name;
     const NAME: &'static str = <C as crate::row::Named>::NAME;
 }
+
+#[doc(hidden)]
+impl<Op: 'static, C: crate::row::Spelled + 'static> crate::row::Spelled for Agg<Op, C> {}
 
 fn aggregate_kind<C: ColumnKey>(name: &'static str, cast: Option<CastTarget>) -> ExprKind {
     let call = ExprKind::Func {
@@ -957,15 +991,12 @@ impl<K, Req, S: SqlType> RawArg for Keyed<K, Req, S> {
     }
 }
 
-impl<Req, S: SqlType> RawArg for Declared<Req, S> {
-    type Req = Req;
-    fn into_raw_arg(self) -> RawSlot {
-        RawSlot(self.kind)
-    }
-}
-
 /// The whole slot list of one `sql!{}`, whose `Req` is every table its
 /// slots name.
+#[diagnostic::on_unimplemented(
+    message = "a `sql!` fragment takes at most 8 `?` slots",
+    label = "split the fragment, or fold part of it into the builder"
+)]
 pub trait RawArgs {
     type Req;
     #[doc(hidden)]
@@ -1006,9 +1037,9 @@ raw_args_tuple!(A, B, C, D, E, F);
 raw_args_tuple!(A, B, C, D, E, F, G);
 raw_args_tuple!(A, B, C, D, E, F, G, H);
 
-/// Counts the `?` placeholders in a `sql!` text, so the macro can compare
-/// that count with the number of values it was handed while both are still
-/// constants. `??` is a literal `?` and counts for nothing.
+/// Counts the `?` slots in a `sql!` text, so the macro can compare that
+/// count with the number of arguments it was handed while both are still
+/// constants.
 #[doc(hidden)]
 pub const fn placeholder_count(sql: &str) -> usize {
     let bytes = sql.as_bytes();
@@ -1016,10 +1047,6 @@ pub const fn placeholder_count(sql: &str) -> usize {
     let mut count = 0;
     while i < bytes.len() {
         if bytes[i] == b'?' {
-            if i + 1 < bytes.len() && bytes[i + 1] == b'?' {
-                i += 2;
-                continue;
-            }
             count += 1;
         }
         i += 1;
@@ -1038,18 +1065,12 @@ pub fn raw_expr<S: SqlType, Args: RawArgs>(sql: &'static str, args: Args) -> Exp
 }
 
 /// Splits authored text on its `?` slots and pairs each with its argument.
-/// `??` is a literal `?`; `sql!` checks the two counts against each other
-/// while both are still constants, which is why the leftovers here can't
-/// happen through it.
+/// `sql!` checks the two counts against each other while both are still
+/// constants, which is why leftovers here can't happen through it.
 fn template(sql: &'static str, args: Vec<RawSlot>) -> ExprKind {
     let mut pieces: Vec<String> = vec![String::new()];
-    let mut chars = sql.chars().peekable();
-    while let Some(c) = chars.next() {
+    for c in sql.chars() {
         match c {
-            '?' if chars.peek() == Some(&'?') => {
-                chars.next();
-                pieces.last_mut().expect("one piece to start").push('?');
-            }
             '?' => pieces.push(String::new()),
             c => pieces.last_mut().expect("one piece to start").push(c),
         }

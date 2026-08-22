@@ -106,9 +106,10 @@ alone and offers no further `.filter()`/`.join()`.
 A tuple selection's `Selection::Output` is `Row<RowCons<Key, Value, ..>>`, not a tuple.
 Each element contributes a key via `select::RowField`: a `Column<C>` keys on its
 `expr::ColumnKey` marker `C`, `count()`/the window functions key on the function itself
-(`expr::Count`, `window::RowNumber`, ...), a `label!`-declared `row::LabelKey` overrides
-whichever was there, and a bare `Expr` gets `row::Anon` — deliberately not a `RowKey`, so
-it can't be named at a `.get()` call. `row::GetField<K, Idx>` is `scope::Find` in a
+(`expr::Count`, `window::RowNumber`, ...), a `label!`-declared `expr::LabelKey` overrides
+whichever was there, and a bare `Expr` gets `row::Anon`, which is deliberately not
+`row::Spelled` — so it can't be named at a `.get()` call, and two anonymous columns don't
+stand in for each other in a `UNION` or a CTE body. `row::Field<K, Idx>` is `scope::Find` in a
 different costume: same `Here`/`There<I>` indexed lookup, same reason the index must be a
 trait parameter.
 
@@ -248,6 +249,7 @@ methods with the `Params` that arrive at the call. A new row-producing builder a
 transactional API. Everything returns `qbrs_sqlx::Result<T>`; keep `UnresolvedPlaceholder`
 (a qbrs-level misuse) distinct from the `Sqlx` variant rather than collapsing them.
 `Value` has typed `NullX` variants specifically so NULLs bind with a declared wire type.
+`DecodeRow` is what a caller's own generic signature names, so it is in the prelude.
 
 ## Conventions
 

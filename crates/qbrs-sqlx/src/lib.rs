@@ -43,7 +43,7 @@ pub type Result<T> = std::result::Result<T, Error>;
 /// `Iterator::count` with a confusing message until `CountExt` is in scope.
 pub mod prelude {
     pub use crate::Error;
-    pub use crate::{CountExt, ExecuteExt, LoadExt, PreparedExt};
+    pub use crate::{CountExt, DecodeRow, ExecuteExt, LoadExt, PreparedExt};
 }
 
 /// Binds a `Value` to a Postgres query parameter. `Value`'s typed `NullX`
@@ -260,11 +260,11 @@ where
     }
 }
 
-/// Decodes a `DynSelect`'s `Output` positionally out of a `PgRow`. Narrower
-/// Decoding is keyed on the plain-Rust type a selection produces, not on
-/// the selection itself: erasure leaves only `Output`, with no `Selection`
-/// impl left to hang decoding off, so this is implemented directly against
-/// the closed set of native types.
+/// Decodes a query's `Output` positionally out of a `PgRow`. Keyed on the
+/// plain-Rust type a selection produces rather than on the selection
+/// itself: erasure leaves only `Output`, with no `Selection` impl left to
+/// hang decoding off, so this is implemented directly against the closed set
+/// of native types.
 pub trait DecodeRow: Sized {
     #[doc(hidden)]
     fn decode_at(row: &PgRow, idx: &mut usize) -> sqlx::Result<Self>;

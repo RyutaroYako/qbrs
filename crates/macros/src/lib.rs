@@ -161,7 +161,24 @@ fn sql_type_for(ty: &Type) -> syn::Result<TokenStream2> {
         && let Some(seg) = p.path.segments.last()
     {
         let name = seg.ident.to_string();
+        // A generic type is only the type it looks like when its argument
+        // agrees: `Vec<u8>` is `bytea`, `Vec<String>` is nothing this crate
+        // has, and saying so here is what keeps the match closed.
+        let argument_ok = match name.as_str() {
+            "Vec" => generic_argument_is(seg, "u8"),
+            "DateTime" => generic_argument_is(seg, "Utc"),
+            _ => true,
+        };
         let path = match name.as_str() {
+            _ if !argument_ok => {
+                return Err(syn::Error::new_spanned(
+                    ty,
+                    format!(
+                        "unsupported column type — `{name}` is a column type only as `Vec<u8>` \
+                         (bytes) or `DateTime<Utc>` (timestamptz)"
+                    ),
+                ));
+            }
             "i32" => quote! { ::qbrs::expr::Integer },
             "i64" => quote! { ::qbrs::expr::BigInt },
             "f64" => quote! { ::qbrs::expr::Real },
@@ -189,6 +206,21 @@ fn sql_type_for(ty: &Type) -> syn::Result<TokenStream2> {
         return Ok(path);
     }
     Err(syn::Error::new_spanned(ty, "unsupported column type"))
+}
+
+/// Whether a path segment's single generic argument is the named type.
+fn generic_argument_is(seg: &syn::PathSegment, wanted: &str) -> bool {
+    let syn::PathArguments::AngleBracketed(args) = &seg.arguments else {
+        return false;
+    };
+    let mut types = args.args.iter().filter_map(|a| match a {
+        syn::GenericArgument::Type(Type::Path(p)) => p.path.segments.last(),
+        _ => None,
+    });
+    match (types.next(), types.next()) {
+        (Some(only), None) => only.ident == wanted,
+        _ => false,
+    }
 }
 
 fn gen_schema_mod(
@@ -224,6 +256,8 @@ fn gen_schema_mod(
                 type Name = #type_name;
                 const NAME: &'static str = #col_name_str;
             }
+            #[doc(hidden)]
+            impl ::qbrs::row::Spelled for #name {}
         });
         consts.push(quote! {
             #[allow(non_upper_case_globals)]
@@ -299,7 +333,13 @@ fn gen_schema_mod(
 /// accepted. A helper reading two columns needs two of them — one index
 /// records one position.
 fn accessor_trait(trait_ident: &Ident, method: &Ident, key: &TokenStream2) -> TokenStream2 {
+    let method_str = method.to_string();
+    let missing = format!("this query's rows have no `{method_str}` field");
+    let label = format!(
+        "add `{method_str}` to the query's selection list, or read the field that is there"
+    );
     quote! {
+        #[diagnostic::on_unimplemented(message = #missing, label = #label)]
         pub trait #trait_ident<Idx> {
             type Value;
             fn #method(&self) -> &Self::Value;
@@ -410,6 +450,8 @@ fn expand_from_row(input: DeriveInput) -> syn::Result<TokenStream2> {
                 type Name = #type_name;
                 const NAME: &'static str = #field_name_str;
             }
+            #[doc(hidden)]
+            impl ::qbrs::row::Spelled for #field_name {}
         });
 
         let idx = format_ident!("Idx{position}");
@@ -516,6 +558,8 @@ fn expand_with(decl: CteDecl) -> TokenStream2 {
                 type Name = #type_name;
                 const NAME: &'static str = #field_str;
             }
+            #[doc(hidden)]
+            impl ::qbrs::row::Spelled for columns::#field {}
         });
         consts.push(quote! {
             #[allow(non_upper_case_globals)]
@@ -635,6 +679,8 @@ pub fn label(input: TokenStream) -> TokenStream {
                 type Name = #type_name;
                 const NAME: &'static str = #name_str;
             }
+            #[doc(hidden)]
+            impl ::qbrs::row::Spelled for #name {}
         });
         uses.push(accessor);
     }
@@ -811,15 +857,15 @@ fn gen_insert_struct(
         let base = &c.base_ty;
         if c.nullable && !c.has_default {
             quote! {
-                pub fn #name(mut self, value: impl ::std::convert::Into<#base>) -> Self {
-                    self.#name = ::std::option::Option::Some(value.into());
+                pub fn #name(mut self, value: impl ::qbrs::insert::IntoNullable<#base>) -> Self {
+                    self.#name = ::qbrs::insert::IntoNullable::into_nullable(value);
                     self
                 }
             }
         } else if !c.nullable && c.has_default {
             quote! {
-                pub fn #name(mut self, value: impl ::std::convert::Into<#base>) -> Self {
-                    self.#name = ::qbrs::insert::Defaultable::Value(value.into());
+                pub fn #name(mut self, value: impl ::qbrs::insert::IntoDefaultable<#base>) -> Self {
+                    self.#name = ::qbrs::insert::IntoDefaultable::into_defaultable(value);
                     self
                 }
             }
@@ -829,8 +875,10 @@ fn gen_insert_struct(
             // stand — needs a way to be said.
             let null_setter = format_ident!("{}_null", name);
             quote! {
-                pub fn #name(mut self, value: impl ::std::convert::Into<#base>) -> Self {
-                    self.#name = ::qbrs::insert::Defaultable::Value(::std::option::Option::Some(value.into()));
+                pub fn #name(mut self, value: impl ::qbrs::insert::IntoNullable<#base>) -> Self {
+                    self.#name = ::qbrs::insert::Defaultable::Value(
+                        ::qbrs::insert::IntoNullable::into_nullable(value),
+                    );
                     self
                 }
 

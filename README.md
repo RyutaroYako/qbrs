@@ -197,7 +197,9 @@ A schema is a `#[derive(Table)]` struct, shown in the
   columns — `UsersInsert::builder().email(..).build()` — and `build()` is
   reachable only once every column that is neither nullable nor defaulted
   has a value, so no column can be dropped and no two of the same type
-  swapped. Rows arrive one at a time with
+  swapped. An optional column's setter takes the value or the `Option` a
+  request struct already holds, so a `POST` body maps field-for-field the way
+  a `PATCH` body maps onto an `*Update`. Rows arrive one at a time with
   `.values(row)` or all at once with `.values_all(rows)`; a statement with
   nothing in it — an `*Update` whose every field is untouched, an insert of
   zero rows — has no SQL form, so those hand back
@@ -241,8 +243,9 @@ A schema is a `#[derive(Table)]` struct, shown in the
   each pair widens the tables the expression claims. Conditions from
   *different* tables don't share an `Expr` type at all, so a collection of
   those goes through `predicate(..)` — then `.filter_all(..)` to AND them, or
-  `.filter(Predicate::any(..))` to OR them. `.filter` takes either kind of
-  condition.
+  `.filter(Predicate::any(..))` to OR them — `Predicate::all` nests a group
+  inside one. Every `.filter`/`.having`, on every builder, takes either kind
+  of condition.
 - **Predicates** — `.eq()`/`.ne()`/`.lt()`/`.gt()`/`.like()`, plus
   `.is_null()`/`.is_not_null()` and `.is_in([..])`. A nullable column and a
   non-nullable one compare freely, so an optional foreign key joins like any
@@ -265,7 +268,8 @@ A schema is a `#[derive(Table)]` struct, shown in the
 - **Prepared statements** (`prepare!{}`) —
   [`10_prepared`](examples/examples/10_prepared.rs). Typed, so a
   missing/misspelled bind is a compile error, unlike Drizzle's
-  `sql.placeholder()`.
+  `sql.placeholder()`. `.prepare_count()` prepares the same query's total,
+  so a paginated endpoint renders each of its two statements once.
 - **Transactions** —
   [`15_transaction`](examples/examples/15_transaction.rs). Every
   `.load()`/`.execute()` method is generic over `sqlx::PgExecutor`, so a
@@ -358,7 +362,11 @@ A schema is a `#[derive(Table)]` struct, shown in the
   `.load()` as `UnresolvedPlaceholder` rather than at compile time.
 - The derives expand to `::qbrs::` paths, so depend on the `qbrs` facade
   rather than on `qbrs-core` + `qbrs-macros` directly.
-- `sql!{}` treats `?` as a bind slot; write `??` for a literal one. Its text
+- Every `?` in a `sql!{}` text is a slot — there is no escape for a literal
+  one, since MySQL and SQLite spell their own bind parameters the same way.
+  A string containing a `?` goes in a slot, where it binds as a value. A
+  fragment takes at most 8 slots, and `ON CONFLICT` at most 3 columns. Its
+  text
   must be a constant — a literal, a `const`, `concat!`, `include_str!` — so
   runtime-assembled text can never become SQL shape, and the placeholder
   count is checked against the value count at compile time.

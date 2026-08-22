@@ -40,6 +40,7 @@ mod users {
             type Name = qbrs_core::type_name!('i', 'd');
             const NAME: &'static str = "id";
         }
+        impl qbrs_core::row::Spelled for id {}
         #[derive(Clone, Copy)]
         pub struct email;
         impl ColumnKey for email {
@@ -50,6 +51,7 @@ mod users {
             type Name = qbrs_core::type_name!('e', 'm', 'a', 'i', 'l');
             const NAME: &'static str = "email";
         }
+        impl qbrs_core::row::Spelled for email {}
     }
 
     pub const id: Column<columns::id> = Column::new();
@@ -76,6 +78,7 @@ mod archived_users {
             type Name = qbrs_core::type_name!('i', 'd');
             const NAME: &'static str = "id";
         }
+        impl qbrs_core::row::Spelled for id {}
         #[derive(Clone, Copy)]
         pub struct email;
         impl ColumnKey for email {
@@ -86,6 +89,7 @@ mod archived_users {
             type Name = qbrs_core::type_name!('e', 'm', 'a', 'i', 'l');
             const NAME: &'static str = "email";
         }
+        impl qbrs_core::row::Spelled for email {}
     }
 
     pub const id: Column<columns::id> = Column::new();

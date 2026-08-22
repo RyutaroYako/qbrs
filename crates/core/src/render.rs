@@ -188,7 +188,7 @@ pub(crate) fn render_expr<D: Dialect>(expr: &ExprKind, sink: &mut dyn Sink) {
 
 #[doc(hidden)]
 /// One item in a rendered `SELECT`/`RETURNING` list. `label` is `Some` only
-/// for an item given a `row::LabelKey` label, which is the only thing that
+/// for an item given a `expr::LabelKey` label, which is the only thing that
 /// emits `AS`.
 pub struct SelectItem {
     pub(crate) kind: ExprKind,

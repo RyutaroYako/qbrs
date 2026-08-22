@@ -16,6 +16,19 @@ use crate::scope::{BaseTable, Table};
 use crate::statement::Statement;
 use crate::update::{Assignments, NothingToSet, UpdateRow};
 
+/// What a nullable column's setter takes: the value, or the `Option` a
+/// request struct already holds. `None` leaves the column NULL, which is
+/// what not calling the setter would have done.
+pub trait IntoNullable<T> {
+    fn into_nullable(self) -> Option<T>;
+}
+
+/// The same for a column with a schema default: `None` leaves the default
+/// standing, `Some(v)` sends `v`.
+pub trait IntoDefaultable<T> {
+    fn into_defaultable(self) -> Defaultable<T>;
+}
+
 /// A column an `*Insert` builder hasn't been given a value for yet. Named
 /// after the column so the builder's type says which one is missing, rather
 /// than leaving a bare `()` to be counted by position.

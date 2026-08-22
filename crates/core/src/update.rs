@@ -3,10 +3,10 @@
 use std::marker::PhantomData;
 
 use crate::dialect::Dialect;
-use crate::expr::{Bool, Expr, ExprKind, Value};
+use crate::expr::{ExprKind, Value};
 use crate::render::{QuerySink, Sink, render_and_list, render_ident};
-use crate::scope::{BaseTable, Superset, Table};
-use crate::select::Predicate;
+use crate::scope::{BaseTable, Table};
+use crate::select::{Condition, Predicate};
 use crate::statement::{Statement, WrittenTable};
 
 /// Implemented by the `#[derive(Table)]`-generated `*Update` struct: every
@@ -118,11 +118,8 @@ impl<D, T: Table> Update<D, T> {
     /// Only columns of the table being updated are ever in scope for the
     /// `WHERE` clause here, so the `Superset` check is against a
     /// single-table scope rather than a full query `Scope`.
-    pub fn filter<Req, Idxs>(mut self, cond: Expr<Req, Bool>) -> Self
-    where
-        WrittenTable<T>: Superset<Req, Idxs>,
-    {
-        self.wheres.push(cond.kind);
+    pub fn filter<C: Condition<WrittenTable<T>, Idxs>, Idxs>(mut self, cond: C) -> Self {
+        self.wheres.push(cond.into_predicate().into_kind());
         self
     }
 

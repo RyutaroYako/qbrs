@@ -43,6 +43,7 @@ mod quoted {
             type Name = qbrs_core::type_name!('i', 'd');
             const NAME: &'static str = "id";
         }
+        impl qbrs_core::row::Spelled for id {}
     }
 
     pub const id: Column<columns::id> = Column::new();
@@ -68,6 +69,7 @@ mod users {
             type Name = qbrs_core::type_name!('i', 'd');
             const NAME: &'static str = "id";
         }
+        impl qbrs_core::row::Spelled for id {}
         #[derive(Clone, Copy)]
         pub struct email;
         impl ColumnKey for email {
@@ -78,6 +80,7 @@ mod users {
             type Name = qbrs_core::type_name!('e', 'm', 'a', 'i', 'l');
             const NAME: &'static str = "email";
         }
+        impl qbrs_core::row::Spelled for email {}
     }
 
     pub const id: Column<columns::id> = Column::new();
@@ -241,13 +244,14 @@ fn a_bare_offset_gets_the_filler_limit_its_dialect_needs() {
 }
 
 #[test]
-fn sqlite_takes_its_union_branches_unparenthesised() {
+fn sqlite_takes_its_union_branches_as_derived_tables() {
     let a = select((users::id,)).from::<Sqlite, _>(users::Table);
     let b = select((users::id,)).from::<Sqlite, _>(users::Table);
     let (sql, _) = a.union(&b).to_sql();
     assert_eq!(
         sql,
-        "SELECT \"users\".\"id\" FROM \"users\" UNION SELECT \"users\".\"id\" FROM \"users\""
+        "SELECT * FROM (SELECT \"users\".\"id\" FROM \"users\") \
+         UNION SELECT * FROM (SELECT \"users\".\"id\" FROM \"users\")"
     );
 
     let c = select((users::id,)).from::<qbrs_core::dialect::Postgres, _>(users::Table);

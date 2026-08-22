@@ -171,6 +171,12 @@ impl<Scope> Predicate<Scope> {
         Predicate::combine(preds, false)
     }
 
+    /// True when all of them are — the AND to `any`'s OR, so a group of
+    /// them can be nested inside one.
+    pub fn all(preds: impl IntoIterator<Item = Predicate<Scope>>) -> Self {
+        Predicate::combine(preds, true)
+    }
+
     fn combine(preds: impl IntoIterator<Item = Predicate<Scope>>, all: bool) -> Self {
         Predicate {
             kind: crate::expr::fold_conditions(preds.into_iter().map(Predicate::into_kind), all),
@@ -383,11 +389,8 @@ impl<D, Scope, Sel> Select<D, Scope, Sel> {
 
     /// A `WHERE`-shaped filter applied after grouping (aggregate
     /// conditions) — AND-folded across calls exactly like `.filter()`.
-    pub fn having<Req, Idxs>(mut self, cond: Expr<Req, Bool>) -> Self
-    where
-        Scope: Superset<Req, Idxs>,
-    {
-        self.body.having.push(cond.kind);
+    pub fn having<C: Condition<Scope, Idxs>, Idxs>(mut self, cond: C) -> Self {
+        self.body.having.push(cond.into_predicate().into_kind());
         self
     }
 
@@ -504,20 +507,6 @@ impl<D: Dialect, Scope, Sel> Select<D, Scope, Sel> {
         Sel: Selection<Scope, Idx>,
     {
         self.body.count_sql::<D>(&self.selection.items())
-    }
-
-    /// This query as a set-operation branch: its SQL, plus whether it pages
-    /// — which decides how a dialect that can't parenthesise branches has to
-    /// write it.
-    pub(crate) fn branch<Idx>(&self) -> set_op::Branch
-    where
-        D: Dialect,
-        Sel: Selection<Scope, Idx>,
-    {
-        set_op::Branch {
-            sql: self.fragment::<Idx>(),
-            paged: self.body.limit.is_some() || self.body.offset.is_some(),
-        }
     }
 
     /// This query as an embeddable `Fragment`: an `EXISTS (..)` subquery, a
@@ -683,10 +672,7 @@ impl<D, Outer, Scope, Sel> Correlated<D, Outer, Scope, Sel> {
         self.map(|q| q.group_by(key))
     }
 
-    pub fn having<Req, Idxs>(self, cond: Expr<Req, Bool>) -> Self
-    where
-        Scope: Superset<Req, Idxs>,
-    {
+    pub fn having<C: Condition<Scope, Idxs>, Idxs>(self, cond: C) -> Self {
         self.map(|q| q.having(cond))
     }
 

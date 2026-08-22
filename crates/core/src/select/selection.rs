@@ -1,6 +1,6 @@
 //! What a `.select(..)` list decodes to once a row comes back.
 
-use crate::expr::{Column, ColumnKey, Declared, Expr, ExprKind, Keyed, LabelKey, Labeled, SqlType};
+use crate::expr::{Column, ColumnKey, Expr, ExprKind, Keyed, LabelKey, Labeled, SqlType};
 use crate::render::SelectItem;
 use std::marker::PhantomData;
 
@@ -19,6 +19,11 @@ use crate::scope::{Find, Nil, Superset, Table, WrapNullable};
 /// Scope membership is proven as a side effect of this trait type-checking
 /// at all, through the `Find`/`Superset` bounds below — so callers need no
 /// separate check.
+#[diagnostic::on_unimplemented(
+    message = "`{Self}` can't be a field of this query's rows",
+    label = "columns, aggregates, window functions and scope-free `sql!` fragments can be",
+    note = "a fragment that names a table has to say what it decodes to first — `.decodes_as::<Nullable<BigInt>>()` — since its NULL-ability doesn't follow from any one column's join"
+)]
 pub trait RowField<Scope, Idx>: RowKey {
     type Value;
     fn item(&self) -> SelectItem;
@@ -66,20 +71,6 @@ where
     }
 }
 
-/// A table-referencing expression that has stated what it decodes to is
-/// selectable on the same terms as a scope-free one: filed under `Anon`, and
-/// so readable positionally rather than by name until `.label(..)` gives it
-/// one.
-impl<Req, S: SqlType, Scope, Idx> RowField<Scope, Idx> for Declared<Req, S>
-where
-    Scope: Superset<Req, Idx>,
-{
-    type Value = S::Native;
-    fn item(&self) -> SelectItem {
-        SelectItem::bare(self.kind.clone())
-    }
-}
-
 /// A label renames whatever it wraps and changes nothing else, so this is
 /// one impl rather than one per selectable: the inner value decides the
 /// scope check and the decoded type, the label decides the `AS` and the row
@@ -98,8 +89,8 @@ impl<K: LabelKey, Inner: RowField<Scope, Idx>, Scope, Idx> RowField<Scope, Idx>
 /// value, since there is nothing to key it against.
 #[diagnostic::on_unimplemented(
     message = "`{Self}` isn't a valid selection list here",
-    label = "a selection is a column, an expression, or a tuple of up to 16 of them",
-    note = "every element also has to be in scope: `.from(..)`/`.join(..)` the tables it names"
+    label = "a selection is a column, an expression, `<table>::All`, or a tuple of up to 16 of those",
+    note = "every element has to be in scope — `.from(..)`/`.join(..)` the tables it names — and a `sql!` fragment that names one has to state its decoded type with `.decodes_as::<..>()`"
 )]
 pub trait Selection<Scope, Idx> {
     type Output;
@@ -121,7 +112,6 @@ macro_rules! scalar_selection {
 }
 scalar_selection!(impl[C: ColumnKey] Column<C>);
 scalar_selection!(impl[S: SqlType] Expr<Nil, S>);
-scalar_selection!(impl[Req, S: SqlType] Declared<Req, S>);
 scalar_selection!(impl[K, Req, S: SqlType] Keyed<K, Req, S>);
 scalar_selection!(impl[K, Inner] Labeled<K, Inner>);
 
@@ -153,7 +143,6 @@ macro_rules! field_part {
 }
 field_part!(impl[C: ColumnKey] Column<C>);
 field_part!(impl[S: SqlType] Expr<Nil, S>);
-field_part!(impl[Req, S: SqlType] Declared<Req, S>);
 field_part!(impl[K, Req, S: SqlType] Keyed<K, Req, S>);
 field_part!(impl[K, Inner] Labeled<K, Inner>);
 

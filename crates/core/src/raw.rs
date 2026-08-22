@@ -11,12 +11,20 @@
 //!
 //! That text is a *constant*, so a fragment's SQL shape is always a
 //! compile-time constant of the calling crate — runtime-assembled text
-//! cannot become SQL here.
+//! cannot become SQL here. Every `?` in it is a slot; a literal `?` belongs
+//! in a slot's value, since MySQL and SQLite spell their own bind
+//! parameters the same way.
 
 /// `sql!(Bool, "lower(?) = ?", users::email, "dan")` -> an `Expr` over
 /// whatever tables its slots name. Slots are filled positionally, left to
-/// right; `??` is a literal `?`, which is how Postgres's `jsonb` operators
-/// are reached.
+/// right.
+///
+/// Every `?` in the text is a slot: there is no escape for a literal one,
+/// because two of the three dialects write their own bind parameters as `?`
+/// and a `?` left in the text would be read as one. A string containing a
+/// `?` goes in a slot, where it binds as a value; Postgres's `jsonb`
+/// operators are reached through their function spellings
+/// (`jsonb_exists(?, 'key')`).
 #[macro_export]
 macro_rules! sql {
     ($sql_type:ty, $text:expr $(, $arg:expr)* $(,)?) => {{
@@ -29,7 +37,7 @@ macro_rules! sql {
         const _: () = ::std::assert!(
             $crate::expr::placeholder_count(__QBRS_SQL)
                 == <[&'static str]>::len(&[$(::std::stringify!($arg)),*]),
-            "`sql!` needs one argument per `?` slot (write `??` for a literal `?`)",
+            "`sql!` needs one argument per `?` slot",
         );
         $crate::expr::raw_expr::<$sql_type, _>(__QBRS_SQL, ($($arg,)*))
     }};

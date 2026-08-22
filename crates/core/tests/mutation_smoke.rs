@@ -36,6 +36,7 @@ mod users {
             type Name = qbrs_core::type_name!('i', 'd');
             const NAME: &'static str = "id";
         }
+        impl qbrs_core::row::Spelled for id {}
         #[derive(Clone, Copy)]
         pub struct email;
         impl ColumnKey for email {
@@ -46,6 +47,7 @@ mod users {
             type Name = qbrs_core::type_name!('e', 'm', 'a', 'i', 'l');
             const NAME: &'static str = "email";
         }
+        impl qbrs_core::row::Spelled for email {}
         #[derive(Clone, Copy)]
         pub struct display_name;
         impl ColumnKey for display_name {
@@ -57,6 +59,7 @@ mod users {
                 qbrs_core::type_name!('d', 'i', 's', 'p', 'l', 'a', 'y', '_', 'n', 'a', 'm', 'e');
             const NAME: &'static str = "display_name";
         }
+        impl qbrs_core::row::Spelled for display_name {}
     }
 
     pub const id: Column<columns::id> = Column::new();

@@ -33,6 +33,7 @@ mod users {
             type Name = qbrs_core::type_name!('e', 'm', 'a', 'i', 'l');
             const NAME: &'static str = "email";
         }
+        impl qbrs_core::row::Spelled for email {}
     }
 
     pub const email: Column<columns::email> = Column::new();

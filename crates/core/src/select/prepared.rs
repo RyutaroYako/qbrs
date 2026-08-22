@@ -45,6 +45,22 @@ impl<D, Scope, Sel> Select<D, Scope, Sel> {
             _marker: PhantomData,
         }
     }
+
+    /// The same query prepared as its own total — `count_sql` with the
+    /// placeholders still unresolved, so a paginated endpoint reuses one
+    /// rendering for the page and one for the count.
+    pub fn prepare_count<Params, Idx>(&self) -> Prepared<Params, i64>
+    where
+        D: Dialect,
+        Sel: Selection<Scope, Idx>,
+    {
+        let (sql, template) = self.count_sql::<Idx>();
+        Prepared {
+            sql,
+            template,
+            _marker: PhantomData,
+        }
+    }
 }
 
 /// Returned by `Prepared::resolve` — and so by the `.load()` that calls

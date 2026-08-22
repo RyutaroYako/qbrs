@@ -1,5 +1,5 @@
 //! Maximum-arity selection: 16 columns through `RowField` per element,
-//! `Row` assembly, and a worst-case `GetField` read at the far end of the
+//! `Row` assembly, and a worst-case `Field` read at the far end of the
 //! key list. The join-count binaries hold scope depth constant; this one
 //! holds it at one table and grows the selection instead.
 
