@@ -189,8 +189,15 @@ impl<Scope, Sel: Selection<Scope, Idx>, Idx> CountExt<Idx> for Select<Postgres, 
 }
 
 /// Erasure is for a query whose joins depend on a condition, and such a
-/// query is paged like any other, so it counts like any other.
+/// query is paged like any other, so it counts like any other. The same
+/// goes for a set-operation chain.
 impl<Output> CountExt<()> for DynSelect<Postgres, Output> {
+    async fn count<'e, E: sqlx::PgExecutor<'e>>(&self, executor: E) -> Result<i64> {
+        count_rows(executor, self.count_sql()).await
+    }
+}
+
+impl<Output> CountExt<()> for SetOp<Postgres, Output> {
     async fn count<'e, E: sqlx::PgExecutor<'e>>(&self, executor: E) -> Result<i64> {
         count_rows(executor, self.count_sql()).await
     }

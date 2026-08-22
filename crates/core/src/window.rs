@@ -81,7 +81,7 @@ pub struct WindowFunc<K, S: SqlType> {
 impl<K, S: SqlType> WindowFunc<K, S> {
     pub fn over<WindowReq>(self, window: Window<WindowReq>) -> Keyed<K, WindowReq, S> {
         Keyed::from_kind(ExprKind::Window {
-            func: self.sql.to_string(),
+            func: self.sql,
             partition_by: window.partition_by,
             order_by: window.order_by,
         })

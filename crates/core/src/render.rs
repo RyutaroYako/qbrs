@@ -47,7 +47,7 @@ impl<D: Dialect> Sink for QuerySink<D> {
     }
     fn bind(&mut self, value: &Value) {
         self.params.push(value.clone());
-        self.sql.push_str(&D::placeholder(self.params.len()));
+        D::write_placeholder(self.params.len(), &mut self.sql);
     }
 }
 
@@ -80,9 +80,9 @@ impl Sink for FragmentSink {
 pub(crate) fn render_expr<D: Dialect>(expr: &ExprKind, sink: &mut dyn Sink) {
     match expr {
         ExprKind::Column { table, name } => {
-            push_ident::<D>(sink, table);
+            render_ident::<D>(sink, table);
             sink.ch('.');
-            push_ident::<D>(sink, name);
+            render_ident::<D>(sink, name);
         }
         ExprKind::Value(v) => sink.bind(v),
         ExprKind::BinOp { op, lhs, rhs } => {
@@ -100,8 +100,8 @@ pub(crate) fn render_expr<D: Dialect>(expr: &ExprKind, sink: &mut dyn Sink) {
             render_expr::<D>(rhs, sink);
             sink.ch(')');
         }
-        ExprKind::And(parts) => render_bool_list::<D>(parts, "AND", sink),
-        ExprKind::Or(parts) => render_bool_list::<D>(parts, "OR", sink),
+        ExprKind::And(lhs, rhs) => render_bool_pair::<D>(lhs, "AND", rhs, sink),
+        ExprKind::Or(lhs, rhs) => render_bool_pair::<D>(lhs, "OR", rhs, sink),
         ExprKind::Not(inner) => {
             sink.text("(NOT ");
             render_expr::<D>(inner, sink);
@@ -231,7 +231,7 @@ pub(crate) fn render_select_list<D: Dialect>(items: &[SelectItem], sink: &mut dy
         render_expr::<D>(&item.kind, sink);
         if let Some(label) = item.label {
             sink.text(" AS ");
-            push_ident::<D>(sink, label);
+            render_ident::<D>(sink, label);
         }
     }
 }
@@ -314,7 +314,8 @@ impl Fragment {
     }
 }
 
-fn push_ident<D: Dialect>(sink: &mut dyn Sink, ident: &str) {
+/// Renders an identifier with the dialect's quoting.
+pub(crate) fn render_ident<D: Dialect>(sink: &mut dyn Sink, ident: &str) {
     sink.ch(D::IDENTIFIER_QUOTE);
     for c in ident.chars() {
         // A quote inside an identifier is escaped by doubling it, in every
@@ -328,28 +329,28 @@ fn push_ident<D: Dialect>(sink: &mut dyn Sink, ident: &str) {
     sink.ch(D::IDENTIFIER_QUOTE);
 }
 
-fn render_bool_list<D: Dialect>(parts: &[ExprKind], joiner: &str, sink: &mut dyn Sink) {
-    if parts.is_empty() {
-        // An empty AND/OR should never make it into a real query (the
-        // builder never pushes one), but render a harmless tautology/
-        // contradiction rather than emitting invalid SQL if it ever did.
-        sink.text(if joiner == "AND" { "TRUE" } else { "FALSE" });
-        return;
-    }
+fn render_bool_pair<D: Dialect>(lhs: &ExprKind, joiner: &str, rhs: &ExprKind, sink: &mut dyn Sink) {
     sink.ch('(');
-    for (i, part) in parts.iter().enumerate() {
-        if i > 0 {
-            sink.ch(' ');
-            sink.text(joiner);
-            sink.ch(' ');
-        }
-        render_expr::<D>(part, sink);
-    }
+    render_expr::<D>(lhs, sink);
+    sink.ch(' ');
+    sink.text(joiner);
+    sink.ch(' ');
+    render_expr::<D>(rhs, sink);
     sink.ch(')');
 }
 
-/// Renders a bare identifier (a table name in a `FROM`/`INSERT INTO`/etc.
-/// clause, not part of an `ExprKind`) with the dialect's quoting.
-pub(crate) fn render_ident<D: Dialect>(sink: &mut dyn Sink, ident: &str) {
-    push_ident::<D>(sink, ident);
+/// `WHERE`/`HAVING`: a keyword, then the conditions AND-folded, or nothing
+/// at all when there are none. Shared by every statement that has such a
+/// clause, so all four spell it the same way.
+pub(crate) fn render_and_list<D: Dialect>(sink: &mut dyn Sink, keyword: &str, list: &[ExprKind]) {
+    if list.is_empty() {
+        return;
+    }
+    sink.text(keyword);
+    for (i, e) in list.iter().enumerate() {
+        if i > 0 {
+            sink.text(" AND ");
+        }
+        render_expr::<D>(e, sink);
+    }
 }

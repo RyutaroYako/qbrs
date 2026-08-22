@@ -464,17 +464,6 @@ impl<L: PartialEq> PartialEq for Row<L> {
 
 impl<L: Eq> Eq for Row<L> {}
 
-/// A limit or offset. A trait rather than `Into<i64>` so a `usize` page size
-/// — the shape a paginated handler already has — goes in without a cast.
-pub trait IntoLimit {
-    fn into_limit(self) -> i64;
-}
-
-macro_rules! into_limit {
-    ($($ty:ty),+) => { $( impl IntoLimit for $ty { fn into_limit(self) -> i64 { self as i64 } } )+ };
-}
-into_limit!(i32, i64, u8, u16, u32, usize);
-
 /// A row's fields as a plain tuple, in selection order.
 pub trait RowValues {
     type Values;

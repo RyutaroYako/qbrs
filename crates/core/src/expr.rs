@@ -32,8 +32,8 @@ pub(crate) enum ExprKind {
         lhs: Box<ExprKind>,
         rhs: Box<ExprKind>,
     },
-    And(Vec<ExprKind>),
-    Or(Vec<ExprKind>),
+    And(Box<ExprKind>, Box<ExprKind>),
+    Or(Box<ExprKind>, Box<ExprKind>),
     Not(Box<ExprKind>),
     /// `x IS NULL` / `x IS NOT NULL`. A separate node because `x = NULL` is
     /// never true in SQL, so equality can't stand in for it.
@@ -72,7 +72,7 @@ pub(crate) enum ExprKind {
     /// `partition_by`/`order_by` *are* full `ExprKind`s, since they can
     /// reference real columns.
     Window {
-        func: String,
+        func: &'static str,
         partition_by: Vec<ExprKind>,
         order_by: Vec<(ExprKind, SortDir)>,
     },
@@ -538,14 +538,14 @@ impl<Req> Expr<Req, Bool> {
     where
         Req: Concat<Req2>,
     {
-        Expr::from_kind(ExprKind::And(vec![self.kind, rhs.kind]))
+        Expr::from_kind(ExprKind::And(Box::new(self.kind), Box::new(rhs.kind)))
     }
 
     pub fn or<Req2>(self, rhs: Expr<Req2, Bool>) -> Expr<<Req as Concat<Req2>>::Output, Bool>
     where
         Req: Concat<Req2>,
     {
-        Expr::from_kind(ExprKind::Or(vec![self.kind, rhs.kind]))
+        Expr::from_kind(ExprKind::Or(Box::new(self.kind), Box::new(rhs.kind)))
     }
 }
 

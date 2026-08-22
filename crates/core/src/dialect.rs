@@ -35,12 +35,12 @@ pub trait Dialect: 'static + private::Sealed {
     /// spells "no limit" differently.
     const OFFSET_WITHOUT_LIMIT: Option<&'static str> = None;
 
-    /// Renders the placeholder for the `n`th bound parameter (1-indexed).
+    /// Writes the placeholder for the `n`th bound parameter (1-indexed).
     /// Postgres numbers them (`$1`, `$2`, ...); MySQL/SQLite are purely
     /// positional (`?` every time, matched by order of appearance).
-    fn placeholder(n: usize) -> String {
+    fn write_placeholder(n: usize, out: &mut String) {
         let _ = n;
-        "?".to_string()
+        out.push('?');
     }
 }
 
@@ -48,8 +48,9 @@ pub struct Postgres;
 impl private::Sealed for Postgres {}
 impl Dialect for Postgres {
     const IDENTIFIER_QUOTE: char = '"';
-    fn placeholder(n: usize) -> String {
-        format!("${n}")
+    fn write_placeholder(n: usize, out: &mut String) {
+        use std::fmt::Write as _;
+        let _ = write!(out, "${n}");
     }
 }
 

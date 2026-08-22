@@ -8,7 +8,8 @@ use crate::cte::Cte;
 use crate::dialect::{Dialect, SupportsFullOuterJoin, SupportsRightJoin};
 use crate::expr::{Bool, Expr, ExprKind, IntoExpr, SqlType, Value};
 use crate::render::{
-    Fragment, FragmentSink, QuerySink, SelectItem, Sink, render_expr, render_select_list,
+    Fragment, FragmentSink, QuerySink, SelectItem, Sink, render_and_list, render_expr,
+    render_select_list,
 };
 use crate::scope::{
     BaseTable, Cons, MapNullable, MaybeNull, Nil, NotNull, ScopeTables, Superset, Table, TableSlot,
@@ -127,6 +128,12 @@ pub struct Predicate<Scope> {
     _marker: PhantomData<fn() -> Scope>,
 }
 
+impl<Scope> Predicate<Scope> {
+    pub(crate) fn into_kind(self) -> ExprKind {
+        self.kind
+    }
+}
+
 /// Discharges a condition's scope requirement. `Scope` is inferred from the
 /// query the resulting predicates are eventually given to.
 pub fn predicate<Scope, Req, Idxs>(cond: Expr<Req, Bool>) -> Predicate<Scope>
@@ -161,7 +168,7 @@ impl<Sel> SelectSeed<Sel> {
         self,
         source: S,
     ) -> Select<D, Cons<TableSlot<S::Table, NotNull>, Nil>, Sel> {
-        let mut body = SelectBody::new(<S::Table as Table>::NAME, Vec::new());
+        let mut body = SelectBody::new(<S::Table as Table>::NAME);
         body.bind(source);
         Select {
             body,
@@ -189,9 +196,9 @@ pub(super) struct SelectBody {
 }
 
 impl SelectBody {
-    fn new(from_table: &'static str, ctes: Vec<CteDef>) -> Self {
+    fn new(from_table: &'static str) -> Self {
         SelectBody {
-            ctes,
+            ctes: Vec::new(),
             from_table,
             joins: Vec::new(),
             wheres: Vec::new(),
@@ -293,7 +300,9 @@ impl<D, Scope, Sel> Select<D, Scope, Sel> {
     /// conditions — the shape a search form has, where the conditions come
     /// from different tables and so can't share one `Expr` type.
     pub fn filter_all(mut self, conds: impl IntoIterator<Item = Predicate<Scope>>) -> Self {
-        self.body.wheres.extend(conds.into_iter().map(|p| p.kind));
+        self.body
+            .wheres
+            .extend(conds.into_iter().map(Predicate::into_kind));
         self
     }
 
@@ -326,12 +335,12 @@ impl<D, Scope, Sel> Select<D, Scope, Sel> {
         self
     }
 
-    pub fn limit(mut self, n: impl crate::row::IntoLimit) -> Self {
+    pub fn limit(mut self, n: impl IntoLimit) -> Self {
         self.body.limit = Some(n.into_limit());
         self
     }
 
-    pub fn offset(mut self, n: impl crate::row::IntoLimit) -> Self {
+    pub fn offset(mut self, n: impl IntoLimit) -> Self {
         self.body.offset = Some(n.into_limit());
         self
     }
@@ -521,7 +530,7 @@ impl SelectBody {
             render_expr::<RD>(&j.on, sink);
         }
 
-        push_and_list::<RD>(sink, " WHERE ", wheres);
+        render_and_list::<RD>(sink, " WHERE ", wheres);
 
         if !group_by.is_empty() {
             sink.text(" GROUP BY ");
@@ -533,7 +542,7 @@ impl SelectBody {
             }
         }
 
-        push_and_list::<RD>(sink, " HAVING ", having);
+        render_and_list::<RD>(sink, " HAVING ", having);
 
         if !order_by.is_empty() {
             sink.text(" ORDER BY ");
@@ -576,7 +585,7 @@ impl<D, Scope, Sel> Select<D, Scope, Sel> {
         source: S,
         selection: InnerSel,
     ) -> Correlated<D, Scope, Cons<TableSlot<S::Table, NotNull>, Scope>, InnerSel> {
-        let mut body = SelectBody::new(<S::Table as Table>::NAME, Vec::new());
+        let mut body = SelectBody::new(<S::Table as Table>::NAME);
         body.bind(source);
         Correlated {
             inner: Select {
@@ -590,47 +599,62 @@ impl<D, Scope, Sel> Select<D, Scope, Sel> {
 }
 
 impl<D, Outer, Scope, Sel> Correlated<D, Outer, Scope, Sel> {
+    /// A subquery is a `Select` with one extra promise — that its scope
+    /// starts where the outer query's left off — so every clause it takes is
+    /// the `Select` method applied to the query inside, and every join is
+    /// that plus a new `Scope`.
+    fn map<NewScope>(
+        self,
+        f: impl FnOnce(Select<D, Scope, Sel>) -> Select<D, NewScope, Sel>,
+    ) -> Correlated<D, Outer, NewScope, Sel> {
+        Correlated {
+            inner: f(self.inner),
+            _marker: PhantomData,
+        }
+    }
+
     /// Checked against the subquery's own scope, which includes every table
     /// the outer query had — that is what makes it *correlated*.
-    pub fn filter<Req, Idxs>(mut self, cond: Expr<Req, Bool>) -> Self
+    pub fn filter<Req, Idxs>(self, cond: Expr<Req, Bool>) -> Self
     where
         Scope: Superset<Req, Idxs>,
     {
-        self.inner = self.inner.filter(cond);
-        self
+        self.map(|q| q.filter(cond))
     }
 
     /// AND-folds a runtime-length collection of discharged conditions, the
     /// same way `Select::filter_all` does.
-    pub fn filter_all(mut self, conds: impl IntoIterator<Item = Predicate<Scope>>) -> Self {
-        self.inner = self.inner.filter_all(conds);
-        self
+    pub fn filter_all(self, conds: impl IntoIterator<Item = Predicate<Scope>>) -> Self {
+        self.map(|q| q.filter_all(conds))
     }
 
-    pub fn group_by<S: SqlType, Req, Idxs>(mut self, key: impl IntoExpr<S, Req = Req>) -> Self
+    pub fn group_by<S: SqlType, Req, Idxs>(self, key: impl IntoExpr<S, Req = Req>) -> Self
     where
         Scope: Superset<Req, Idxs>,
     {
-        self.inner = self.inner.group_by(key);
-        self
+        self.map(|q| q.group_by(key))
     }
 
-    pub fn having<Req, Idxs>(mut self, cond: Expr<Req, Bool>) -> Self
+    pub fn having<Req, Idxs>(self, cond: Expr<Req, Bool>) -> Self
     where
         Scope: Superset<Req, Idxs>,
     {
-        self.inner = self.inner.having(cond);
-        self
+        self.map(|q| q.having(cond))
     }
 
-    pub fn limit(mut self, n: impl crate::row::IntoLimit) -> Self {
-        self.inner = self.inner.limit(n);
-        self
+    pub fn order_by<Req, Idxs>(self, key: OrderKey<Req>) -> Self
+    where
+        Scope: Superset<Req, Idxs>,
+    {
+        self.map(|q| q.order_by(key))
     }
 
-    pub fn offset(mut self, n: impl crate::row::IntoLimit) -> Self {
-        self.inner = self.inner.offset(n);
-        self
+    pub fn limit(self, n: impl IntoLimit) -> Self {
+        self.map(|q| q.limit(n))
+    }
+
+    pub fn offset(self, n: impl IntoLimit) -> Self {
+        self.map(|q| q.offset(n))
     }
 
     pub fn inner_join<S: JoinSource<D>, Req, Idxs>(
@@ -641,10 +665,7 @@ impl<D, Outer, Scope, Sel> Correlated<D, Outer, Scope, Sel> {
     where
         Cons<TableSlot<S::Table, NotNull>, Scope>: Superset<Req, Idxs>,
     {
-        Correlated {
-            inner: self.inner.inner_join(source, on),
-            _marker: PhantomData,
-        }
+        self.map(|q| q.inner_join(source, on))
     }
 
     pub fn left_join<S: JoinSource<D>, Req, Idxs>(
@@ -655,10 +676,33 @@ impl<D, Outer, Scope, Sel> Correlated<D, Outer, Scope, Sel> {
     where
         Cons<TableSlot<S::Table, MaybeNull>, Scope>: Superset<Req, Idxs>,
     {
-        Correlated {
-            inner: self.inner.left_join(source, on),
-            _marker: PhantomData,
-        }
+        self.map(|q| q.left_join(source, on))
+    }
+
+    pub fn right_join<S: JoinSource<D>, Req, Idxs>(
+        self,
+        source: S,
+        on: Expr<Req, Bool>,
+    ) -> Correlated<D, Outer, Cons<TableSlot<S::Table, NotNull>, Scope::Output>, Sel>
+    where
+        D: SupportsRightJoin,
+        Scope: MapNullable,
+        Cons<TableSlot<S::Table, NotNull>, Scope::Output>: Superset<Req, Idxs>,
+    {
+        self.map(|q| q.right_join(source, on))
+    }
+
+    pub fn full_join<S: JoinSource<D>, Req, Idxs>(
+        self,
+        source: S,
+        on: Expr<Req, Bool>,
+    ) -> Correlated<D, Outer, Cons<TableSlot<S::Table, MaybeNull>, Scope::Output>, Sel>
+    where
+        D: SupportsFullOuterJoin,
+        Scope: MapNullable,
+        Cons<TableSlot<S::Table, MaybeNull>, Scope::Output>: Superset<Req, Idxs>,
+    {
+        self.map(|q| q.full_join(source, on))
     }
 }
 
@@ -688,6 +732,17 @@ impl<D: Dialect, Outer: ScopeTables, Scope, Sel> Correlated<D, Outer, Scope, Sel
     }
 }
 
+/// A limit or offset. A trait rather than `Into<i64>` so a `usize` page size
+/// — the shape a paginated handler already has — goes in without a cast.
+pub trait IntoLimit {
+    fn into_limit(self) -> i64;
+}
+
+macro_rules! into_limit {
+    ($($ty:ty),+) => { $( impl IntoLimit for $ty { fn into_limit(self) -> i64 { self as i64 } } )+ };
+}
+into_limit!(i32, i64, u8, u16, u32, usize);
+
 /// `LIMIT`/`OFFSET`, with the filler a dialect needs when there's an offset
 /// and no limit — a bare `OFFSET` is Postgres-only.
 pub(crate) fn render_limit_offset<D: Dialect>(
@@ -709,18 +764,5 @@ pub(crate) fn render_limit_offset<D: Dialect>(
     if let Some(o) = offset {
         sink.text(" OFFSET ");
         sink.text(&o.to_string());
-    }
-}
-
-fn push_and_list<D: Dialect>(sink: &mut dyn Sink, keyword: &str, list: &[ExprKind]) {
-    if list.is_empty() {
-        return;
-    }
-    sink.text(keyword);
-    for (i, e) in list.iter().enumerate() {
-        if i > 0 {
-            sink.text(" AND ");
-        }
-        render_expr::<D>(e, sink);
     }
 }

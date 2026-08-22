@@ -121,6 +121,22 @@ fn union_combines_two_different_scopes_and_renumbers_params() {
 }
 
 #[test]
+fn counting_a_set_op_drops_its_own_paging_but_not_its_branches() {
+    let live = select((users::id,))
+        .from::<Postgres, _>(users::Table)
+        .limit(5);
+    let archived = select((archived_users::id,)).from::<Postgres, _>(archived_users::Table);
+
+    let (sql, _params) = live.union(&archived).limit(10).offset(20).count_sql();
+    assert_eq!(
+        sql,
+        "SELECT count(*) FROM ((SELECT \"users\".\"id\" FROM \"users\" LIMIT 5) \
+         UNION \
+         (SELECT \"archived_users\".\"id\" FROM \"archived_users\")) AS \"qbrs_total\""
+    );
+}
+
+#[test]
 fn one_column_branches_match_on_their_value_type_alone() {
     let live = select(users::email).from::<Postgres, _>(users::Table);
     let archived = select(archived_users::email).from::<Postgres, _>(archived_users::Table);

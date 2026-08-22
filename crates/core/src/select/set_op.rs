@@ -116,19 +116,38 @@ impl<D: Dialect, Output> SetOp<D, Output> {
         self
     }
 
-    pub fn limit(mut self, n: impl crate::row::IntoLimit) -> Self {
+    pub fn limit(mut self, n: impl super::IntoLimit) -> Self {
         self.limit = Some(n.into_limit());
         self
     }
 
-    pub fn offset(mut self, n: impl crate::row::IntoLimit) -> Self {
+    pub fn offset(mut self, n: impl super::IntoLimit) -> Self {
         self.offset = Some(n.into_limit());
         self
     }
 
+    /// How many rows the combination returns, its own `ORDER BY`/paging
+    /// dropped. The branches keep theirs: a `UNION` of two `LIMIT`ed queries
+    /// is a different set from a `UNION` of the whole ones.
+    pub fn count_sql(&self) -> (String, Vec<Value>) {
+        let mut sink = QuerySink::<D>::new();
+        sink.text("SELECT count(*) FROM (");
+        self.render_branches(&mut sink);
+        sink.text(") AS ");
+        crate::render::render_ident::<D>(&mut sink, "qbrs_total");
+        sink.finish()
+    }
+
     pub fn to_sql(&self) -> (String, Vec<Value>) {
         let mut sink = QuerySink::<D>::new();
+        self.render_branches(&mut sink);
+        self.render_ordering(&mut sink);
+        sink.finish()
+    }
 
+    /// The set operation itself, without the ordering and paging applied to
+    /// its result — which is what a count of it must leave out.
+    fn render_branches(&self, sink: &mut QuerySink<D>) {
         let branch = |sink: &mut QuerySink<D>, fragment: &Fragment| {
             if D::PARENTHESIZED_SET_OP_BRANCHES {
                 sink.ch('(');
@@ -139,12 +158,14 @@ impl<D: Dialect, Output> SetOp<D, Output> {
             }
         };
 
-        branch(&mut sink, &self.first);
+        branch(sink, &self.first);
         for (kind, fragment) in &self.rest {
             sink.text(kind.keyword());
-            branch(&mut sink, fragment);
+            branch(sink, fragment);
         }
+    }
 
+    fn render_ordering(&self, sink: &mut QuerySink<D>) {
         if !self.order_by.is_empty() {
             sink.text(" ORDER BY ");
             for (i, (position, dir)) in self.order_by.iter().enumerate() {
@@ -158,9 +179,7 @@ impl<D: Dialect, Output> SetOp<D, Output> {
                 });
             }
         }
-        crate::select::render_limit_offset::<D>(&mut sink, self.limit, self.offset);
-
-        sink.finish()
+        crate::select::render_limit_offset::<D>(sink, self.limit, self.offset);
     }
 }
 

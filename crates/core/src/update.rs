@@ -4,9 +4,11 @@ use std::marker::PhantomData;
 
 use crate::dialect::{Dialect, SupportsReturning};
 use crate::expr::{Bool, Expr, ExprKind, Value};
-use crate::render::{QuerySink, SelectItem, Sink, render_expr, render_ident, render_select_list};
+use crate::render::{
+    QuerySink, SelectItem, Sink, render_and_list, render_ident, render_select_list,
+};
 use crate::scope::{BaseTable, Cons, Nil, NotNull, Superset, Table, TableSlot};
-use crate::select::Selection;
+use crate::select::{Predicate, Selection};
 
 /// Implemented by the `#[derive(Table)]`-generated `*Update` struct: every
 /// field is optional (untouched vs. touched), and doubly-optional for
@@ -90,15 +92,7 @@ fn render_set_clause<D: Dialect, T: Table>(
         sink.bind(val);
     }
 
-    if !wheres.is_empty() {
-        sink.text(" WHERE ");
-        for (i, w) in wheres.iter().enumerate() {
-            if i > 0 {
-                sink.text(" AND ");
-            }
-            render_expr::<D>(w, &mut sink);
-        }
-    }
+    render_and_list::<D>(&mut sink, " WHERE ", wheres);
 
     sink
 }
@@ -118,6 +112,18 @@ impl<D, T: Table> Update<D, T> {
         Cons<TableSlot<T, NotNull>, Nil>: Superset<Req, Idxs>,
     {
         self.wheres.push(cond.kind);
+        self
+    }
+
+    /// AND-folds a runtime-length collection of discharged conditions, the
+    /// same way `Select::filter_all` does — a `PATCH` narrows its rows by
+    /// however many criteria the request carried.
+    pub fn filter_all(
+        mut self,
+        conds: impl IntoIterator<Item = Predicate<Cons<TableSlot<T, NotNull>, Nil>>>,
+    ) -> Self {
+        self.wheres
+            .extend(conds.into_iter().map(Predicate::into_kind));
         self
     }
 }
