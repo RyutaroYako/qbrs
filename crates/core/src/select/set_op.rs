@@ -1,11 +1,12 @@
 //! `UNION`/`UNION ALL`/`INTERSECT`/`EXCEPT` between two `SELECT`s that may
 //! have entirely different `Scope`s (different tables, different JOINs) —
-//! the only thing that must line up is their *output shape*, expressed as
-//! `row::RowValues` associated-type equality: two branches must decode to
-//! the exact same Rust tuple, i.e. same column count and compatible types.
-//! Row *keys* deliberately don't have to match, since branches over
-//! different tables never share them, and SQL itself takes a `UNION`'s
-//! column names from the first branch.
+//! the only thing that must line up is their *output shape*: `row::SameShape`
+//! requires the same column names, in the same order, decoding to the same
+//! types. Names as well as types, because the combined result is read by key
+//! — a branch whose columns merely happen to be type-compatible would
+//! otherwise splice in transposed. Keys from different tables still match,
+//! since the comparison is on names, and SQL itself takes a `UNION`'s column
+//! names from the first branch.
 
 use std::marker::PhantomData;
 
@@ -13,7 +14,7 @@ use super::{Select, Selection, SortDir};
 use crate::dialect::Dialect;
 use crate::expr::Value;
 use crate::render::Fragment;
-use crate::row::RowValues;
+use crate::row::SameShape;
 
 enum SetOpKind {
     Union,
@@ -33,8 +34,9 @@ impl SetOpKind {
     }
 }
 
-/// A chain of `SELECT`s combined by set operators, all decoding to the same
-/// `Output` type. `ORDER BY` here is necessarily by **ordinal position**
+/// A chain of `SELECT`s combined by set operators, all decoding to the first
+/// branch's `Output` — which is also where SQL itself takes the combined
+/// result's column names from. `ORDER BY` here is necessarily by **ordinal position**
 /// (`ORDER BY 1`, 1-indexed) rather than a typed column — the branches can
 /// have entirely different `Scope`s, so there is no single scope left to
 /// check a column reference against once they're combined; ordinal position
@@ -70,7 +72,7 @@ impl<D: Dialect, Output> SetOp<D, Output> {
     pub fn union<ScopeB, SelB, IdxB>(self, other: &Select<D, ScopeB, SelB>) -> Self
     where
         SelB: Selection<ScopeB, IdxB>,
-        SelB::Output: RowValues<Values = Output>,
+        SelB::Output: SameShape<Output>,
     {
         self.push(SetOpKind::Union, other.fragment::<IdxB>())
     }
@@ -81,7 +83,7 @@ impl<D: Dialect, Output> SetOp<D, Output> {
     pub fn union_all<ScopeB, SelB, IdxB>(self, other: &Select<D, ScopeB, SelB>) -> Self
     where
         SelB: Selection<ScopeB, IdxB>,
-        SelB::Output: RowValues<Values = Output>,
+        SelB::Output: SameShape<Output>,
     {
         self.push(SetOpKind::UnionAll, other.fragment::<IdxB>())
     }
@@ -90,7 +92,7 @@ impl<D: Dialect, Output> SetOp<D, Output> {
     pub fn intersect<ScopeB, SelB, IdxB>(self, other: &Select<D, ScopeB, SelB>) -> Self
     where
         SelB: Selection<ScopeB, IdxB>,
-        SelB::Output: RowValues<Values = Output>,
+        SelB::Output: SameShape<Output>,
     {
         self.push(SetOpKind::Intersect, other.fragment::<IdxB>())
     }
@@ -100,7 +102,7 @@ impl<D: Dialect, Output> SetOp<D, Output> {
     pub fn except<ScopeB, SelB, IdxB>(self, other: &Select<D, ScopeB, SelB>) -> Self
     where
         SelB: Selection<ScopeB, IdxB>,
-        SelB::Output: RowValues<Values = Output>,
+        SelB::Output: SameShape<Output>,
     {
         self.push(SetOpKind::Except, other.fragment::<IdxB>())
     }
@@ -114,13 +116,13 @@ impl<D: Dialect, Output> SetOp<D, Output> {
         self
     }
 
-    pub fn limit(mut self, n: i64) -> Self {
-        self.limit = Some(n);
+    pub fn limit(mut self, n: impl Into<i64>) -> Self {
+        self.limit = Some(n.into());
         self
     }
 
-    pub fn offset(mut self, n: i64) -> Self {
-        self.offset = Some(n);
+    pub fn offset(mut self, n: impl Into<i64>) -> Self {
+        self.offset = Some(n.into());
         self
     }
 
@@ -172,12 +174,11 @@ impl<D: Dialect, Scope, Sel> Select<D, Scope, Sel> {
     pub fn union<ScopeB, SelB, IdxA, IdxB>(
         &self,
         other: &Select<D, ScopeB, SelB>,
-    ) -> SetOp<D, <Sel::Output as RowValues>::Values>
+    ) -> SetOp<D, Sel::Output>
     where
         Sel: Selection<Scope, IdxA>,
-        Sel::Output: RowValues,
         SelB: Selection<ScopeB, IdxB>,
-        SelB::Output: RowValues<Values = <Sel::Output as RowValues>::Values>,
+        SelB::Output: SameShape<Sel::Output>,
     {
         SetOp::new(self.fragment::<IdxA>()).union(other)
     }
@@ -185,12 +186,11 @@ impl<D: Dialect, Scope, Sel> Select<D, Scope, Sel> {
     pub fn union_all<ScopeB, SelB, IdxA, IdxB>(
         &self,
         other: &Select<D, ScopeB, SelB>,
-    ) -> SetOp<D, <Sel::Output as RowValues>::Values>
+    ) -> SetOp<D, Sel::Output>
     where
         Sel: Selection<Scope, IdxA>,
-        Sel::Output: RowValues,
         SelB: Selection<ScopeB, IdxB>,
-        SelB::Output: RowValues<Values = <Sel::Output as RowValues>::Values>,
+        SelB::Output: SameShape<Sel::Output>,
     {
         SetOp::new(self.fragment::<IdxA>()).union_all(other)
     }
@@ -198,12 +198,11 @@ impl<D: Dialect, Scope, Sel> Select<D, Scope, Sel> {
     pub fn intersect<ScopeB, SelB, IdxA, IdxB>(
         &self,
         other: &Select<D, ScopeB, SelB>,
-    ) -> SetOp<D, <Sel::Output as RowValues>::Values>
+    ) -> SetOp<D, Sel::Output>
     where
         Sel: Selection<Scope, IdxA>,
-        Sel::Output: RowValues,
         SelB: Selection<ScopeB, IdxB>,
-        SelB::Output: RowValues<Values = <Sel::Output as RowValues>::Values>,
+        SelB::Output: SameShape<Sel::Output>,
     {
         SetOp::new(self.fragment::<IdxA>()).intersect(other)
     }
@@ -211,12 +210,11 @@ impl<D: Dialect, Scope, Sel> Select<D, Scope, Sel> {
     pub fn except<ScopeB, SelB, IdxA, IdxB>(
         &self,
         other: &Select<D, ScopeB, SelB>,
-    ) -> SetOp<D, <Sel::Output as RowValues>::Values>
+    ) -> SetOp<D, Sel::Output>
     where
         Sel: Selection<Scope, IdxA>,
-        Sel::Output: RowValues,
         SelB: Selection<ScopeB, IdxB>,
-        SelB::Output: RowValues<Values = <Sel::Output as RowValues>::Values>,
+        SelB::Output: SameShape<Sel::Output>,
     {
         SetOp::new(self.fragment::<IdxA>()).except(other)
     }

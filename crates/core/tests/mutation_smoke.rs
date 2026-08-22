@@ -30,6 +30,10 @@ mod users {
             type Sql = Integer;
             const NAME: &'static str = "id";
         }
+        impl qbrs_core::row::Named for id {
+            type Name = qbrs_core::type_name!('i', 'd');
+            const NAME: &'static str = "id";
+        }
         #[derive(Clone, Copy)]
         pub struct email;
         impl ColumnKey for email {
@@ -37,11 +41,20 @@ mod users {
             type Sql = Text;
             const NAME: &'static str = "email";
         }
+        impl qbrs_core::row::Named for email {
+            type Name = qbrs_core::type_name!('e', 'm', 'a', 'i', 'l');
+            const NAME: &'static str = "email";
+        }
         #[derive(Clone, Copy)]
         pub struct display_name;
         impl ColumnKey for display_name {
             type Table = UsersMarker;
             type Sql = Text;
+            const NAME: &'static str = "display_name";
+        }
+        impl qbrs_core::row::Named for display_name {
+            type Name =
+                qbrs_core::type_name!('d', 'i', 's', 'p', 'l', 'a', 'y', '_', 'n', 'a', 'm', 'e');
             const NAME: &'static str = "display_name";
         }
     }

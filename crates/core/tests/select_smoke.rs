@@ -33,11 +33,19 @@ mod users {
             type Sql = Integer;
             const NAME: &'static str = "id";
         }
+        impl qbrs_core::row::Named for id {
+            type Name = qbrs_core::type_name!('i', 'd');
+            const NAME: &'static str = "id";
+        }
         #[derive(Clone, Copy)]
         pub struct name;
         impl ColumnKey for name {
             type Table = UsersMarker;
             type Sql = Text;
+            const NAME: &'static str = "name";
+        }
+        impl qbrs_core::row::Named for name {
+            type Name = qbrs_core::type_name!('n', 'a', 'm', 'e');
             const NAME: &'static str = "name";
         }
         #[derive(Clone, Copy)]
@@ -47,11 +55,19 @@ mod users {
             type Sql = Bool;
             const NAME: &'static str = "active";
         }
+        impl qbrs_core::row::Named for active {
+            type Name = qbrs_core::type_name!('a', 'c', 't', 'i', 'v', 'e');
+            const NAME: &'static str = "active";
+        }
         #[derive(Clone, Copy)]
         pub struct created_at;
         impl ColumnKey for created_at {
             type Table = UsersMarker;
             type Sql = Integer;
+            const NAME: &'static str = "created_at";
+        }
+        impl qbrs_core::row::Named for created_at {
+            type Name = qbrs_core::type_name!('c', 'r', 'e', 'a', 't', 'e', 'd', '_', 'a', 't');
             const NAME: &'static str = "created_at";
         }
     }
@@ -79,11 +95,19 @@ mod orders {
             type Sql = Integer;
             const NAME: &'static str = "user_id";
         }
+        impl qbrs_core::row::Named for user_id {
+            type Name = qbrs_core::type_name!('u', 's', 'e', 'r', '_', 'i', 'd');
+            const NAME: &'static str = "user_id";
+        }
         #[derive(Clone, Copy)]
         pub struct total;
         impl ColumnKey for total {
             type Table = OrdersMarker;
             type Sql = Integer;
+            const NAME: &'static str = "total";
+        }
+        impl qbrs_core::row::Named for total {
+            type Name = qbrs_core::type_name!('t', 'o', 't', 'a', 'l');
             const NAME: &'static str = "total";
         }
     }
@@ -199,4 +223,40 @@ fn raw_sql_escape_hatch_renders_and_renumbers_params() {
             qbrs_core::expr::Value::Bool(true),
         ]
     );
+}
+
+#[test]
+fn null_tests_render_is_null_not_equality() {
+    let q = select((users::id,))
+        .from::<Postgres, _>(users::Table)
+        .filter(users::name.is_null())
+        .filter(users::active.is_not_null());
+    let (sql, params) = q.to_sql();
+    assert_eq!(
+        sql,
+        "SELECT \"users\".\"id\" FROM \"users\" WHERE (\"users\".\"name\" IS NULL) AND (\"users\".\"active\" IS NOT NULL)"
+    );
+    assert!(params.is_empty());
+}
+
+#[test]
+fn in_list_binds_one_parameter_per_value() {
+    let q = select((users::id,))
+        .from::<Postgres, _>(users::Table)
+        .filter(users::id.is_in(vec![1, 2, 3]));
+    let (sql, params) = q.to_sql();
+    assert_eq!(
+        sql,
+        "SELECT \"users\".\"id\" FROM \"users\" WHERE (\"users\".\"id\" IN ($1, $2, $3))"
+    );
+    assert_eq!(params.len(), 3);
+}
+
+#[test]
+fn an_empty_in_list_renders_false_rather_than_invalid_sql() {
+    let q = select((users::id,))
+        .from::<Postgres, _>(users::Table)
+        .filter(users::id.is_in(Vec::<i32>::new()));
+    let (sql, _) = q.to_sql();
+    assert_eq!(sql, "SELECT \"users\".\"id\" FROM \"users\" WHERE FALSE");
 }

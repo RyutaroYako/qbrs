@@ -193,9 +193,8 @@ fn gen_schema_mod(
     for c in columns {
         let name = &c.field_name;
         let base_sql_ty = &c.sql_type;
-        // A nullable schema column needs `Nullable<X>`: without the wrapper,
-        // `.eq()` would demand a non-`Option` value and decoding a real NULL
-        // would fail instead of yielding `None`.
+        // A nullable schema column is `Nullable<X>`: the wrapper is what
+        // makes a real NULL decode as `None`.
         let col_sql_ty = if c.nullable {
             quote! { ::qbrs::scope::Nullable<#base_sql_ty> }
         } else {
@@ -211,8 +210,10 @@ fn gen_schema_mod(
                 type Sql = #col_sql_ty;
                 const NAME: &'static str = #col_name_str;
             }
+            #[doc(hidden)]
             impl ::qbrs::row::Named for #name {
                 type Name = #type_name;
+                const NAME: &'static str = #col_name_str;
             }
         });
         consts.push(quote! {
@@ -266,11 +267,11 @@ fn accessor_trait(trait_ident: &Ident, method: &Ident, key: &TokenStream2) -> To
 
         impl<L, Idx> #trait_ident<Idx> for ::qbrs::row::Row<L>
         where
-            L: ::qbrs::row::GetField<#key, Idx>,
+            L: ::qbrs::row::Field<#key, Idx>,
         {
-            type Value = <L as ::qbrs::row::GetField<#key, Idx>>::Value;
+            type Value = <L as ::qbrs::row::Field<#key, Idx>>::Value;
             fn #method(&self) -> &Self::Value {
-                self.get(self::#method)
+                self.peek_key::<#key, Idx>()
             }
         }
     }
@@ -279,13 +280,35 @@ fn accessor_trait(trait_ident: &Ident, method: &Ident, key: &TokenStream2) -> To
 /// `#[derive(FromRow)]`: fills the struct from a `Row` by matching each
 /// field's name against the row's keys. The struct itself stays free of
 /// column paths and query shape — the only thing it declares is what it
-/// wants called what.
-#[proc_macro_derive(FromRow)]
+/// wants called what, and `#[from_row(rename = "..")]` where the two names
+/// differ.
+#[proc_macro_derive(FromRow, attributes(from_row))]
 pub fn derive_from_row(input: TokenStream) -> TokenStream {
     let input = parse_macro_input!(input as DeriveInput);
     expand_from_row(input)
         .unwrap_or_else(|e| e.to_compile_error())
         .into()
+}
+
+/// `#[from_row(rename = "column_name")]` on a field.
+fn rename_attr(field: &syn::Field) -> syn::Result<Option<String>> {
+    for attr in &field.attrs {
+        if !attr.path().is_ident("from_row") {
+            continue;
+        }
+        let mut renamed = None;
+        attr.parse_nested_meta(|meta| {
+            if meta.path.is_ident("rename") {
+                let value: syn::LitStr = meta.value()?.parse()?;
+                renamed = Some(value.value());
+                Ok(())
+            } else {
+                Err(meta.error("unknown #[from_row(..)] option, expected `rename = \"...\"`"))
+            }
+        })?;
+        return Ok(renamed);
+    }
+    Ok(None)
 }
 
 fn expand_from_row(input: DeriveInput) -> syn::Result<TokenStream2> {
@@ -313,6 +336,13 @@ fn expand_from_row(input: DeriveInput) -> syn::Result<TokenStream2> {
             "#[derive(FromRow)] needs at least one field to fill",
         ));
     }
+    if !input.generics.params.is_empty() {
+        return Err(syn::Error::new_spanned(
+            &input.generics,
+            "#[derive(FromRow)] doesn't support generic structs: a field's type is what \
+             its column must decode to, so it has to be concrete",
+        ));
+    }
 
     // Field markers live in their own module so a failed lookup reports
     // `user_summary_fields::email` rather than the type-level spelling.
@@ -328,11 +358,17 @@ fn expand_from_row(input: DeriveInput) -> syn::Result<TokenStream2> {
     for (position, f) in fields.iter().enumerate() {
         let field_name = f.ident.clone().expect("named field");
         let field_ty = &f.ty;
-        let type_name = type_level_name(&field_name.to_string());
+        let field_name_str = match rename_attr(f)? {
+            Some(renamed) => renamed,
+            None => field_name.to_string(),
+        };
+        let type_name = type_level_name(&field_name_str);
         markers.push(quote! {
             pub struct #field_name;
+            #[doc(hidden)]
             impl ::qbrs::row::Named for #field_name {
                 type Name = #type_name;
+                const NAME: &'static str = #field_name_str;
             }
         });
 
@@ -343,9 +379,8 @@ fn expand_from_row(input: DeriveInput) -> syn::Result<TokenStream2> {
         });
         receiver = quote! { <#receiver as ::qbrs::row::TakeNamed<#marker, #idx>>::Rest };
 
-        // Bindings are numbered rather than named after the field: a field
-        // name can also be a unit struct in scope, which a bare identifier
-        // pattern would resolve to instead of introducing a binding.
+        // Numbered bindings: a bare identifier pattern resolves to a unit
+        // struct of that name when one is in scope.
         let binding = format_ident!("__field{position}");
         steps.push(quote! {
             let (#binding, row) = row.take_named::<#marker, #idx>();
@@ -374,11 +409,131 @@ fn expand_from_row(input: DeriveInput) -> syn::Result<TokenStream2> {
     })
 }
 
+/// `with! { struct recent_orders { id: Integer, total: BigInt } }` — declares
+/// a CTE's pseudo-table. Generates exactly what `#[derive(Table)]` does — a
+/// `Table` marker, per-column `ColumnKey`/`Named` markers, `Column` consts,
+/// and accessor traits — plus the `CteShape` impl `cte::with` checks a body
+/// against, so a bound CTE is a real table everywhere in the crate.
+#[proc_macro]
+pub fn with(input: TokenStream) -> TokenStream {
+    let decl = parse_macro_input!(input as CteDecl);
+    expand_with(decl).into()
+}
+
+struct CteDecl {
+    name: Ident,
+    fields: Vec<(Ident, Type)>,
+}
+
+impl syn::parse::Parse for CteDecl {
+    fn parse(input: syn::parse::ParseStream) -> syn::Result<Self> {
+        input.parse::<Token![struct]>()?;
+        let name: Ident = input.parse()?;
+        let body;
+        syn::braced!(body in input);
+        let mut fields = Vec::new();
+        while !body.is_empty() {
+            let field: Ident = body.parse()?;
+            body.parse::<Token![:]>()?;
+            let ty: Type = body.parse()?;
+            fields.push((field, ty));
+            if body.is_empty() {
+                break;
+            }
+            body.parse::<Token![,]>()?;
+        }
+        Ok(CteDecl { name, fields })
+    }
+}
+
+fn expand_with(decl: CteDecl) -> TokenStream2 {
+    let mod_ident = &decl.name;
+    let table_name = mod_ident.to_string();
+
+    let mut keys = Vec::new();
+    let mut consts = Vec::new();
+    let mut accessors = Vec::new();
+    let mut accessor_uses = Vec::new();
+    let mut key_types = Vec::new();
+    let mut names = Vec::new();
+    let mut natives = Vec::new();
+
+    for (field, ty) in &decl.fields {
+        let field_str = field.to_string();
+        let type_name = type_level_name(&field_str);
+        // The marker lives in `columns`, its impls in the enclosing module:
+        // a declared column's type is written in the caller's scope, which
+        // `use super::*` reaches from here but not from a nested module.
+        keys.push(quote! {
+            #[derive(Clone, Copy)]
+            pub struct #field;
+        });
+        consts.push(quote! {
+            impl ::qbrs::expr::ColumnKey for columns::#field {
+                type Table = Table;
+                type Sql = #ty;
+                const NAME: &'static str = #field_str;
+            }
+            #[doc(hidden)]
+            impl ::qbrs::row::Named for columns::#field {
+                type Name = #type_name;
+                const NAME: &'static str = #field_str;
+            }
+        });
+        consts.push(quote! {
+            #[allow(non_upper_case_globals)]
+            pub const #field: ::qbrs::expr::Column<columns::#field> =
+                ::qbrs::expr::Column::new();
+        });
+        let trait_ident = format_ident!("Has{}", to_camel_case(&field_str));
+        accessors.push(accessor_trait(
+            &trait_ident,
+            field,
+            &quote! { columns::#field },
+        ));
+        accessor_uses.push(quote! {
+            #[allow(unused_imports)]
+            pub use #mod_ident::#trait_ident as _;
+        });
+        key_types.push(quote! { columns::#field });
+        names.push(field_str);
+        natives.push(quote! { <#ty as ::qbrs::expr::SqlType>::Native });
+    }
+
+    quote! {
+        #[allow(non_snake_case)]
+        pub mod #mod_ident {
+            use super::*;
+
+            pub struct Table;
+            impl ::qbrs::scope::Table for Table {
+                const NAME: &'static str = #table_name;
+            }
+
+            #[allow(non_camel_case_types)]
+            pub mod columns {
+                #(#keys)*
+            }
+
+            #(#consts)*
+            #(#accessors)*
+
+            impl ::qbrs::cte::CteShape for Table {
+                type Shape = (#(#natives,)*);
+                type Keys = ::qbrs::key_list!(#(#key_types),*);
+                const COLUMN_NAMES: &'static [&'static str] = &[#(#names),*];
+            }
+        }
+
+        #(#accessor_uses)*
+    }
+}
+
 /// `label!(rank_in_user, rank_overall);` — declares output-column names for
-/// computed selections, in a `label` module so they can never be shadowed by
-/// a local binding of the same name. One invocation per scope; declaring it
-/// inside the function that runs the query keeps the names next to their use
-/// and sidesteps that limit.
+/// computed selections, in a `label` module so a local binding of the same
+/// name can never shadow one. A scope holds one `label` module, so a scope
+/// gets one invocation listing every name it needs; an invocation inside the
+/// function that runs the query keeps those names next to their use.
 #[proc_macro]
 pub fn label(input: TokenStream) -> TokenStream {
     let names = parse_macro_input!(input with Punctuated::<Ident, Token![,]>::parse_terminated);
@@ -388,7 +543,7 @@ pub fn label(input: TokenStream) -> TokenStream {
         let name_str = name.to_string();
         let type_name = type_level_name(&name_str);
         let trait_ident = format_ident!("Has{}", to_camel_case(&name_str));
-        let accessor = accessor_trait(&trait_ident, name, &quote! { #name });
+        let accessor = accessor_trait(&trait_ident, name, &quote! { label::#name });
         decls.push(quote! {
             #[allow(non_camel_case_types)]
             #[derive(Clone, Copy)]
@@ -396,18 +551,14 @@ pub fn label(input: TokenStream) -> TokenStream {
             impl ::qbrs::row::RowKey for #name {
                 type Key = #name;
             }
-            impl ::qbrs::row::AliasKey for #name {
-                const NAME: &'static str = #name_str;
-            }
+            impl ::qbrs::expr::AliasKey for #name {}
+            #[doc(hidden)]
             impl ::qbrs::row::Named for #name {
                 type Name = #type_name;
+                const NAME: &'static str = #name_str;
             }
-            #accessor
         });
-        uses.push(quote! {
-            #[allow(unused_imports)]
-            pub use label::#trait_ident as _;
-        });
+        uses.push(accessor);
     }
     quote! {
         pub mod label {

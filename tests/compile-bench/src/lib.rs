@@ -125,6 +125,6 @@ pub fn assert_map_nullable<S: MapNullable>() {}
 /// selection-width counterpart to `assert_contains`.
 pub fn assert_field<L, K, I>()
 where
-    L: qbrs_core::row::GetField<K, I>,
+    L: qbrs_core::row::Field<K, I>,
 {
 }

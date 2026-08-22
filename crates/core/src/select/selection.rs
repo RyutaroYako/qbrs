@@ -1,8 +1,8 @@
 //! What a `.select(..)` list decodes to once a row comes back.
 
-use crate::expr::{Column, ColumnKey, Expr, ExprKind, Keyed, SqlType};
+use crate::expr::{AliasKey, Aliased, Column, ColumnKey, Expr, ExprKind, Keyed, SqlType};
 use crate::render::SelectItem;
-use crate::row::{AliasKey, Aliased, Anon, Row, RowCons, RowNil};
+use crate::row::{Anon, Named, Row, RowCons, RowNil};
 use crate::scope::{Find, Superset, Table, WrapNullable};
 
 /// One element of a selection list: the key its value is filed under in the
@@ -73,7 +73,7 @@ where
     type Key = K;
     type Value = <Inner as RowField<Scope, Idx>>::Value;
     fn item(&self) -> SelectItem {
-        SelectItem::labeled(self.inner.item().kind, K::NAME)
+        SelectItem::labeled(self.inner.item().kind, <K as Named>::NAME)
     }
 }
 

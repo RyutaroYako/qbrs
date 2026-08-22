@@ -38,6 +38,22 @@ impl<D, Scope, Sel> Select<D, Scope, Sel> {
     }
 }
 
+impl<D, Output> DynSelect<D, Output> {
+    /// `LIMIT`/`OFFSET` survive erasure because they reference nothing: a
+    /// row count needs no proof that a table is joined. `order_by` doesn't
+    /// follow them here — a sort key is a column reference, and the scope
+    /// that would justify it is exactly what `.erase()` gave up.
+    pub fn limit(mut self, n: impl Into<i64>) -> Self {
+        self.body.limit = Some(n.into());
+        self
+    }
+
+    pub fn offset(mut self, n: impl Into<i64>) -> Self {
+        self.body.offset = Some(n.into());
+        self
+    }
+}
+
 impl<D: Dialect, Output> DynSelect<D, Output> {
     pub fn to_sql(&self) -> (String, Vec<Value>) {
         self.body.render::<D>(&self.selection)

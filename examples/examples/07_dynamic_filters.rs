@@ -3,12 +3,9 @@
 //! be called conditionally, in a loop, or from a shared helper function.
 //! Run: `cargo run -p qbrs-examples --example 07_dynamic_filters`
 
-use qbrs::dialect::Postgres;
-use qbrs::expr::{ExprMethods, TextExprMethods};
-use qbrs::scope::Find;
-use qbrs::select::{Select, select};
-use qbrs_examples::{seed, setup_db, users};
-use qbrs_sqlx::LoadExt;
+use qbrs::prelude::*;
+use qbrs_examples::*;
+use qbrs_sqlx::prelude::*;
 
 /// A search form's optional fields — in a real app these would come from
 /// query-string params, most of them usually absent.
@@ -77,4 +74,22 @@ async fn main() {
     }
     let rows: Vec<String> = query.load(&pool).await.expect("looped filters");
     println!("looped-filter result: {rows:?}");
+
+    // Conditions from *different* tables can't share one `Expr` type — the
+    // tables an expression references are part of it. `predicate(..)`
+    // discharges that requirement against the query's scope, so a collection
+    // of them is buildable and passable.
+    let mut conds = Vec::new();
+    conds.push(predicate(users::active.eq(true)));
+    if true {
+        conds.push(predicate(orders::total.gt(1000i64)));
+    }
+    let big: Vec<String> = select(users::email)
+        .from::<Postgres, _>(users::Table)
+        .inner_join(orders::Table, orders::user_id.eq(users::id))
+        .filter_all(conds)
+        .load(&pool)
+        .await
+        .expect("collected predicates");
+    println!("active users with a big order: {big:?}");
 }

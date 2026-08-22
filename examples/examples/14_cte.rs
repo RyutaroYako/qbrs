@@ -8,13 +8,9 @@
 //! and chaining CTEs are deferred.
 //! Run: `cargo run -p qbrs-examples --example 14_cte`
 
-use qbrs::dialect::Postgres;
-use qbrs::expr::{BigInt, ExprMethods};
-use qbrs::select::select;
-use qbrs::sql;
-use qbrs::with;
+use qbrs::prelude::*;
 use qbrs_examples::*;
-use qbrs_sqlx::LoadExt;
+use qbrs_sqlx::prelude::*;
 
 with! {
     struct big_spenders { user_id: qbrs::expr::BigInt, total: qbrs::expr::BigInt }
@@ -34,10 +30,18 @@ async fn main() {
     // `users::Table`.
     // Postgres's `sum(bigint)` returns `numeric`, not `bigint` — cast back
     // explicitly so it decodes as a plain `i64` on the Rust side.
-    let totals = select((orders::user_id, sql!(BigInt, "sum(orders.total)::bigint")))
-        .from::<Postgres, _>(orders::Table)
-        .group_by(orders::user_id)
-        .having(sql!(BigInt, "sum(orders.total)::bigint").gt(1000i64));
+    // The CTE declares a column called `total`, so the body has to produce
+    // one called `total`. A `sql!{}` fragment has no name of its own, so
+    // `label!` gives it one — the same thing that makes it readable by key.
+    qbrs::label!(total);
+
+    let totals = select((
+        orders::user_id,
+        sql!(BigInt, "sum(orders.total)::bigint").alias(label::total),
+    ))
+    .from::<Postgres, _>(orders::Table)
+    .group_by(orders::user_id)
+    .having(sql!(BigInt, "sum(orders.total)::bigint").gt(1000i64));
 
     let rows = select((users::email, big_spenders::total))
         .with(qbrs::cte::with(big_spenders::Table, &totals))
@@ -47,9 +51,6 @@ async fn main() {
         .await
         .expect("big spenders");
 
-    // `users::email` has a generated accessor; a `with!{}` CTE column has
-    // only `.get(..)`, since synthesizing a `HasTotal` identifier needs a
-    // proc macro and `with!{}` is declarative.
     println!("users who've spent over 1000 (email, total):");
     for row in &rows {
         println!("  ({:?}, {})", row.email(), row.get(big_spenders::total));

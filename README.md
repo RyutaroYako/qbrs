@@ -121,15 +121,17 @@ qbrs-sqlx = { git = "https://github.com/RyutaroYako/qbrs" }  # Postgres executio
 ## Usage
 
 A schema is a `#[derive(Table)]` struct, shown in the
-[Quick example](#quick-example) above. See [`examples/`](examples) for
-complete, runnable code for everything below.
+[Quick example](#quick-example) above. Two imports cover a query —
+`use qbrs::prelude::*;` for the builder and its extension traits, and
+`use qbrs_sqlx::prelude::*;` for `.load()`/`.execute()`. See
+[`examples/`](examples) for complete, runnable code for everything below.
 
 - **Rows keyed by column** —
   [`16_row_access`](examples/examples/16_row_access.rs). A tuple selection
   decodes to a `Row`, read with `row.get(users::email)` or the accessor
   `#[derive(Table)]` generates for each column (`row.email()`). Selecting a
-  single un-tupled column still decodes to a bare value, and
-  `into_tuples()` / `.into()` recover the positional tuple. A computed
+  single un-tupled column still decodes to a bare value, and `into_tuple()` /
+  `into_tuples()` recover the positional tuple. A computed
   expression is keyed by the function that produced it (`row.count()`,
   `row.row_number()`); `label!(name, ..)` renames one when the same
   function is selected twice, and emits the name as the column's `AS`.
@@ -164,7 +166,13 @@ complete, runnable code for everything below.
 - **Dynamic composition, no escape hatch** —
   [`07_dynamic_filters`](examples/examples/07_dynamic_filters.rs).
   `.filter()` doesn't change `Select`'s type, so it can be called
-  conditionally or in a loop.
+  conditionally or in a loop. Conditions from *different* tables don't share
+  an `Expr` type, so a collection of them goes through `predicate(..)` and
+  `.filter_all(..)`, which discharges the scope requirement up front.
+- **Predicates** — `.eq()`/`.ne()`/`.lt()`/`.gt()`/`.like()`, plus
+  `.is_null()`/`.is_not_null()` and `.is_in([..])`. Comparing to NULL with
+  `=` is never true in SQL, so `.eq(None)` isn't expressible: the question
+  is `.is_null()`.
 - **Raw SQL escape hatch** (`sql!{}`) —
   [`06_raw_sql`](examples/examples/06_raw_sql.rs). Values still bind as real
   parameters, never spliced as text.
@@ -205,20 +213,25 @@ complete, runnable code for everything below.
 - Selecting a computed/raw expression's `NULL`-ability isn't derived the way
   a bare column's is — `sql!(Nullable<Text>, "...")` if the expression itself
   can be `NULL`.
-- A `sql!{}` fragment has no identity to key a row field by, so it is
-  readable only through `into_tuples()` unless given a `label!` alias.
-- Selecting the same key twice makes `row.get(..)` ambiguous (`E0283`,
-  "multiple `impl`s satisfying ... `GetField`") rather than silently
-  resolving to the first — alias one of them.
+- A `sql!{}` fragment has no name of its own, so it is readable only
+  positionally until `label!` gives it one. The same applies wherever two
+  selections are compared by name — a CTE body and a `UNION` branch.
+- Selecting the same name twice is ambiguous at the point it's read rather
+  than resolving to the first; alias one of them.
 - Naming a row type in a signature takes a type alias, and one long enough
   to trip `clippy::type_complexity`; inference covers every use that stays
   inside a function.
-- `#[derive(FromRow)]` matches on field name, so a `with!{}` CTE column can't
-  take part (a declarative macro can't spell a name at the type level) — give
-  it a `label!` alias, or map it by hand with `take`. Two selected columns
-  with the same name are likewise ambiguous until one is aliased.
-- `Row` converts into a struct with `into_struct()`/`into_structs()`, not
-  `.into()`: `From` has no room for the inferred lookup indices.
+- One `label!` per scope — it declares a `label` module, and a scope holds
+  one. List every name that scope needs in the one invocation.
+- A helper generic over rows needs one index type parameter per column it
+  reads (`fn f<I1, I2, R>(..) where R: HasEmail<I1> + HasTotal<I2>`). Sharing
+  one across two columns compiles and then matches no row.
+- A `#[derive(FromRow)]` field's type is the column's decoded type, so a DTO
+  filled from a `LEFT JOIN` declares `Option<T>` where one filled from an
+  `INNER JOIN` declares `T`. It names no column and no table, but it does
+  pin the join's nullability.
+- Aggregates over a column (`count(col)`, `sum(col)`) aren't built yet;
+  `count()` is `count(*)`, which counts rows, not non-NULL values.
 
 ## Status
 

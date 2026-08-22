@@ -25,7 +25,7 @@ async fn main() {
             .into_iter()
             .next()
             .expect("returning row")
-            .into();
+            .into_tuple();
     println!("inserted: id={id} email={email} display_name={display_name:?}");
 
     // Bulk insert in one statement, mixing rows that do/don't override

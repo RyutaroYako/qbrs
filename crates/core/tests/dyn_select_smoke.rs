@@ -32,6 +32,10 @@ mod users {
             type Sql = Integer;
             const NAME: &'static str = "id";
         }
+        impl qbrs_core::row::Named for id {
+            type Name = qbrs_core::type_name!('i', 'd');
+            const NAME: &'static str = "id";
+        }
     }
 
     pub const id: Column<columns::id> = Column::new();
@@ -51,6 +55,10 @@ mod orders {
         impl ColumnKey for user_id {
             type Table = OrdersMarker;
             type Sql = Integer;
+            const NAME: &'static str = "user_id";
+        }
+        impl qbrs_core::row::Named for user_id {
+            type Name = qbrs_core::type_name!('u', 's', 'e', 'r', '_', 'i', 'd');
             const NAME: &'static str = "user_id";
         }
     }

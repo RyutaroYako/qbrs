@@ -5,9 +5,9 @@
 
 use qbrs_core::delete::{Delete, DeleteReturning};
 use qbrs_core::dialect::Postgres;
-use qbrs_core::expr::{Column, ColumnKey, Expr, Keyed, SqlType, Value};
+use qbrs_core::expr::{Aliased, Column, ColumnKey, Expr, Keyed, SqlType, Value};
 use qbrs_core::insert::{Insert, InsertReturning, InsertRow};
-use qbrs_core::row::{Aliased, Row, RowCons, RowNil};
+use qbrs_core::row::{Row, RowCons, RowNil};
 use qbrs_core::scope::Table;
 use qbrs_core::select::{DynSelect, Prepared, PreparedParams, RowField, Select, Selection, SetOp};
 use qbrs_core::update::{Update, UpdateReturning};
@@ -34,6 +34,13 @@ pub enum Error {
 /// This crate's `Result`: the same shape as `sqlx::Result`, with
 /// `qbrs_sqlx::Error` as the fixed error type.
 pub type Result<T> = std::result::Result<T, Error>;
+
+/// Every extension trait that puts a `.load()`/`.execute()` on a builder.
+/// Which one applies depends on the builder, so importing them one at a
+/// time is bookkeeping with no decision in it.
+pub mod prelude {
+    pub use crate::{ExecuteExt, LoadDynExt, LoadExt, LoadReturningExt, LoadSetOpExt, PreparedExt};
+}
 
 /// Binds a `Value` to a Postgres query parameter. `Value`'s typed `NullX`
 /// variants carry the parameter type a NULL bind still has to declare.
@@ -165,6 +172,10 @@ decode_tuple!(A IA, B IB, C IC, D ID, E IE, F IF, G IG, H IH, I II);
 decode_tuple!(A IA, B IB, C IC, D ID, E IE, F IF, G IG, H IH, I II, J IJ);
 decode_tuple!(A IA, B IB, C IC, D ID, E IE, F IF, G IG, H IH, I II, J IJ, K IK);
 decode_tuple!(A IA, B IB, C IC, D ID, E IE, F IF, G IG, H IH, I II, J IJ, K IK, L IL);
+decode_tuple!(A IA, B IB, C IC, D ID, E IE, F IF, G IG, H IH, I II, J IJ, K IK, L IL, M IM);
+decode_tuple!(A IA, B IB, C IC, D ID, E IE, F IF, G IG, H IH, I II, J IJ, K IK, L IL, M IM, N IN);
+decode_tuple!(A IA, B IB, C IC, D ID, E IE, F IF, G IG, H IH, I II, J IJ, K IK, L IL, M IM, N IN, O IO);
+decode_tuple!(A IA, B IB, C IC, D ID, E IE, F IF, G IG, H IH, I II, J IJ, K IK, L IL, M IM, N IN, O IO, P IP);
 
 /// Generic over `E: sqlx::PgExecutor` so every `.load()`/`.execute()` works
 /// against a `&PgPool` or a transaction alike. sqlx implements `Executor` for
@@ -402,49 +413,6 @@ impl<K, V: DecodeRow, Tail: DecodeRow> DecodeRow for RowCons<K, V, Tail> {
 impl<L: DecodeRow> DecodeRow for Row<L> {
     fn decode_at(row: &PgRow, idx: &mut usize) -> sqlx::Result<Self> {
         Ok(Row::new(L::decode_at(row, idx)?))
-    }
-}
-
-impl<A: DecodeRow> DecodeRow for (A,) {
-    fn decode_at(row: &PgRow, idx: &mut usize) -> sqlx::Result<Self> {
-        Ok((A::decode_at(row, idx)?,))
-    }
-}
-impl<A: DecodeRow, B: DecodeRow> DecodeRow for (A, B) {
-    fn decode_at(row: &PgRow, idx: &mut usize) -> sqlx::Result<Self> {
-        Ok((A::decode_at(row, idx)?, B::decode_at(row, idx)?))
-    }
-}
-impl<A: DecodeRow, B: DecodeRow, C: DecodeRow> DecodeRow for (A, B, C) {
-    fn decode_at(row: &PgRow, idx: &mut usize) -> sqlx::Result<Self> {
-        Ok((
-            A::decode_at(row, idx)?,
-            B::decode_at(row, idx)?,
-            C::decode_at(row, idx)?,
-        ))
-    }
-}
-impl<A: DecodeRow, B: DecodeRow, C: DecodeRow, D: DecodeRow> DecodeRow for (A, B, C, D) {
-    fn decode_at(row: &PgRow, idx: &mut usize) -> sqlx::Result<Self> {
-        Ok((
-            A::decode_at(row, idx)?,
-            B::decode_at(row, idx)?,
-            C::decode_at(row, idx)?,
-            D::decode_at(row, idx)?,
-        ))
-    }
-}
-impl<A: DecodeRow, B: DecodeRow, C: DecodeRow, D: DecodeRow, E: DecodeRow> DecodeRow
-    for (A, B, C, D, E)
-{
-    fn decode_at(row: &PgRow, idx: &mut usize) -> sqlx::Result<Self> {
-        Ok((
-            A::decode_at(row, idx)?,
-            B::decode_at(row, idx)?,
-            C::decode_at(row, idx)?,
-            D::decode_at(row, idx)?,
-            E::decode_at(row, idx)?,
-        ))
     }
 }
 

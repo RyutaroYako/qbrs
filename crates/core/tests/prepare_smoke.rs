@@ -28,6 +28,10 @@ mod users {
             type Sql = Text;
             const NAME: &'static str = "email";
         }
+        impl qbrs_core::row::Named for email {
+            type Name = qbrs_core::type_name!('e', 'm', 'a', 'i', 'l');
+            const NAME: &'static str = "email";
+        }
     }
 
     pub const email: Column<columns::email> = Column::new();

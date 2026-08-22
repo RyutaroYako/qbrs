@@ -46,10 +46,10 @@ the child process outlives the test binary.
 
 - `crates/core` (`qbrs-core`) — all the type-level machinery and SQL rendering. No I/O, no
   async, no driver dependency, **zero dependencies**.
-- `crates/macros` (`qbrs-macros`) — `#[derive(Table)]` and `label!`. Both synthesize an
-  identifier (`HasEmail` from `email`), which is the reason they can't be `macro_rules!`;
-  everything that doesn't (`sql!`, `prepare!`, `with!`) lives in `core` (`raw.rs`,
-  `prepare.rs`, `with_macro.rs`).
+- `crates/macros` (`qbrs-macros`) — `#[derive(Table)]`, `#[derive(FromRow)]`, `label!`,
+  and `with!`. All four synthesize identifiers (`HasEmail` from `email`) or a name's
+  type-level spelling, which is why none can be `macro_rules!`; `sql!` and `prepare!`, which
+  need neither, stay in `core` (`raw.rs`, `prepare.rs`).
 - `crates/qbrs` — facade; two `pub use` lines. Users depend on this.
 - `crates/qbrs-sqlx` — Postgres execution via `sqlx`. Owns *only* value binding and row
   decoding; no query-building logic belongs here.
@@ -112,7 +112,7 @@ position to disambiguate, so there is nothing to key. `Row::into_tuple` /
 `Vec<Row<_>>::into_tuples` / `From<Row<..>> for (..)` give the positional view back; the
 arity limit lives in `row::Prepend`'s impls and nowhere else.
 
-Two lookups, deliberately distinct. `GetField`/`TakeField` search by key *identity*
+Two lookups, deliberately distinct. `Field` searches by key *identity*
 (`row.get(users::email)` must not also match `archived_users::email`); `TakeNamed` searches
 by `row::Named`, an identifier spelled one `char` per cell (`NameChar<'e', ..>`), which is
 what lets `#[derive(FromRow)]` fill a struct that has never been told a column path. `char`
@@ -121,8 +121,14 @@ is one of the three types stable const generics accept — a `&'static str` para
 to be proc macros. Keep the spelling out of diagnostics: it lives in `Named::Name`, and
 `TakeNamed` reports the `FromRow` field marker instead.
 
-`FromRow` cannot be `From`/`Into`: the per-field lookup indices have nowhere to live in a
-foreign trait's fixed shape (`E0207`). Hence `into_struct`/`into_structs`.
+`FromRow` is its own trait rather than `From`: the per-field lookup indices have nowhere to
+live in a foreign trait's fixed shape. Hence `into_struct`/`into_structs`.
+
+Two selections are compared by `row::SameShape` — same values *and* same names, in order.
+Values alone would let a `UNION` branch or a CTE body whose columns merely happen to be
+type-compatible splice in transposed, and the result is then read by key. `SameNameAs`
+carries `#[diagnostic::do_not_recommend]` so the reported obligation is the two columns,
+not the `NameChar` spelling behind them.
 
 Two consequences to preserve. Shape comparisons between *different* queries (`cte::with`,
 `select::SetOp`) go through `RowValues::Values`, not `Selection::Output`: two branches of a

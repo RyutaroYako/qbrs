@@ -11,10 +11,25 @@ use qbrs_sqlx::LoadExt;
 /// Takes any row carrying `users::email`, whatever else it holds — the
 /// static equivalent of width subtyping, which a tuple can't express.
 /// `Idx` is the inferred lookup index; callers never write it.
+///
+/// One index parameter per column, always: the index records *where* a
+/// column sits in the row, so two columns need two of them. Reusing one
+/// `Idx` for both would compile here and then reject every row at the call
+/// site, since no row can hold two different columns at the same position.
 fn masked_email<Idx, R: users::HasEmail<Idx, Value = String>>(row: &R) -> String {
     let email = row.email();
     let at = email.find('@').unwrap_or(email.len());
     format!("{}***{}", &email[..1], &email[at..])
+}
+
+/// Two columns, two indices — and generic over whether the join made
+/// `total` nullable, so the same helper serves an INNER and a LEFT join.
+fn line<I1, I2, R>(row: &R) -> String
+where
+    R: users::HasEmail<I1, Value = String> + orders::HasTotal<I2>,
+    <R as orders::HasTotal<I2>>::Value: std::fmt::Debug,
+{
+    format!("{} {:?}", row.email(), row.total())
 }
 
 #[tokio::main]
@@ -43,6 +58,7 @@ async fn main() {
     }
     for row in &four_columns {
         println!("{} total={:?}", masked_email(row), row.total());
+        println!("  {}", line(row));
     }
 
     // `orders::user_id` and `orders::total` are both `i64`, so a positional

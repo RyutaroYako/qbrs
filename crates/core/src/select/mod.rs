@@ -22,12 +22,14 @@ pub use selection::{RowField, Selection};
 pub use set_op::SetOp;
 
 /// One `name AS (body)` binding accumulated by `SelectSeed::with`.
+#[derive(Clone)]
 struct CteDef {
     name: &'static str,
     column_names: &'static [&'static str],
     body: Fragment,
 }
 
+#[derive(Clone)]
 enum JoinKind {
     Inner,
     Left,
@@ -35,6 +37,7 @@ enum JoinKind {
     Full,
 }
 
+#[derive(Clone)]
 struct JoinClause {
     kind: JoinKind,
     table: &'static str,
@@ -73,6 +76,28 @@ pub trait OrderExt<S: SqlType>: IntoExpr<S> + Sized {
     }
 }
 impl<S: SqlType, T: IntoExpr<S>> OrderExt<S> for T {}
+
+/// A condition whose scope requirement has already been discharged, so a
+/// runtime-length collection of them can be built and passed around. An
+/// `Expr` carries the tables it references in its type, which is what makes
+/// `vec![users_cond, orders_cond]` fail to unify; `predicate` trades that
+/// tag for a proof against one concrete scope.
+pub struct Predicate<Scope> {
+    kind: ExprKind,
+    _marker: PhantomData<fn() -> Scope>,
+}
+
+/// Discharges a condition's scope requirement. `Scope` is inferred from the
+/// query the resulting predicates are eventually given to.
+pub fn predicate<Scope, Req, Idxs>(cond: Expr<Req, Bool>) -> Predicate<Scope>
+where
+    Scope: Superset<Req, Idxs>,
+{
+    Predicate {
+        kind: cond.kind,
+        _marker: PhantomData,
+    }
+}
 
 /// Holds just the `SELECT` list until `.from(..)` supplies the first table
 /// and therefore the query's initial `Scope`. Splitting this out (rather
@@ -134,6 +159,7 @@ impl<Sel> SelectSeed<Sel> {
 /// keeps typed and `DynSelect` keeps rendered. Held whole by both, so a new
 /// clause is added here once instead of being threaded through each of them
 /// and through rendering by hand.
+#[derive(Clone)]
 pub(super) struct SelectBody {
     ctes: Vec<CteDef>,
     from_table: &'static str,
@@ -168,6 +194,17 @@ pub struct Select<D, Scope, Sel> {
     _marker: PhantomData<fn() -> (D, Scope)>,
 }
 
+// Cloning is what lets one built-up query serve both a count and a page.
+impl<D, Scope, Sel: Clone> Clone for Select<D, Scope, Sel> {
+    fn clone(&self) -> Self {
+        Select {
+            body: self.body.clone(),
+            selection: self.selection.clone(),
+            _marker: PhantomData,
+        }
+    }
+}
+
 impl<D, Scope, Sel> Select<D, Scope, Sel> {
     fn retype<NewScope>(self) -> Select<D, NewScope, Sel> {
         Select {
@@ -185,6 +222,14 @@ impl<D, Scope, Sel> Select<D, Scope, Sel> {
         Scope: Superset<Req, Idxs>,
     {
         self.body.wheres.push(cond.kind);
+        self
+    }
+
+    /// AND-folds a runtime-length collection of already-discharged
+    /// conditions — the shape a search form has, where the conditions come
+    /// from different tables and so can't share one `Expr` type.
+    pub fn filter_all(mut self, conds: impl IntoIterator<Item = Predicate<Scope>>) -> Self {
+        self.body.wheres.extend(conds.into_iter().map(|p| p.kind));
         self
     }
 
@@ -217,13 +262,13 @@ impl<D, Scope, Sel> Select<D, Scope, Sel> {
         self
     }
 
-    pub fn limit(mut self, n: i64) -> Self {
-        self.body.limit = Some(n);
+    pub fn limit(mut self, n: impl Into<i64>) -> Self {
+        self.body.limit = Some(n.into());
         self
     }
 
-    pub fn offset(mut self, n: i64) -> Self {
-        self.body.offset = Some(n);
+    pub fn offset(mut self, n: impl Into<i64>) -> Self {
+        self.body.offset = Some(n.into());
         self
     }
 

@@ -17,4 +17,3 @@ pub mod scope;
 pub mod select;
 pub mod update;
 pub mod window;
-pub mod with_macro;

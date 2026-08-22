@@ -1,24 +1,38 @@
-//! `DynSelect`: the one case the type system genuinely cannot express —
-//! conditionally joining a table or not — handled via a narrow, explicit
-//! erasure hatch instead of a Drizzle-style `.$dynamic()` on the whole
-//! query. Run: `cargo run -p qbrs-examples --example 09_dynamic_join`
+//! `DynSelect`: the one place a query's *shape* has to be decided at
+//! runtime. A single static type cannot mean "joined orders" in one branch
+//! and "didn't" in another, so `.erase()` unifies them — dropping the join
+//! skeleton and nothing else.
+//! Run: `cargo run -p qbrs-examples --example 09_dynamic_join`
 
-use qbrs::dialect::Postgres;
-use qbrs::expr::ExprMethods;
-use qbrs::select::{DynSelect, select};
-use qbrs_examples::{orders, seed, setup_db, users};
-use qbrs_sqlx::LoadDynExt;
+use qbrs::prelude::*;
+use qbrs::row::{RowCons, RowNil};
+use qbrs_examples::*;
+use qbrs_sqlx::prelude::*;
 
-/// A single static return type cannot mean "joined orders" in one branch
-/// and "didn't" in another — `.erase()` unifies them into `DynSelect`.
-fn build_query(include_orders: bool) -> DynSelect<Postgres, String> {
-    let base = select(users::email).from::<Postgres, _>(users::Table);
+/// Erasure keeps the row, so the return type has to name it. A row's type is
+/// its key list, which is long by construction — an alias is how you say it
+/// once. `clippy::type_complexity` counts the nesting, hence the allow.
+#[allow(clippy::type_complexity)]
+type UserRow =
+    Row<RowCons<users::columns::id, i64, RowCons<users::columns::email, String, RowNil>>>;
+
+fn page(include_orders: bool, page: u32) -> DynSelect<Postgres, UserRow> {
+    let base = select((users::id, users::email))
+        .from::<Postgres, _>(users::Table)
+        .order_by(users::id.asc());
+
+    // `order_by` has to happen before `.erase()` — a sort key is a column
+    // reference, and the scope that justifies it is what erasure gives up.
+    // `limit`/`offset` reference nothing, so they survive it and the
+    // pagination tail isn't duplicated across the branches.
     if include_orders {
         base.inner_join(orders::Table, orders::user_id.eq(users::id))
             .erase()
     } else {
         base.erase()
     }
+    .limit(10)
+    .offset(page * 10)
 }
 
 #[tokio::main]
@@ -26,11 +40,16 @@ async fn main() {
     let (pool, _db) = setup_db().await;
     seed(&pool).await;
 
-    let without_join: Vec<String> = build_query(false).load(&pool).await.expect("without join");
-    println!("without join: {without_join:?}");
-    assert_eq!(without_join.len(), 3); // all users, incl. Dan (no orders)
+    for include_orders in [false, true] {
+        let rows = page(include_orders, 0).load(&pool).await.expect("page");
+        println!("include_orders={include_orders}:");
+        for row in &rows {
+            println!("  {} {}", row.id(), row.email());
+        }
+    }
 
-    let with_join: Vec<String> = build_query(true).load(&pool).await.expect("with join");
-    println!("with join: {with_join:?}");
-    assert_eq!(with_join.len(), 3); // ada x2 orders + grace x1, Dan drops out (INNER JOIN)
+    // Both branches produce the same row, so anything that reads one reads
+    // the other — that is the whole point of erasing only the join skeleton.
+    let joined = page(true, 0).load(&pool).await.expect("joined");
+    assert!(joined.iter().all(|row| *row.id() > 0));
 }

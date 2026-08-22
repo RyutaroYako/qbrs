@@ -33,11 +33,19 @@ mod employees {
             type Sql = Text;
             const NAME: &'static str = "department";
         }
+        impl qbrs_core::row::Named for department {
+            type Name = qbrs_core::type_name!('d', 'e', 'p', 'a', 'r', 't', 'm', 'e', 'n', 't');
+            const NAME: &'static str = "department";
+        }
         #[derive(Clone, Copy)]
         pub struct salary;
         impl ColumnKey for salary {
             type Table = EmployeesMarker;
             type Sql = Integer;
+            const NAME: &'static str = "salary";
+        }
+        impl qbrs_core::row::Named for salary {
+            type Name = qbrs_core::type_name!('s', 'a', 'l', 'a', 'r', 'y');
             const NAME: &'static str = "salary";
         }
     }
@@ -60,6 +68,10 @@ mod orders {
         impl ColumnKey for total {
             type Table = OrdersMarker;
             type Sql = Integer;
+            const NAME: &'static str = "total";
+        }
+        impl qbrs_core::row::Named for total {
+            type Name = qbrs_core::type_name!('t', 'o', 't', 'a', 'l');
             const NAME: &'static str = "total";
         }
     }

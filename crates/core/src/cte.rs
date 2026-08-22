@@ -8,11 +8,11 @@
 //! virtual-table machinery.
 //!
 //! Being syntactic, `with!{}` can't see the query it will be paired with.
-//! `with()` checks the two agree via the `RowValues::Values = Marker::Shape`
-//! bound, the same associated-type equality `select::SetOp` uses for `UNION`
-//! branches. The comparison is on the body's *values*, not on its row keys:
-//! a CTE declares its own column names, so the body's keys are by definition
-//! different ones.
+//! `with()` checks that the body produces the declared columns: the same
+//! types, by `RowValues`, and the same *names in the same order*, by
+//! `row::SameNames`. Checking only types would accept a body whose columns
+//! are type-compatible but transposed, and the outer query reads those
+//! columns by key.
 //!
 //! **Known limitations**: non-recursive, single-level CTEs only.
 //! `WITH RECURSIVE` and a CTE referencing an earlier one in the same
@@ -23,7 +23,7 @@ use std::marker::PhantomData;
 
 use crate::dialect::Dialect;
 use crate::render::Fragment;
-use crate::row::RowValues;
+use crate::row::{RowKeys, RowValues, SameNames};
 use crate::scope::Table;
 use crate::select::{Select, Selection};
 
@@ -36,6 +36,9 @@ use crate::select::{Select, Selection};
 /// `sql!(BigInt, "sum(orders.total)")` has no usable name of its own.
 pub trait CteShape: Table {
     type Shape;
+    /// The declared columns as a key list, so a body that selects the right
+    /// types in the wrong order is rejected rather than silently bound.
+    type Keys;
     const COLUMN_NAMES: &'static [&'static str];
 }
 
@@ -50,14 +53,15 @@ pub struct Cte<D, Marker> {
 
 /// Builds a `Cte` from `query`, checking that `query`'s selected columns
 /// match `Marker`'s `with!{}`-declared shape exactly — same count, order,
-/// and native types.
+/// names, and native types.
 pub fn with<D: Dialect, Marker: CteShape, Scope, Sel, Idx>(
     _marker: Marker,
     query: &Select<D, Scope, Sel>,
 ) -> Cte<D, Marker>
 where
     Sel: Selection<Scope, Idx>,
-    Sel::Output: RowValues<Values = Marker::Shape>,
+    Sel::Output: RowValues<Values = Marker::Shape> + RowKeys,
+    <Sel::Output as RowKeys>::Keys: SameNames<Marker::Keys>,
 {
     Cte {
         name: Marker::NAME,

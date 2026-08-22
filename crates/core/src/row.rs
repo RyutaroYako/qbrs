@@ -1,38 +1,33 @@
 //! Rows keyed by column rather than by position.
 //!
 //! A tuple selection decodes to `Row<..>`: a type-level list of
-//! `(key, value)` cells, where a column's key is its `expr::ColumnKey` and a
-//! computed expression's is whatever identity it carries (`expr::Count`,
-//! `window::RowNumber`, or an `AliasKey` supplied by `label!{}`). Reading a
-//! field goes through `GetField`, the same indexed-lookup shape
-//! `scope::Find` uses for tables.
+//! `(key, value)` cells. A column's key is its `expr::ColumnKey`, a computed
+//! expression's is the identity it carries (`expr::Count`,
+//! `window::RowNumber`), and `label!{}` supplies one for anything that has
+//! none. `Field` looks a key up the way `scope::Find` looks a table up, with
+//! the same `Here`/`There` index.
 //!
-//! Keying by column rather than position is what makes adding a column to a
-//! selection a non-breaking change, and what makes two same-typed columns
+//! Keying by column is what makes adding a column to a selection a
+//! non-breaking change, and what makes two same-typed columns
 //! (`orders::user_id` and `orders::total` are both `BigInt`) impossible to
 //! transpose. `into_tuple`/`into_tuples` recover the positional view where
-//! destructuring is what's wanted.
+//! destructuring is what's wanted, and `FromRow` fills a plain struct by
+//! matching field *names*, so a DTO names no column and no table.
 //!
-//! Naming a row type takes a type alias, and one long enough to trip
-//! `clippy::type_complexity` — the same lint `qbrs-core` allows crate-wide.
-//! Inference covers every use that doesn't cross a function boundary.
+//! Naming a row type takes a type alias long enough to trip
+//! `clippy::type_complexity`, the same lint `qbrs-core` allows crate-wide.
+//! Inference covers every use that stays inside a function.
 //!
-//! `FromRow` (via `#[derive(FromRow)]`) maps a row into a plain struct by
-//! matching field *names*, so a DTO carries no column paths and no query
-//! shape — nothing that would tie it to the query that filled it.
-//!
-//! **Known limitations**: a key selected twice makes `.get()` ambiguous
-//! (`error[E0283]`, "multiple `impl`s satisfying ... `GetField`") rather
-//! than silently resolving to the first — give one of them a `label!{}`
-//! alias, or map it by hand with `take`. `into_tuple` is implemented up to
-//! 16 columns; `Row` itself has no such limit. A `with!{}` CTE column has no
-//! type-level name, so `#[derive(FromRow)]` can't match it — give it a
-//! `label!` alias, or take it by hand.
+//! **Known limitations**: a key selected twice is ambiguous at the point it
+//! is read, rather than resolving to the first — give one of them a
+//! `label!{}` alias. `into_tuple` is implemented up to 16 columns; `Row`
+//! itself has no such limit. A field with no name (a bare `sql!{}`
+//! fragment) can only be reached positionally until `label!{}` gives it one.
 
 use std::marker::PhantomData;
 
-use crate::expr::{ColumnKey, SqlType};
-use crate::scope::{Here, There};
+use crate::expr::{Aliased, Column, ColumnKey, Keyed, SqlType};
+use crate::scope::{Cons, Here, Nil, There};
 
 /// The empty row.
 pub struct RowNil;
@@ -55,209 +50,61 @@ impl<K, V, Tail> RowCons<K, V, Tail> {
     }
 }
 
-/// Proof that a row holds a field under key `K`, found at compile-time-
-/// inferred position `Idx`. `Idx` is never spelled out by callers, exactly
-/// as in `scope::Find`, and is what keeps the two impls below structurally
+/// Proof that a row holds a field under key `K`, at compile-time-inferred
+/// position `Idx`. `Idx` is never spelled out by callers, exactly as in
+/// `scope::Find`, and is what keeps the two impls below structurally
 /// distinct rather than overlapping.
+///
+/// Borrowing and moving are one trait because they are one search: `pluck`
+/// additionally reports what the row is left holding, so several fields can
+/// be moved out in turn.
 #[diagnostic::on_unimplemented(
     message = "`{K}` is not in this query's selection",
     label = "a row can only be read by a key the query selected",
-    note = "add `{K}` to the query's selection list to read it here"
+    note = "add `{K}` to the query's selection list, or `label!{{}}` an alias onto the expression you meant"
 )]
-pub trait GetField<K, Idx> {
-    type Value;
-    fn get_field(&self) -> &Self::Value;
-    fn into_field(self) -> Self::Value;
-}
-
-impl<K, V, Tail> GetField<K, Here> for RowCons<K, V, Tail> {
-    type Value = V;
-    fn get_field(&self) -> &V {
-        &self.value
-    }
-    fn into_field(self) -> V {
-        self.value
-    }
-}
-
-impl<K, Other, V, Tail, I> GetField<K, There<I>> for RowCons<Other, V, Tail>
-where
-    Tail: GetField<K, I>,
-{
-    type Value = <Tail as GetField<K, I>>::Value;
-    fn get_field(&self) -> &Self::Value {
-        self.tail.get_field()
-    }
-    fn into_field(self) -> Self::Value {
-        self.tail.into_field()
-    }
-}
-
-// Manual `Clone`: `#[derive(Clone)]` would demand `K: Clone`, though a key
-// is a purely phantom marker.
-impl<K, V: Clone, Tail: Clone> Clone for RowCons<K, V, Tail> {
-    fn clone(&self) -> Self {
-        RowCons::new(self.value.clone(), self.tail.clone())
-    }
-}
-
-impl Clone for RowNil {
-    fn clone(&self) -> Self {
-        RowNil
-    }
-}
-
-impl<L: Clone> Clone for Row<L> {
-    fn clone(&self) -> Self {
-        Row(self.0.clone())
-    }
-}
-
-impl<K, V: std::fmt::Debug, Tail: std::fmt::Debug> std::fmt::Debug for RowCons<K, V, Tail> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{:?}, {:?}", self.value, self.tail)
-    }
-}
-
-impl std::fmt::Debug for RowNil {
-    fn fmt(&self, _f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        Ok(())
-    }
-}
-
-/// A decoded row. Its fields are fixed by the query's selection list, and
-/// each is read by the same value that selected it.
-pub struct Row<L>(L);
-
-/// Values in selection order, without their keys: a key is a type, and the
-/// two traits that give one a name (`expr::ColumnKey` and `AliasKey`) don't
-/// cover the expression keys, so there is no name available for every field.
-impl<L: std::fmt::Debug> std::fmt::Debug for Row<L> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "Row({:?})", self.0)
-    }
-}
-
-impl<L> Row<L> {
-    #[doc(hidden)]
-    pub fn new(fields: L) -> Self {
-        Row(fields)
-    }
-
-    /// `row.get(users::email)` — the key is the same value that appeared in
-    /// the selection list, so there is no name to keep in sync and no
-    /// position to get wrong.
-    pub fn get<K: RowKey, Idx>(&self, _key: K) -> &<L as GetField<K::Key, Idx>>::Value
-    where
-        L: GetField<K::Key, Idx>,
-    {
-        self.0.get_field()
-    }
-
-    /// `get` by value, for when the field is wanted owned.
-    pub fn into_get<K: RowKey, Idx>(self, _key: K) -> <L as GetField<K::Key, Idx>>::Value
-    where
-        L: GetField<K::Key, Idx>,
-    {
-        self.0.into_field()
-    }
-
-    /// Moves one field out and hands back the row without it, so several
-    /// fields can be taken in turn. `into_get` is the shorthand for when
-    /// only one is wanted and the rest can be dropped.
-    pub fn take<K: RowKey, Idx>(
-        self,
-        _key: K,
-    ) -> (
-        <L as TakeField<K::Key, Idx>>::Value,
-        Row<<L as TakeField<K::Key, Idx>>::Rest>,
-    )
-    where
-        L: TakeField<K::Key, Idx>,
-    {
-        let (value, rest) = self.0.take_field();
-        (value, Row::new(rest))
-    }
-
-    #[doc(hidden)]
-    pub fn take_named<F, Idx>(
-        self,
-    ) -> (
-        <L as TakeNamed<F, Idx>>::Value,
-        Row<<L as TakeNamed<F, Idx>>::Rest>,
-    )
-    where
-        L: TakeNamed<F, Idx>,
-    {
-        let (value, rest) = self.0.take_named();
-        (value, Row::new(rest))
-    }
-
-    /// Builds a `#[derive(FromRow)]` struct out of this row, matching its
-    /// fields by name. Extra columns in the row are ignored, and the order
-    /// they were selected in doesn't matter.
-    pub fn into_struct<T, Idxs>(self) -> T
-    where
-        T: FromRow<L, Idxs>,
-    {
-        T::from_row(self)
-    }
-
-    /// The positional view: the plain tuple this selection would decode to
-    /// if rows didn't exist. Also reachable as `row.into()`.
-    pub fn into_tuple(self) -> L::Values
-    where
-        L: RowValues,
-    {
-        self.0.into_values()
-    }
-}
-
-/// Proof that a row holds a field under key `K`, taking it by value and
-/// handing back the row without it. `GetField` borrows; this one moves, and
-/// the shrinking `Rest` type is what lets several fields be moved out one
-/// after another.
-#[diagnostic::on_unimplemented(
-    message = "`{K}` is not in this query's selection",
-    label = "a row can only be read by a key the query selected"
-)]
-pub trait TakeField<K, Idx> {
+pub trait Field<K, Idx> {
     type Value;
     type Rest;
-    fn take_field(self) -> (Self::Value, Self::Rest);
+    fn peek(&self) -> &Self::Value;
+    fn pluck(self) -> (Self::Value, Self::Rest);
 }
 
-impl<K, V, Tail> TakeField<K, Here> for RowCons<K, V, Tail> {
+impl<K, V, Tail> Field<K, Here> for RowCons<K, V, Tail> {
     type Value = V;
     type Rest = Tail;
-    fn take_field(self) -> (V, Tail) {
+    fn peek(&self) -> &V {
+        &self.value
+    }
+    fn pluck(self) -> (V, Tail) {
         (self.value, self.tail)
     }
 }
 
-impl<K, Other, V, Tail, I> TakeField<K, There<I>> for RowCons<Other, V, Tail>
+impl<K, Other, V, Tail, I> Field<K, There<I>> for RowCons<Other, V, Tail>
 where
-    Tail: TakeField<K, I>,
+    Tail: Field<K, I>,
 {
-    type Value = <Tail as TakeField<K, I>>::Value;
-    type Rest = RowCons<Other, V, <Tail as TakeField<K, I>>::Rest>;
-    fn take_field(self) -> (Self::Value, Self::Rest) {
-        let (value, rest) = self.tail.take_field();
+    type Value = <Tail as Field<K, I>>::Value;
+    type Rest = RowCons<Other, V, <Tail as Field<K, I>>::Rest>;
+    fn peek(&self) -> &Self::Value {
+        self.tail.peek()
+    }
+    fn pluck(self) -> (Self::Value, Self::Rest) {
+        let (value, rest) = self.tail.pluck();
         (value, RowCons::new(self.value, rest))
     }
 }
 
-/// A row key's identifier, spelled one `char` per cell so that two keys
-/// declared in different crates can be compared for the same *name* rather
-/// than the same type. `char` is one of the three types stable const
-/// generics accept, which is what makes this expressible at all — a
-/// `&'static str` const parameter is not allowed.
-///
-/// Never written by hand and never surfaced in a diagnostic: `TakeNamed`
-/// reports the `#[derive(FromRow)]` field marker instead.
+/// An identifier spelled one `char` per cell, so two keys declared in
+/// different crates can be compared by the *name* they share rather than by
+/// being the same type. `char` is one of the three types stable const
+/// generics accept.
+#[doc(hidden)]
 pub struct NameChar<const C: char, Rest>(PhantomData<Rest>);
 
 /// End of a `NameChar` chain.
+#[doc(hidden)]
 pub struct NameEnd;
 
 /// Builds a `NameChar` chain from character literals.
@@ -270,19 +117,31 @@ macro_rules! type_name {
     };
 }
 
-/// A key that has a name, so a row field can be found by what it's called
-/// rather than by which key type produced it. Implemented by
-/// `#[derive(Table)]` for columns, by `label!` for aliases, and by the
-/// built-in expression keys. `Anon` deliberately has no impl.
+/// A key that has a name, so a field can be found by what it is called
+/// rather than by which key type produced it, and so a row can print itself
+/// keyed. Implemented by `#[derive(Table)]` for columns, by `label!` for
+/// aliases, and by the built-in expression keys.
 pub trait Named {
     type Name;
+    const NAME: &'static str;
 }
 
-/// `TakeField` by name rather than by key identity, which is what lets a
-/// struct that has never heard of `users::email` still receive it.
+/// The key of a selected item that carries no name of its own — a bare
+/// `sql!{}` fragment. Its `Name` is the empty chain, which no identifier can
+/// spell, so a by-name lookup can never land on it.
+pub struct Anon;
+
+impl Named for Anon {
+    type Name = NameEnd;
+    const NAME: &'static str = "?";
+}
+
+/// `Field` by name rather than by key identity, which is what lets a struct
+/// that has never heard of `users::email` still receive it.
 #[diagnostic::on_unimplemented(
     message = "this query's rows have no field matching `{F}`",
-    label = "the selection needs a column of that name, decoding to that type"
+    label = "the selection needs a column of that name, decoding to that type",
+    note = "a computed expression is matched by name only once `label!{{}}` gives it one"
 )]
 pub trait TakeNamed<F, Idx> {
     type Value;
@@ -314,31 +173,254 @@ where
     }
 }
 
-/// Builds a plain struct out of a row by matching field names, generated by
-/// `#[derive(FromRow)]`. `Idxs` holds the per-field lookup indices, for the
-/// reason `scope::Superset` explains; it is also why this can't be
-/// `From`/`Into`, whose shape has no room for them.
-pub trait FromRow<L, Idxs>: Sized {
-    fn from_row(row: Row<L>) -> Self;
+/// A row's keys as a type-level list, so two rows can be checked against
+/// each other where only their shape is in play — a CTE body against its
+/// declared columns, or one `UNION` branch against another.
+pub trait RowKeys {
+    type Keys;
 }
 
-/// `Vec<Row<..>> -> Vec<T>` for any `#[derive(FromRow)]` struct.
-pub trait IntoStructs {
-    type Fields;
-    fn into_structs<T, Idxs>(self) -> Vec<T>
+impl RowKeys for RowNil {
+    type Keys = Nil;
+}
+
+impl<K, V, Tail: RowKeys> RowKeys for RowCons<K, V, Tail> {
+    type Keys = Cons<K, Tail::Keys>;
+}
+
+impl<L: RowKeys> RowKeys for Row<L> {
+    type Keys = L::Keys;
+}
+
+/// One column can stand in for another: they are called the same thing.
+///
+/// `do_not_recommend` keeps the spelling out of the diagnostic — without it
+/// the reported obligation is the `Named::Name` equality, which prints the
+/// whole `NameChar` chain.
+#[diagnostic::on_unimplemented(
+    message = "column `{Self}` can't stand in for `{Declared}`",
+    label = "these two columns must have the same name",
+    note = "give the selected expression a `label!{{}}` alias if it should be called `{Declared}`"
+)]
+pub trait SameNameAs<Declared> {}
+
+#[diagnostic::do_not_recommend]
+impl<A, B> SameNameAs<B> for A
+where
+    A: Named,
+    B: Named<Name = <A as Named>::Name>,
+{
+}
+
+/// Two key lists name the same columns, in the same order. Values are
+/// checked separately, by `RowValues`; this is what stops a body whose
+/// columns are merely type-compatible from being spliced in transposed.
+#[diagnostic::on_unimplemented(
+    message = "these columns don't line up by name",
+    label = "each column must have the same name, in the same order, as the one it stands in for"
+)]
+pub trait SameNames<Declared> {}
+
+impl SameNames<Nil> for Nil {}
+
+impl<A, B, TailA, TailB> SameNames<Cons<B, TailB>> for Cons<A, TailA>
+where
+    A: SameNameAs<B>,
+    TailA: SameNames<TailB>,
+{
+}
+
+/// Builds a key list from column marker types.
+#[doc(hidden)]
+#[macro_export]
+macro_rules! key_list {
+    () => { $crate::scope::Nil };
+    ($head:ty $(, $rest:ty)* $(,)?) => {
+        $crate::scope::Cons<$head, $crate::key_list!($($rest),*)>
+    };
+}
+
+/// Two selections produce the same row: the same column names, in the same
+/// order, decoding to the same types. Names as well as types, because a
+/// `UNION` branch or a CTE body whose columns merely happen to be
+/// type-compatible would otherwise splice in transposed.
+#[diagnostic::on_unimplemented(
+    message = "these two selections don't produce the same row",
+    label = "must select the same column names, in the same order, decoding to the same types"
+)]
+pub trait SameShape<Other> {}
+
+impl<A, B> SameShape<B> for A
+where
+    A: RowValues + RowKeys,
+    B: RowValues<Values = <A as RowValues>::Values> + RowKeys,
+    <A as RowKeys>::Keys: SameNames<<B as RowKeys>::Keys>,
+{
+}
+
+/// Maps a value written in a selection list to the type its field is filed
+/// under, so a field is read back with the same value that selected it.
+pub trait RowKey {
+    type Key;
+}
+
+impl<C: ColumnKey> RowKey for Column<C> {
+    type Key = C;
+}
+
+impl<K, Req, S: SqlType> RowKey for Keyed<K, Req, S> {
+    type Key = K;
+}
+
+impl<K, Inner> RowKey for Aliased<K, Inner> {
+    type Key = K;
+}
+
+/// A decoded row. Its fields are fixed by the query's selection list, and
+/// each is read by the same value that selected it.
+pub struct Row<L>(L);
+
+impl<L> Row<L> {
+    #[doc(hidden)]
+    pub fn new(fields: L) -> Self {
+        Row(fields)
+    }
+
+    /// `row.get(users::email)` — the key is the same value that appeared in
+    /// the selection list, so there is no name to keep in sync and no
+    /// position to get wrong.
+    pub fn get<K: RowKey, Idx>(&self, _key: K) -> &<L as Field<K::Key, Idx>>::Value
     where
-        T: FromRow<Self::Fields, Idxs>;
-}
+        L: Field<K::Key, Idx>,
+    {
+        self.0.peek()
+    }
 
-impl<L> IntoStructs for Vec<Row<L>> {
-    type Fields = L;
-    fn into_structs<T, Idxs>(self) -> Vec<T>
+    /// Moves one field out and hands back the row without it, so several
+    /// fields can be taken in turn.
+    pub fn take<K: RowKey, Idx>(
+        self,
+        _key: K,
+    ) -> (
+        <L as Field<K::Key, Idx>>::Value,
+        Row<<L as Field<K::Key, Idx>>::Rest>,
+    )
+    where
+        L: Field<K::Key, Idx>,
+    {
+        let (value, rest) = self.0.pluck();
+        (value, Row::new(rest))
+    }
+
+    /// Reads a field by naming its key type rather than passing the value
+    /// that selected it — what the generated accessors use, since a
+    /// built-in expression key is never spelled at a call site.
+    #[doc(hidden)]
+    pub fn peek_key<K, Idx>(&self) -> &<L as Field<K, Idx>>::Value
+    where
+        L: Field<K, Idx>,
+    {
+        self.0.peek()
+    }
+
+    #[doc(hidden)]
+    pub fn take_named<F, Idx>(
+        self,
+    ) -> (
+        <L as TakeNamed<F, Idx>>::Value,
+        Row<<L as TakeNamed<F, Idx>>::Rest>,
+    )
+    where
+        L: TakeNamed<F, Idx>,
+    {
+        let (value, rest) = self.0.take_named();
+        (value, Row::new(rest))
+    }
+
+    /// Builds a `#[derive(FromRow)]` struct out of this row, matching its
+    /// fields by name. Extra columns in the row are ignored, and the order
+    /// they were selected in doesn't matter.
+    pub fn into_struct<T, Idxs>(self) -> T
     where
         T: FromRow<L, Idxs>,
     {
-        self.into_iter().map(Row::into_struct).collect()
+        T::from_row(self)
+    }
+
+    /// The positional view: the plain tuple this selection would decode to
+    /// if rows didn't exist.
+    pub fn into_tuple(self) -> L::Values
+    where
+        L: RowValues,
+    {
+        self.0.into_values()
     }
 }
+
+/// Prints a row keyed, since being keyed is the whole point of the type.
+pub trait DebugFields {
+    fn fmt_fields(&self, f: &mut std::fmt::DebugStruct<'_, '_>);
+}
+
+impl DebugFields for RowNil {
+    fn fmt_fields(&self, _f: &mut std::fmt::DebugStruct<'_, '_>) {}
+}
+
+impl<K: Named, V: std::fmt::Debug, Tail: DebugFields> DebugFields for RowCons<K, V, Tail> {
+    fn fmt_fields(&self, f: &mut std::fmt::DebugStruct<'_, '_>) {
+        f.field(K::NAME, &self.value);
+        self.tail.fmt_fields(f);
+    }
+}
+
+impl<L: DebugFields> std::fmt::Debug for Row<L> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut s = f.debug_struct("Row");
+        self.0.fmt_fields(&mut s);
+        s.finish()
+    }
+}
+
+impl<K, V: Clone, Tail: Clone> Clone for RowCons<K, V, Tail> {
+    fn clone(&self) -> Self {
+        RowCons::new(self.value.clone(), self.tail.clone())
+    }
+}
+
+impl Clone for RowNil {
+    fn clone(&self) -> Self {
+        RowNil
+    }
+}
+
+impl<L: Clone> Clone for Row<L> {
+    fn clone(&self) -> Self {
+        Row(self.0.clone())
+    }
+}
+
+impl<K, V: PartialEq, Tail: PartialEq> PartialEq for RowCons<K, V, Tail> {
+    fn eq(&self, other: &Self) -> bool {
+        self.value == other.value && self.tail == other.tail
+    }
+}
+
+impl PartialEq for RowNil {
+    fn eq(&self, _other: &Self) -> bool {
+        true
+    }
+}
+
+impl<K, V: Eq, Tail: Eq> Eq for RowCons<K, V, Tail> {}
+impl Eq for RowNil {}
+
+impl<L: PartialEq> PartialEq for Row<L> {
+    fn eq(&self, other: &Self) -> bool {
+        self.0 == other.0
+    }
+}
+
+impl<L: Eq> Eq for Row<L> {}
 
 /// A row's fields as a plain tuple, in selection order.
 pub trait RowValues {
@@ -401,42 +483,7 @@ impl<L: RowValues> RowValues for Row<L> {
     }
 }
 
-macro_rules! row_chain {
-    ($k:ident $v:ident) => { RowCons<$k, $v, RowNil> };
-    ($k:ident $v:ident, $($rest:tt)*) => { RowCons<$k, $v, row_chain!($($rest)*)> };
-}
-
-// `From<Row<..>> for (..)`, so a single row converts with plain `.into()`.
-// One impl per arity: the trait's `Self` type has to be a concrete tuple,
-// which rules out a single blanket impl over `RowValues::Values`.
-macro_rules! row_into_tuple {
-    ($($k:ident $v:ident),+) => {
-        impl<$($k,)+ $($v,)+> From<Row<row_chain!($($k $v),+)>> for ($($v,)+) {
-            fn from(row: Row<row_chain!($($k $v),+)>) -> Self {
-                row.into_tuple()
-            }
-        }
-    };
-}
-row_into_tuple!(K1 V1);
-row_into_tuple!(K1 V1, K2 V2);
-row_into_tuple!(K1 V1, K2 V2, K3 V3);
-row_into_tuple!(K1 V1, K2 V2, K3 V3, K4 V4);
-row_into_tuple!(K1 V1, K2 V2, K3 V3, K4 V4, K5 V5);
-row_into_tuple!(K1 V1, K2 V2, K3 V3, K4 V4, K5 V5, K6 V6);
-row_into_tuple!(K1 V1, K2 V2, K3 V3, K4 V4, K5 V5, K6 V6, K7 V7);
-row_into_tuple!(K1 V1, K2 V2, K3 V3, K4 V4, K5 V5, K6 V6, K7 V7, K8 V8);
-row_into_tuple!(K1 V1, K2 V2, K3 V3, K4 V4, K5 V5, K6 V6, K7 V7, K8 V8, K9 V9);
-row_into_tuple!(K1 V1, K2 V2, K3 V3, K4 V4, K5 V5, K6 V6, K7 V7, K8 V8, K9 V9, K10 V10);
-row_into_tuple!(K1 V1, K2 V2, K3 V3, K4 V4, K5 V5, K6 V6, K7 V7, K8 V8, K9 V9, K10 V10, K11 V11);
-row_into_tuple!(K1 V1, K2 V2, K3 V3, K4 V4, K5 V5, K6 V6, K7 V7, K8 V8, K9 V9, K10 V10, K11 V11, K12 V12);
-row_into_tuple!(K1 V1, K2 V2, K3 V3, K4 V4, K5 V5, K6 V6, K7 V7, K8 V8, K9 V9, K10 V10, K11 V11, K12 V12, K13 V13);
-row_into_tuple!(K1 V1, K2 V2, K3 V3, K4 V4, K5 V5, K6 V6, K7 V7, K8 V8, K9 V9, K10 V10, K11 V11, K12 V12, K13 V13, K14 V14);
-row_into_tuple!(K1 V1, K2 V2, K3 V3, K4 V4, K5 V5, K6 V6, K7 V7, K8 V8, K9 V9, K10 V10, K11 V11, K12 V12, K13 V13, K14 V14, K15 V15);
-row_into_tuple!(K1 V1, K2 V2, K3 V3, K4 V4, K5 V5, K6 V6, K7 V7, K8 V8, K9 V9, K10 V10, K11 V11, K12 V12, K13 V13, K14 V14, K15 V15, K16 V16);
-
-/// `Vec<Row<..>> -> Vec<(..)>`. A trait rather than `From`, which the orphan
-/// rule forbids for `Vec` on both sides.
+/// `Vec<Row<..>> -> Vec<(..)>`.
 pub trait IntoTuples {
     type Tuples;
     fn into_tuples(self) -> Self::Tuples;
@@ -449,45 +496,44 @@ impl<L: RowValues> IntoTuples for Vec<Row<L>> {
     }
 }
 
-/// Maps a value written in a selection list to the type its field is filed
-/// under. A `Column<C>` files under `C` itself, so the row's key list reads
-/// as the column markers the schema declared rather than as wrappers.
-pub trait RowKey: Copy + 'static {
-    type Key: 'static;
+/// Builds a plain struct out of a row by matching field names, generated by
+/// `#[derive(FromRow)]`. `Idxs` holds the per-field lookup indices, for the
+/// reason `scope::Superset` explains, which is also why this is its own
+/// trait rather than `From`.
+pub trait FromRow<L, Idxs>: Sized {
+    fn from_row(row: Row<L>) -> Self;
 }
 
-impl<C: ColumnKey> RowKey for crate::expr::Column<C> {
-    type Key = C;
+/// `Vec<Row<..>> -> Vec<T>` for any `#[derive(FromRow)]` struct.
+pub trait IntoStructs {
+    type Fields;
+    fn into_structs<T, Idxs>(self) -> Vec<T>
+    where
+        T: FromRow<Self::Fields, Idxs>;
 }
 
-/// The key of a selected expression that carries no identity of its own — a
-/// `sql!{}` fragment, or any `Expr`. Deliberately not a `RowKey`, so it
-/// cannot be named at a `.get()` call: such a field is reachable only
-/// through `Row::into_tuple`, or by giving it a `label!{}` alias.
-pub struct Anon;
-
-/// A caller-declared output-column name, generated by `label!{}`. The name
-/// reaches the SQL as the selected item's `AS`, and the type is what
-/// `Row::get` looks the field up by.
-pub trait AliasKey: RowKey<Key = Self> {
-    const NAME: &'static str;
+impl<L> IntoStructs for Vec<Row<L>> {
+    type Fields = L;
+    fn into_structs<T, Idxs>(self) -> Vec<T>
+    where
+        T: FromRow<L, Idxs>,
+    {
+        self.into_iter().map(Row::into_struct).collect()
+    }
 }
 
-/// Declares an expression's own row key and the `row.<name>()` accessor
-/// that reads it: `count()` and each window function get one, so a selection
-/// that uses one of them needs nothing declared at the call site.
+/// Declares an expression's own row key and the `row.<name>()` accessor that
+/// reads it, so a selection using one needs nothing declared at the call
+/// site.
 macro_rules! expr_key {
     ($key:ident, $accessor:ident, $method:ident, $doc:literal, $($ch:literal),+) => {
         #[doc = $doc]
         #[derive(Clone, Copy)]
         pub struct $key;
 
-        impl $crate::row::RowKey for $key {
-            type Key = $key;
-        }
-
         impl $crate::row::Named for $key {
             type Name = $crate::type_name!($($ch),+);
+            const NAME: &'static str = concat!($($ch),+);
         }
 
         #[doc = $doc]
@@ -498,50 +544,13 @@ macro_rules! expr_key {
 
         impl<L, Idx> $accessor<Idx> for $crate::row::Row<L>
         where
-            L: $crate::row::GetField<$key, Idx>,
+            L: $crate::row::Field<$key, Idx>,
         {
-            type Value = <L as $crate::row::GetField<$key, Idx>>::Value;
+            type Value = <L as $crate::row::Field<$key, Idx>>::Value;
             fn $method(&self) -> &Self::Value {
-                self.get($key)
+                self.peek_key::<$key, Idx>()
             }
         }
     };
 }
 pub(crate) use expr_key;
-
-/// A selected item filed under an `AliasKey` instead of its own identity.
-pub struct Aliased<K, Inner> {
-    pub(crate) inner: Inner,
-    _key: PhantomData<fn() -> K>,
-}
-
-impl<K, Inner> Aliased<K, Inner> {
-    pub(crate) fn new(inner: Inner) -> Self {
-        Aliased {
-            inner,
-            _key: PhantomData,
-        }
-    }
-}
-
-impl<C: ColumnKey> crate::expr::Column<C> {
-    /// Files this column in the row under `key` rather than under itself —
-    /// the way out of two tables' same-named columns colliding.
-    pub fn alias<K: AliasKey>(self, _key: K) -> Aliased<K, Self> {
-        Aliased::new(self)
-    }
-}
-
-impl<Req, S: SqlType> crate::expr::Expr<Req, S> {
-    pub fn alias<K: AliasKey>(self, _key: K) -> Aliased<K, Self> {
-        Aliased::new(self)
-    }
-}
-
-impl<K0, Req, S: SqlType> crate::expr::Keyed<K0, Req, S> {
-    /// Replaces the identity this expression carries, so the same function
-    /// can be selected more than once in one query.
-    pub fn alias<K: AliasKey>(self, _key: K) -> Aliased<K, Self> {
-        Aliased::new(self)
-    }
-}

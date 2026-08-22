@@ -5,12 +5,9 @@
 //! different scopes have been combined.
 //! Run: `cargo run -p qbrs-examples --example 12_union`
 
-use qbrs::dialect::Postgres;
-use qbrs::expr::{BigInt, ExprMethods};
-use qbrs::select::{SortDir, select};
-use qbrs::sql;
-use qbrs_examples::{orders, seed, setup_db, users};
-use qbrs_sqlx::LoadSetOpExt;
+use qbrs::prelude::*;
+use qbrs_examples::*;
+use qbrs_sqlx::prelude::*;
 
 #[tokio::main]
 async fn main() {
@@ -23,7 +20,11 @@ async fn main() {
     // and `orders` here (no join at all), yet this still type-checks: the
     // only requirement is that both sides decode to the same
     // `(String, i64)` shape.
-    let user_rows = select((users::email, sql!(BigInt, "0")))
+    // Branches must agree on column *names* as well as types, since the
+    // combined result is read by key. A literal has no name of its own.
+    qbrs::label!(total);
+
+    let user_rows = select((users::email, sql!(BigInt, "0").alias(label::total)))
         .from::<Postgres, _>(users::Table)
         .filter(users::active.eq(true));
     let order_rows = select((users::email, orders::total))
@@ -35,7 +36,8 @@ async fn main() {
         .order_by(1, SortDir::Asc)
         .load(&pool)
         .await
-        .expect("union_all feed");
+        .expect("union_all feed")
+        .into_tuples();
     println!("activity feed (email, amount):");
     for (email, amount) in &feed {
         println!("  ({email:?}, {amount})");
@@ -55,6 +57,7 @@ async fn main() {
         .order_by(1, SortDir::Asc)
         .load(&pool)
         .await
-        .expect("intersect");
+        .expect("intersect")
+        .into_tuples();
     println!("active users who also ordered: {both:?}");
 }

@@ -84,9 +84,6 @@ fn into_tuple_recovers_the_positional_view() {
     let (email, total): (String, Option<i64>) = user_order_row().into_tuple();
     assert_eq!(email, "ada@example.com");
     assert_eq!(total, Some(1000));
-    // ...and `.into()` is the same conversion.
-    let (email, _): (String, Option<i64>) = user_order_row().into();
-    assert_eq!(email, "ada@example.com");
 }
 
 #[test]

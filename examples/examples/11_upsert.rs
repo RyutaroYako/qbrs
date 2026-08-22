@@ -25,7 +25,7 @@ async fn main() {
             .into_iter()
             .next()
             .expect("returning row")
-            .into();
+            .into_tuple();
     println!("inserted: id={id} display_name={display_name:?}");
 
     // `email` already exists — DO NOTHING means this row is silently

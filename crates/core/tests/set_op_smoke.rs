@@ -33,11 +33,19 @@ mod users {
             type Sql = Integer;
             const NAME: &'static str = "id";
         }
+        impl qbrs_core::row::Named for id {
+            type Name = qbrs_core::type_name!('i', 'd');
+            const NAME: &'static str = "id";
+        }
         #[derive(Clone, Copy)]
         pub struct email;
         impl ColumnKey for email {
             type Table = UsersMarker;
             type Sql = Text;
+            const NAME: &'static str = "email";
+        }
+        impl qbrs_core::row::Named for email {
+            type Name = qbrs_core::type_name!('e', 'm', 'a', 'i', 'l');
             const NAME: &'static str = "email";
         }
     }
@@ -63,11 +71,19 @@ mod archived_users {
             type Sql = Integer;
             const NAME: &'static str = "id";
         }
+        impl qbrs_core::row::Named for id {
+            type Name = qbrs_core::type_name!('i', 'd');
+            const NAME: &'static str = "id";
+        }
         #[derive(Clone, Copy)]
         pub struct email;
         impl ColumnKey for email {
             type Table = ArchivedUsersMarker;
             type Sql = Text;
+            const NAME: &'static str = "email";
+        }
+        impl qbrs_core::row::Named for email {
+            type Name = qbrs_core::type_name!('e', 'm', 'a', 'i', 'l');
             const NAME: &'static str = "email";
         }
     }

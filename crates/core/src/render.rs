@@ -40,6 +40,31 @@ pub fn render_expr<D: Dialect>(expr: &ExprKind, out: &mut String, params: &mut V
             render_expr::<D>(inner, out, params);
             out.push(')');
         }
+        ExprKind::IsNull { expr, negated } => {
+            out.push('(');
+            render_expr::<D>(expr, out, params);
+            out.push_str(if *negated {
+                " IS NOT NULL)"
+            } else {
+                " IS NULL)"
+            });
+        }
+        ExprKind::InList { expr, values } => {
+            if values.is_empty() {
+                out.push_str("FALSE");
+                return;
+            }
+            out.push('(');
+            render_expr::<D>(expr, out, params);
+            out.push_str(" IN (");
+            for (i, v) in values.iter().enumerate() {
+                if i > 0 {
+                    out.push_str(", ");
+                }
+                render_expr::<D>(v, out, params);
+            }
+            out.push_str("))");
+        }
         ExprKind::Raw(fragment) => {
             // A fragment's internal precedence is unknown (it may be `a OR
             // b`), so parenthesize: it must not change meaning when spliced
