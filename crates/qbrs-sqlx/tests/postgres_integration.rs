@@ -12,7 +12,7 @@ mod common;
 use qbrs::Table;
 use qbrs::dialect::Postgres;
 use qbrs::expr::ExprMethods;
-use qbrs::row::IntoTuples;
+use qbrs::row::{IntoStructs, IntoTuples};
 use qbrs::select::{OrderExt, select};
 use qbrs_sqlx::{ExecuteExt, LoadExt};
 
@@ -25,6 +25,17 @@ struct Users {
     email: String,
     display_name: Option<String>,
     #[column(default)]
+    active: bool,
+}
+
+/// The same shape `#[derive(Table)]` describes, filled by name from a
+/// `select(users::All)` row.
+#[derive(qbrs::FromRow, Debug)]
+#[allow(dead_code)]
+struct UserRow {
+    id: i64,
+    email: String,
+    display_name: Option<String>,
     active: bool,
 }
 
@@ -143,6 +154,32 @@ async fn full_crud_roundtrip_against_real_postgres() {
         .await
         .expect("select updated user");
     assert_eq!(updated_name, Some(Some("Ada Lovelace".to_string())));
+
+    // Whole-table selection, decoded into the schema struct itself: the
+    // column list is the derive's, so it cannot drift from the table.
+    let whole: Vec<UserRow> = select(users::All)
+        .from::<Postgres, _>(users::Table)
+        .filter(users::id.eq(ada_id))
+        .load(&pool)
+        .await
+        .expect("select every column")
+        .into_structs();
+    assert_eq!(whole.len(), 1);
+    assert_eq!(whole[0].email, "ada@example.com");
+    assert_eq!(whole[0].display_name.as_deref(), Some("Ada Lovelace"));
+
+    // The nullable side of a LEFT JOIN reaches the row as `Option`, one
+    // whole table at a time.
+    let joined = select((users::email, orders::All))
+        .from::<Postgres, _>(users::Table)
+        .left_join(orders::Table, orders::user_id.eq(users::id))
+        .filter(users::id.eq(dan_id))
+        .load_one(&pool)
+        .await
+        .expect("left join every order column")
+        .expect("dan is there");
+    assert_eq!(joined.get(users::email), "dan@example.com");
+    assert_eq!(joined.get(orders::total), &None);
 
     // DELETE
     let deleted = qbrs::delete::delete::<Postgres, _>(users::Table)

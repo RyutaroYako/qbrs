@@ -23,7 +23,7 @@ mod set_op;
 pub use crate::expr::SortDir;
 pub use dyn_select::DynSelect;
 pub use prepared::{Prepared, PreparedParams, UnresolvedPlaceholder};
-pub use selection::{RowField, Selection};
+pub use selection::{All, AllColumns, RowField, Selection, SelectionPart};
 pub use set_op::SetOp;
 
 /// One `name AS (body)` binding, carried in by the `Cte` a query was

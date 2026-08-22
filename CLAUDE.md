@@ -198,6 +198,12 @@ truth rather than three positions that can disagree. Accessor traits are re-expo
 to the struct as `pub use users::HasId as _;`: anonymous, so a schema adds exactly zero
 names to its module and `use crate::schema::*;` is all a call site needs.
 
+It also emits `const All` (a `select::All<Table>`) and the `select::AllColumns` impl behind
+it, so `select(users::All)` never restates the column list. A selection list is a chain of
+`select::SelectionPart`s, each contributing `Fields<Tail>` in front of whatever the rest of
+the list contributes — which is what lets one tuple element carry a whole table, and makes
+the 16-element limit count tables rather than columns.
+
 `label!(rank_in_user, ..)` generates the same shape for a computed column, in a fixed
 `label` module so a same-named local binding can never shadow it. One invocation per scope
 (a second one collides on `mod label`); declaring it inside the function that runs the

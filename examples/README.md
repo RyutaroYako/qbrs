@@ -54,5 +54,5 @@ DATABASE_URL=postgres://postgres:postgres@localhost:5432/qbrs_test \
 | [`14_cte`](examples/14_cte.rs) | `with!{}` + `cte::with(..)` + `.inner_join(..)` — a CTE used as a real table |
 | [`15_transaction`](examples/15_transaction.rs) | commit/rollback — every `.load()`/`.execute()` is generic over `sqlx::PgExecutor` |
 | [`16_row_access`](examples/16_row_access.rs) | rows keyed by column — adding a column moves nothing, and a helper can require just one |
-| [`17_from_row`](examples/17_from_row.rs) | `#[derive(FromRow)]` — filling a plain domain struct by field name, and `take` when a name doesn't line up |
+| [`17_from_row`](examples/17_from_row.rs) | `#[derive(FromRow)]` — filling a plain domain struct by field name, `select(users::All)` for a whole table, and `take` when a name doesn't line up |
 | [`18_correlated_exists`](examples/18_correlated_exists.rs) | `EXISTS`/`NOT EXISTS` over a subquery built from the outer query, tagged with the tables it references |

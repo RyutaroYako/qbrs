@@ -147,6 +147,13 @@ A schema is a `#[derive(Table)]` struct, shown in the
   expression is keyed by the function that produced it (`row.count()`,
   `row.row_number()`); `label!(name, ..)` renames one when the same
   function is selected twice, and emits the name as the column's `AS`.
+- **Whole-table selection** (`users::All`) —
+  [`17_from_row`](examples/examples/17_from_row.rs). The derive already knows
+  the table's columns, so `select(users::All)` doesn't restate them and a new
+  column can't leave a query behind. It composes:
+  `select((users::All, orders::total))` counts as one element of the tuple
+  however many columns the table has, and each of them takes its
+  NULL-ability from how the table was joined.
 - **Naming a query or a row** — a `Select`'s `Scope` lists the most
   recently joined table first, and a `Row`'s fields are in selection order;
   both spell out long enough to want a `type` alias and an

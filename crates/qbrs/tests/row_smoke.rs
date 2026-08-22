@@ -41,6 +41,42 @@ fn user_order_row()
     ))
 }
 
+/// Pins a query's decoded row type to a value written out by hand: passing
+/// a row of any other shape is a compile error.
+fn decodes_to<D, Scope, Sel, Idx>(_query: &Select<D, Scope, Sel>, _row: Sel::Output)
+where
+    Sel: Selection<Scope, Idx>,
+{
+}
+
+#[test]
+fn all_selects_every_column_and_takes_its_nullability_from_the_join() {
+    let query = select((users::email, orders::All))
+        .from::<Postgres, _>(users::Table)
+        .left_join(orders::Table, orders::user_id.eq(users::id));
+
+    let (sql, _params) = query.to_sql();
+    assert_eq!(
+        sql,
+        "SELECT \"users\".\"email\", \"orders\".\"id\", \"orders\".\"user_id\", \"orders\".\"total\" \
+         FROM \"users\" LEFT JOIN \"orders\" ON (\"orders\".\"user_id\" = \"users\".\"id\")"
+    );
+
+    decodes_to(
+        &query,
+        Row::new(RowCons::<users::columns::email, _, _>::new(
+            "ada@example.com".to_string(),
+            RowCons::<orders::columns::id, Option<i64>, _>::new(
+                None,
+                RowCons::<orders::columns::user_id, Option<i64>, _>::new(
+                    None,
+                    RowCons::<orders::columns::total, Option<i64>, _>::new(None, RowNil),
+                ),
+            ),
+        )),
+    );
+}
+
 #[test]
 fn a_field_is_read_by_the_value_that_selected_it() {
     let row = user_order_row();

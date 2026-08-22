@@ -27,7 +27,8 @@ pub mod prelude {
         Cons, Find, MaybeNull, Nil, NotNull, Nullable, Superset, TableSlot,
     };
     pub use qbrs_core::select::{
-        Correlated, DynSelect, OrderExt, Predicate, Prepared, Select, SetOp, predicate, select,
+        Correlated, DynSelect, OrderExt, Predicate, Prepared, Select, Selection, SetOp, predicate,
+        select,
     };
     pub use qbrs_core::update::{NothingToSet, update};
     pub use qbrs_core::window::{

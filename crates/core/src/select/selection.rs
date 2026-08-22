@@ -2,6 +2,8 @@
 
 use crate::expr::{AliasKey, Aliased, Column, ColumnKey, Declared, Expr, ExprKind, Keyed, SqlType};
 use crate::render::SelectItem;
+use std::marker::PhantomData;
+
 use crate::row::{Named, Row, RowCons, RowKey, RowNil};
 use crate::scope::{Find, Nil, Superset, Table, WrapNullable};
 
@@ -154,16 +156,93 @@ scalar_selection!(impl[S: SqlType] Expr<Nil, S>);
 scalar_selection!(impl[K, Req, S: SqlType] Keyed<K, Req, S>);
 scalar_selection!(impl[K, Inner] Aliased<K, Inner>);
 
+/// One element of a selection list. A column or an expression contributes
+/// one field; `All` contributes a whole table's worth. `Fields<Tail>` is
+/// what it puts in front of whatever the rest of the list contributes, so a
+/// list is assembled by nesting rather than by concatenating afterwards.
+pub trait SelectionPart<Scope, Idx> {
+    type Fields<Tail>;
+    fn push_items(&self, out: &mut Vec<SelectItem>);
+}
+
+macro_rules! field_part {
+    (impl[$($generics:tt)*] $ty:ty) => {
+        impl<$($generics)*, Scope, Idx> SelectionPart<Scope, Idx> for $ty
+        where
+            $ty: RowField<Scope, Idx>,
+        {
+            type Fields<Tail> = RowCons<
+                <$ty as RowKey>::Key,
+                <$ty as RowField<Scope, Idx>>::Value,
+                Tail,
+            >;
+            fn push_items(&self, out: &mut Vec<SelectItem>) {
+                out.push(RowField::item(self));
+            }
+        }
+    };
+}
+field_part!(impl[C: ColumnKey] Column<C>);
+field_part!(impl[S: SqlType] Expr<Nil, S>);
+field_part!(impl[Req, S: SqlType] Declared<Req, S>);
+field_part!(impl[K, Req, S: SqlType] Keyed<K, Req, S>);
+field_part!(impl[K, Inner] Aliased<K, Inner>);
+
+/// Every column of one table, in declaration order — `select(users::All)`.
+/// The table's own `#[derive(Table)]` supplies the chain through
+/// `AllColumns`, so a selection list and the schema cannot drift apart, and
+/// a whole table counts as one element of a tuple however many columns it
+/// has.
+pub struct All<T>(PhantomData<fn() -> T>);
+
+impl<T> All<T> {
+    pub const fn new() -> Self {
+        All(PhantomData)
+    }
+}
+
+impl<T> Clone for All<T> {
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+impl<T> Copy for All<T> {}
+
+impl<T> Default for All<T> {
+    fn default() -> Self {
+        All::new()
+    }
+}
+
+/// What `#[derive(Table)]` emits so `All<Table>` knows the table's columns
+/// and what each of them decodes to in a given scope.
+pub trait AllColumns<Scope, Idx> {
+    type Fields<Tail>;
+    fn push_items(out: &mut Vec<SelectItem>);
+}
+
+impl<T: AllColumns<Scope, Idx>, Scope, Idx> SelectionPart<Scope, Idx> for All<T> {
+    type Fields<Tail> = T::Fields<Tail>;
+    fn push_items(&self, out: &mut Vec<SelectItem>) {
+        T::push_items(out);
+    }
+}
+
+impl<T: AllColumns<Scope, Idx>, Scope, Idx> Selection<Scope, Idx> for All<T> {
+    type Output = Row<T::Fields<RowNil>>;
+    fn items(&self) -> Vec<SelectItem> {
+        let mut out = Vec::new();
+        T::push_items(&mut out);
+        out
+    }
+}
+
 macro_rules! row_chain {
     ($n:ident $i:ident) => {
-        RowCons<<$n as RowKey>::Key, <$n as RowField<Scope, $i>>::Value, RowNil>
+        <$n as SelectionPart<Scope, $i>>::Fields<RowNil>
     };
     ($n:ident $i:ident, $($rest:tt)*) => {
-        RowCons<
-            <$n as RowKey>::Key,
-            <$n as RowField<Scope, $i>>::Value,
-            row_chain!($($rest)*),
-        >
+        <$n as SelectionPart<Scope, $i>>::Fields<row_chain!($($rest)*)>
     };
 }
 
@@ -172,12 +251,14 @@ macro_rules! tuple_selection {
         #[allow(non_snake_case)]
         impl<Scope, $($n,)+ $($i,)+> Selection<Scope, ($($i,)+)> for ($($n,)+)
         where
-            $($n: RowField<Scope, $i>,)+
+            $($n: SelectionPart<Scope, $i>,)+
         {
             type Output = Row<row_chain!($($n $i),+)>;
             fn items(&self) -> Vec<SelectItem> {
                 let ($($n,)+) = self;
-                vec![$(RowField::item($n)),+]
+                let mut out = Vec::new();
+                $(SelectionPart::push_items($n, &mut out);)+
+                out
             }
         }
     };

@@ -16,6 +16,17 @@ struct UserSummary {
     total: Option<i64>,
 }
 
+/// Every column of `users`, which `select(users::All)` fills without the
+/// call site listing them — the derive already knows what the table has.
+#[derive(Debug, FromRow)]
+#[allow(dead_code)]
+struct WholeUser {
+    id: i64,
+    email: String,
+    display_name: Option<String>,
+    active: bool,
+}
+
 /// A different view, declared independently: fewer fields, opposite order.
 #[derive(Debug, FromRow)]
 #[allow(dead_code)]
@@ -69,6 +80,18 @@ async fn main() {
     for c in &contacts {
         println!("  {c:?}");
     }
+
+    // `users::All` is the table's own column list, so adding a column to
+    // the schema doesn't leave a query behind — and it counts as one
+    // element of the selection tuple however many columns it has.
+    let everyone: Vec<WholeUser> = select(users::All)
+        .from::<Postgres, _>(users::Table)
+        .order_by(users::id.asc())
+        .load(&pool)
+        .await
+        .expect("whole users")
+        .into_structs();
+    println!("whole rows: {everyone:?}");
 
     // When a name doesn't line up, `take` writes the mapping by hand — one
     // field at a time, still moving rather than copying.

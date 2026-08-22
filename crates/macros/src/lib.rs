@@ -233,6 +233,17 @@ fn gen_schema_mod(
         });
     }
 
+    let col_names: Vec<_> = columns.iter().map(|c| c.field_name.clone()).collect();
+    let all_fields = col_names.iter().rev().fold(quote! { Tail }, |tail, name| {
+        quote! {
+            ::qbrs::row::RowCons<
+                columns::#name,
+                <::qbrs::expr::Column<columns::#name> as ::qbrs::select::RowField<Scope, Idx>>::Value,
+                #tail,
+            >
+        }
+    });
+
     Ok(quote! {
         #[allow(non_snake_case)]
         pub mod #mod_ident {
@@ -250,6 +261,23 @@ fn gen_schema_mod(
 
             #(#consts)*
             #(#accessors)*
+
+            /// Every column of this table, in declaration order.
+            #[allow(non_upper_case_globals)]
+            pub const All: ::qbrs::select::All<Table> = ::qbrs::select::All::new();
+
+            // One `Idx` for the whole table: every column of it is found at
+            // the same place in the scope, with the same nullability.
+            impl<Scope, Idx> ::qbrs::select::AllColumns<Scope, Idx> for Table
+            where
+                #(::qbrs::expr::Column<columns::#col_names>:
+                    ::qbrs::select::RowField<Scope, Idx>,)*
+            {
+                type Fields<Tail> = #all_fields;
+                fn push_items(out: &mut ::std::vec::Vec<::qbrs::render::SelectItem>) {
+                    #(out.push(::qbrs::select::RowField::item(&#col_names));)*
+                }
+            }
         }
 
         #(#accessor_uses)*
@@ -502,6 +530,17 @@ fn expand_with(decl: CteDecl) -> TokenStream2 {
         natives.push(quote! { <#ty as ::qbrs::expr::SqlType>::Native });
     }
 
+    let col_idents: Vec<_> = decl.fields.iter().map(|(field, _)| field.clone()).collect();
+    let all_fields = col_idents.iter().rev().fold(quote! { Tail }, |tail, name| {
+        quote! {
+            ::qbrs::row::RowCons<
+                columns::#name,
+                <::qbrs::expr::Column<columns::#name> as ::qbrs::select::RowField<Scope, Idx>>::Value,
+                #tail,
+            >
+        }
+    });
+
     quote! {
         #[allow(non_snake_case)]
         pub mod #mod_ident {
@@ -522,6 +561,21 @@ fn expand_with(decl: CteDecl) -> TokenStream2 {
 
             #(#consts)*
             #(#accessors)*
+
+            /// Every column of this CTE, in declaration order.
+            #[allow(non_upper_case_globals)]
+            pub const All: ::qbrs::select::All<Table> = ::qbrs::select::All::new();
+
+            impl<Scope, Idx> ::qbrs::select::AllColumns<Scope, Idx> for Table
+            where
+                #(::qbrs::expr::Column<columns::#col_idents>:
+                    ::qbrs::select::RowField<Scope, Idx>,)*
+            {
+                type Fields<Tail> = #all_fields;
+                fn push_items(out: &mut ::std::vec::Vec<::qbrs::render::SelectItem>) {
+                    #(out.push(::qbrs::select::RowField::item(&#col_idents));)*
+                }
+            }
 
             impl ::qbrs::cte::CteShape for Table {
                 type Shape = (#(#natives,)*);
