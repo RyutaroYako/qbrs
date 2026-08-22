@@ -45,7 +45,13 @@ impl Nullability for MaybeNull {}
 pub struct Nil;
 
 /// A non-empty scope: `Head` joined with nullability tracked in
-/// `TableSlot`, followed by the rest of the scope in `Tail`.
+/// `TableSlot`, followed by the rest of the scope in `Tail`. Most recently
+/// joined table first, which is the order a hand-written `Scope` alias has
+/// to be spelled in.
+///
+/// **Known limitation**: a table appears at most once. Joining one twice is
+/// accepted here and reported later, as an inference ambiguity, the first
+/// time a column of it is referenced.
 pub struct Cons<Head, Tail>(PhantomData<(Head, Tail)>);
 
 /// One slot in the scope list: table `T`, with join-derived nullability `N`.

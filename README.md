@@ -135,9 +135,15 @@ A schema is a `#[derive(Table)]` struct, shown in the
   expression is keyed by the function that produced it (`row.count()`,
   `row.row_number()`); `label!(name, ..)` renames one when the same
   function is selected twice, and emits the name as the column's `AS`.
+- **Naming a query or a row** — a `Select`'s `Scope` lists the most
+  recently joined table first, and a `Row`'s fields are in selection order;
+  both spell out long enough to want a `type` alias and an
+  `#[allow(clippy::type_complexity)]`. Inference covers every use that stays
+  inside a function.
 - **Rows into your own structs** —
   [`17_from_row`](examples/examples/17_from_row.rs). `#[derive(FromRow)]`
-  fills a plain struct by matching field *names*: the struct declares no
+  fills a plain struct by matching field *names* — or the name given by
+  `#[from_row(rename = "..")]` where the two differ. The struct declares no
   column path, no table, and no join, so it can live in a domain module with
   `#[derive(Serialize)]` and be filled from any query that selects columns of
   those names and types. Selection order doesn't matter and extra columns are

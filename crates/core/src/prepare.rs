@@ -18,7 +18,7 @@
 macro_rules! prepare {
     (struct $name:ident { $($field:ident : $ty:ty),* $(,)? }) => {
         #[derive(Debug, Clone, Default)]
-        struct $name {
+        pub struct $name {
             $(pub $field: <$ty as $crate::expr::SqlType>::Native,)*
         }
 
