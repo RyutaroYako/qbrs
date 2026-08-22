@@ -17,11 +17,17 @@
 //! `clippy::type_complexity` — the same lint `qbrs-core` allows crate-wide.
 //! Inference covers every use that doesn't cross a function boundary.
 //!
+//! `FromRow` (via `#[derive(FromRow)]`) maps a row into a plain struct by
+//! matching field *names*, so a DTO carries no column paths and no query
+//! shape — nothing that would tie it to the query that filled it.
+//!
 //! **Known limitations**: a key selected twice makes `.get()` ambiguous
 //! (`error[E0283]`, "multiple `impl`s satisfying ... `GetField`") rather
 //! than silently resolving to the first — give one of them a `label!{}`
-//! alias. `into_tuple` is implemented up to 16 columns; `Row` itself has no
-//! such limit.
+//! alias, or map it by hand with `take`. `into_tuple` is implemented up to
+//! 16 columns; `Row` itself has no such limit. A `with!{}` CTE column has no
+//! type-level name, so `#[derive(FromRow)]` can't match it — give it a
+//! `label!` alias, or take it by hand.
 
 use std::marker::PhantomData;
 
@@ -87,6 +93,26 @@ where
     }
 }
 
+// Manual `Clone`: `#[derive(Clone)]` would demand `K: Clone`, though a key
+// is a purely phantom marker.
+impl<K, V: Clone, Tail: Clone> Clone for RowCons<K, V, Tail> {
+    fn clone(&self) -> Self {
+        RowCons::new(self.value.clone(), self.tail.clone())
+    }
+}
+
+impl Clone for RowNil {
+    fn clone(&self) -> Self {
+        RowNil
+    }
+}
+
+impl<L: Clone> Clone for Row<L> {
+    fn clone(&self) -> Self {
+        Row(self.0.clone())
+    }
+}
+
 impl<K, V: std::fmt::Debug, Tail: std::fmt::Debug> std::fmt::Debug for RowCons<K, V, Tail> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{:?}, {:?}", self.value, self.tail)
@@ -136,6 +162,47 @@ impl<L> Row<L> {
         self.0.into_field()
     }
 
+    /// Moves one field out and hands back the row without it, so several
+    /// fields can be taken in turn. `into_get` is the shorthand for when
+    /// only one is wanted and the rest can be dropped.
+    pub fn take<K: RowKey, Idx>(
+        self,
+        _key: K,
+    ) -> (
+        <L as TakeField<K::Key, Idx>>::Value,
+        Row<<L as TakeField<K::Key, Idx>>::Rest>,
+    )
+    where
+        L: TakeField<K::Key, Idx>,
+    {
+        let (value, rest) = self.0.take_field();
+        (value, Row::new(rest))
+    }
+
+    #[doc(hidden)]
+    pub fn take_named<F, Idx>(
+        self,
+    ) -> (
+        <L as TakeNamed<F, Idx>>::Value,
+        Row<<L as TakeNamed<F, Idx>>::Rest>,
+    )
+    where
+        L: TakeNamed<F, Idx>,
+    {
+        let (value, rest) = self.0.take_named();
+        (value, Row::new(rest))
+    }
+
+    /// Builds a `#[derive(FromRow)]` struct out of this row, matching its
+    /// fields by name. Extra columns in the row are ignored, and the order
+    /// they were selected in doesn't matter.
+    pub fn into_struct<T, Idxs>(self) -> T
+    where
+        T: FromRow<L, Idxs>,
+    {
+        T::from_row(self)
+    }
+
     /// The positional view: the plain tuple this selection would decode to
     /// if rows didn't exist. Also reachable as `row.into()`.
     pub fn into_tuple(self) -> L::Values
@@ -143,6 +210,133 @@ impl<L> Row<L> {
         L: RowValues,
     {
         self.0.into_values()
+    }
+}
+
+/// Proof that a row holds a field under key `K`, taking it by value and
+/// handing back the row without it. `GetField` borrows; this one moves, and
+/// the shrinking `Rest` type is what lets several fields be moved out one
+/// after another.
+#[diagnostic::on_unimplemented(
+    message = "`{K}` is not in this query's selection",
+    label = "a row can only be read by a key the query selected"
+)]
+pub trait TakeField<K, Idx> {
+    type Value;
+    type Rest;
+    fn take_field(self) -> (Self::Value, Self::Rest);
+}
+
+impl<K, V, Tail> TakeField<K, Here> for RowCons<K, V, Tail> {
+    type Value = V;
+    type Rest = Tail;
+    fn take_field(self) -> (V, Tail) {
+        (self.value, self.tail)
+    }
+}
+
+impl<K, Other, V, Tail, I> TakeField<K, There<I>> for RowCons<Other, V, Tail>
+where
+    Tail: TakeField<K, I>,
+{
+    type Value = <Tail as TakeField<K, I>>::Value;
+    type Rest = RowCons<Other, V, <Tail as TakeField<K, I>>::Rest>;
+    fn take_field(self) -> (Self::Value, Self::Rest) {
+        let (value, rest) = self.tail.take_field();
+        (value, RowCons::new(self.value, rest))
+    }
+}
+
+/// A row key's identifier, spelled one `char` per cell so that two keys
+/// declared in different crates can be compared for the same *name* rather
+/// than the same type. `char` is one of the three types stable const
+/// generics accept, which is what makes this expressible at all — a
+/// `&'static str` const parameter is not allowed.
+///
+/// Never written by hand and never surfaced in a diagnostic: `TakeNamed`
+/// reports the `#[derive(FromRow)]` field marker instead.
+pub struct NameChar<const C: char, Rest>(PhantomData<Rest>);
+
+/// End of a `NameChar` chain.
+pub struct NameEnd;
+
+/// Builds a `NameChar` chain from character literals.
+#[doc(hidden)]
+#[macro_export]
+macro_rules! type_name {
+    () => { $crate::row::NameEnd };
+    ($c:literal $(, $rest:literal)*) => {
+        $crate::row::NameChar<$c, $crate::type_name!($($rest),*)>
+    };
+}
+
+/// A key that has a name, so a row field can be found by what it's called
+/// rather than by which key type produced it. Implemented by
+/// `#[derive(Table)]` for columns, by `label!` for aliases, and by the
+/// built-in expression keys. `Anon` deliberately has no impl.
+pub trait Named {
+    type Name;
+}
+
+/// `TakeField` by name rather than by key identity, which is what lets a
+/// struct that has never heard of `users::email` still receive it.
+#[diagnostic::on_unimplemented(
+    message = "this query's rows have no field matching `{F}`",
+    label = "the selection needs a column of that name, decoding to that type"
+)]
+pub trait TakeNamed<F, Idx> {
+    type Value;
+    type Rest;
+    fn take_named(self) -> (Self::Value, Self::Rest);
+}
+
+impl<F, K, V, Tail> TakeNamed<F, Here> for RowCons<K, V, Tail>
+where
+    K: Named,
+    F: Named<Name = <K as Named>::Name>,
+{
+    type Value = V;
+    type Rest = Tail;
+    fn take_named(self) -> (V, Tail) {
+        (self.value, self.tail)
+    }
+}
+
+impl<F, K, V, Tail, I> TakeNamed<F, There<I>> for RowCons<K, V, Tail>
+where
+    Tail: TakeNamed<F, I>,
+{
+    type Value = <Tail as TakeNamed<F, I>>::Value;
+    type Rest = RowCons<K, V, <Tail as TakeNamed<F, I>>::Rest>;
+    fn take_named(self) -> (Self::Value, Self::Rest) {
+        let (value, rest) = self.tail.take_named();
+        (value, RowCons::new(self.value, rest))
+    }
+}
+
+/// Builds a plain struct out of a row by matching field names, generated by
+/// `#[derive(FromRow)]`. `Idxs` holds the per-field lookup indices, for the
+/// reason `scope::Superset` explains; it is also why this can't be
+/// `From`/`Into`, whose shape has no room for them.
+pub trait FromRow<L, Idxs>: Sized {
+    fn from_row(row: Row<L>) -> Self;
+}
+
+/// `Vec<Row<..>> -> Vec<T>` for any `#[derive(FromRow)]` struct.
+pub trait IntoStructs {
+    type Fields;
+    fn into_structs<T, Idxs>(self) -> Vec<T>
+    where
+        T: FromRow<Self::Fields, Idxs>;
+}
+
+impl<L> IntoStructs for Vec<Row<L>> {
+    type Fields = L;
+    fn into_structs<T, Idxs>(self) -> Vec<T>
+    where
+        T: FromRow<L, Idxs>,
+    {
+        self.into_iter().map(Row::into_struct).collect()
     }
 }
 
@@ -283,13 +477,17 @@ pub trait AliasKey: RowKey<Key = Self> {
 /// that reads it: `count()` and each window function get one, so a selection
 /// that uses one of them needs nothing declared at the call site.
 macro_rules! expr_key {
-    ($key:ident, $accessor:ident, $method:ident, $doc:literal) => {
+    ($key:ident, $accessor:ident, $method:ident, $doc:literal, $($ch:literal),+) => {
         #[doc = $doc]
         #[derive(Clone, Copy)]
         pub struct $key;
 
         impl $crate::row::RowKey for $key {
             type Key = $key;
+        }
+
+        impl $crate::row::Named for $key {
+            type Name = $crate::type_name!($($ch),+);
         }
 
         #[doc = $doc]

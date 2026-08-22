@@ -99,19 +99,43 @@ crate::row::expr_key!(
     RowNumber,
     HasRowNumber,
     row_number,
-    "The identity a selected `row_number() OVER (..)` is filed under in a row."
+    "The identity a selected `row_number() OVER (..)` is filed under in a row.",
+    'r',
+    'o',
+    'w',
+    '_',
+    'n',
+    'u',
+    'm',
+    'b',
+    'e',
+    'r'
 );
 crate::row::expr_key!(
     Rank,
     HasRank,
     rank,
-    "The identity a selected `rank() OVER (..)` is filed under in a row."
+    "The identity a selected `rank() OVER (..)` is filed under in a row.",
+    'r',
+    'a',
+    'n',
+    'k'
 );
 crate::row::expr_key!(
     DenseRank,
     HasDenseRank,
     dense_rank,
-    "The identity a selected `dense_rank() OVER (..)` is filed under in a row."
+    "The identity a selected `dense_rank() OVER (..)` is filed under in a row.",
+    'd',
+    'e',
+    'n',
+    's',
+    'e',
+    '_',
+    'r',
+    'a',
+    'n',
+    'k'
 );
 
 /// `ROW_NUMBER() OVER (..)` — a unique, sequential number per row within its

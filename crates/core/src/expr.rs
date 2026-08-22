@@ -431,7 +431,12 @@ crate::row::expr_key!(
     Count,
     HasCount,
     count,
-    "The identity a selected `count(*)` is filed under in a row."
+    "The identity a selected `count(*)` is filed under in a row.",
+    'c',
+    'o',
+    'u',
+    'n',
+    't'
 );
 
 /// `count(*)`, built on the same `Raw` fragment machinery as `sql!{}`.

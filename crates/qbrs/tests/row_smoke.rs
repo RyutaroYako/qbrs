@@ -137,3 +137,68 @@ fn an_unaliased_expression_is_keyed_by_the_function_that_made_it() {
     let row = Row::new(RowCons::<qbrs::expr::Count, _, _>::new(3i64, RowNil));
     assert_eq!(row.count(), &3);
 }
+
+/// A plain domain struct: no column paths, no query shape, nothing that ties
+/// it to the query that fills it.
+#[derive(Debug, PartialEq, FromRow)]
+struct UserSummary {
+    email: String,
+    display_name: Option<String>,
+    total: Option<i64>,
+}
+
+#[test]
+fn from_row_matches_fields_by_name_ignoring_order_and_extras() {
+    // Selected as (id, total, email, display_name); the struct declares a
+    // different order and doesn't want `id` at all.
+    let row = Row::new(RowCons::<users::columns::id, _, _>::new(
+        7i64,
+        RowCons::<orders::columns::total, _, _>::new(
+            Some(2500i64),
+            RowCons::<users::columns::email, _, _>::new(
+                "ada@example.com".to_string(),
+                RowCons::<users::columns::display_name, _, _>::new(Some("Ada".to_string()), RowNil),
+            ),
+        ),
+    ));
+
+    let summary: UserSummary = row.into_struct();
+    assert_eq!(
+        summary,
+        UserSummary {
+            email: "ada@example.com".to_string(),
+            display_name: Some("Ada".to_string()),
+            total: Some(2500),
+        }
+    );
+}
+
+#[derive(Debug, PartialEq, FromRow)]
+struct Ranked {
+    email: String,
+    within_user: i64,
+}
+
+#[test]
+fn a_label_alias_is_matched_by_its_declared_name() {
+    let row = Row::new(RowCons::<users::columns::email, _, _>::new(
+        "ada@example.com".to_string(),
+        RowCons::<label::within_user, _, _>::new(1i64, RowNil),
+    ));
+    assert_eq!(
+        row.into_struct::<Ranked, _>(),
+        Ranked {
+            email: "ada@example.com".to_string(),
+            within_user: 1
+        }
+    );
+}
+
+#[test]
+fn take_moves_one_field_and_keeps_the_rest() {
+    let row = user_order_row();
+    let (email, row) = row.take(users::email);
+    let (total, _) = row.take(orders::total);
+    assert_eq!(email, "ada@example.com");
+    assert_eq!(total, Some(1000));
+}

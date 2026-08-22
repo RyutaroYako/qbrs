@@ -6,10 +6,12 @@
 //! `#[column(generated)]`, and `#[column(default)]` are the only per-field
 //! attributes.
 //!
-//! `label!` declares output-column names for computed selections. Both live
-//! here rather than as `macro_rules!` in `qbrs-core` (where `sql!`,
-//! `prepare!`, and `with!` live) because both synthesize an identifier —
-//! `HasEmail` from `email` — which a declarative macro cannot do.
+//! `label!` declares output-column names for computed selections, and
+//! `#[derive(FromRow)]` maps a row into a plain struct by field name. All
+//! three live here rather than as `macro_rules!` in `qbrs-core` (where
+//! `sql!`, `prepare!`, and `with!` live) because all three turn an
+//! identifier into something a declarative macro cannot produce: another
+//! identifier (`HasEmail` from `email`), or its type-level spelling.
 
 use proc_macro::TokenStream;
 use proc_macro2::TokenStream as TokenStream2;
@@ -200,6 +202,7 @@ fn gen_schema_mod(
             quote! { #base_sql_ty }
         };
         let col_name_str = name.to_string();
+        let type_name = type_level_name(&col_name_str);
         keys.push(quote! {
             #[derive(Clone, Copy)]
             pub struct #name;
@@ -207,6 +210,9 @@ fn gen_schema_mod(
                 type Table = super::Table;
                 type Sql = #col_sql_ty;
                 const NAME: &'static str = #col_name_str;
+            }
+            impl ::qbrs::row::Named for #name {
+                type Name = #type_name;
             }
         });
         consts.push(quote! {
@@ -270,6 +276,104 @@ fn accessor_trait(trait_ident: &Ident, method: &Ident, key: &TokenStream2) -> To
     }
 }
 
+/// `#[derive(FromRow)]`: fills the struct from a `Row` by matching each
+/// field's name against the row's keys. The struct itself stays free of
+/// column paths and query shape — the only thing it declares is what it
+/// wants called what.
+#[proc_macro_derive(FromRow)]
+pub fn derive_from_row(input: TokenStream) -> TokenStream {
+    let input = parse_macro_input!(input as DeriveInput);
+    expand_from_row(input)
+        .unwrap_or_else(|e| e.to_compile_error())
+        .into()
+}
+
+fn expand_from_row(input: DeriveInput) -> syn::Result<TokenStream2> {
+    let struct_ident = &input.ident;
+    let fields = match &input.data {
+        Data::Struct(s) => match &s.fields {
+            Fields::Named(named) => &named.named,
+            _ => {
+                return Err(syn::Error::new_spanned(
+                    struct_ident,
+                    "#[derive(FromRow)] requires named fields",
+                ));
+            }
+        },
+        _ => {
+            return Err(syn::Error::new_spanned(
+                struct_ident,
+                "#[derive(FromRow)] only supports structs",
+            ));
+        }
+    };
+    if fields.is_empty() {
+        return Err(syn::Error::new_spanned(
+            struct_ident,
+            "#[derive(FromRow)] needs at least one field to fill",
+        ));
+    }
+
+    // Field markers live in their own module so a failed lookup reports
+    // `user_summary_fields::email` rather than the type-level spelling.
+    let fields_mod = format_ident!("{}_fields", to_snake_case(&struct_ident.to_string()));
+
+    let mut markers = Vec::new();
+    let mut idx_params = Vec::new();
+    let mut bounds = Vec::new();
+    let mut steps = Vec::new();
+    let mut inits = Vec::new();
+    let mut receiver = quote! { L };
+
+    for (position, f) in fields.iter().enumerate() {
+        let field_name = f.ident.clone().expect("named field");
+        let field_ty = &f.ty;
+        let type_name = type_level_name(&field_name.to_string());
+        markers.push(quote! {
+            pub struct #field_name;
+            impl ::qbrs::row::Named for #field_name {
+                type Name = #type_name;
+            }
+        });
+
+        let idx = format_ident!("Idx{position}");
+        let marker = quote! { #fields_mod::#field_name };
+        bounds.push(quote! {
+            #receiver: ::qbrs::row::TakeNamed<#marker, #idx, Value = #field_ty>
+        });
+        receiver = quote! { <#receiver as ::qbrs::row::TakeNamed<#marker, #idx>>::Rest };
+
+        // Bindings are numbered rather than named after the field: a field
+        // name can also be a unit struct in scope, which a bare identifier
+        // pattern would resolve to instead of introducing a binding.
+        let binding = format_ident!("__field{position}");
+        steps.push(quote! {
+            let (#binding, row) = row.take_named::<#marker, #idx>();
+        });
+        inits.push(quote! { #field_name: #binding });
+        idx_params.push(idx);
+    }
+
+    Ok(quote! {
+        #[doc(hidden)]
+        #[allow(non_camel_case_types)]
+        mod #fields_mod {
+            #(#markers)*
+        }
+
+        impl<L, #(#idx_params),*> ::qbrs::row::FromRow<L, (#(#idx_params,)*)> for #struct_ident
+        where
+            #(#bounds,)*
+        {
+            fn from_row(row: ::qbrs::row::Row<L>) -> Self {
+                #(#steps)*
+                let _ = row;
+                Self { #(#inits),* }
+            }
+        }
+    })
+}
+
 /// `label!(rank_in_user, rank_overall);` — declares output-column names for
 /// computed selections, in a `label` module so they can never be shadowed by
 /// a local binding of the same name. One invocation per scope; declaring it
@@ -282,6 +386,7 @@ pub fn label(input: TokenStream) -> TokenStream {
     let mut uses = Vec::new();
     for name in &names {
         let name_str = name.to_string();
+        let type_name = type_level_name(&name_str);
         let trait_ident = format_ident!("Has{}", to_camel_case(&name_str));
         let accessor = accessor_trait(&trait_ident, name, &quote! { #name });
         decls.push(quote! {
@@ -293,6 +398,9 @@ pub fn label(input: TokenStream) -> TokenStream {
             }
             impl ::qbrs::row::AliasKey for #name {
                 const NAME: &'static str = #name_str;
+            }
+            impl ::qbrs::row::Named for #name {
+                type Name = #type_name;
             }
             #accessor
         });
@@ -308,6 +416,14 @@ pub fn label(input: TokenStream) -> TokenStream {
         #(#uses)*
     }
     .into()
+}
+
+/// An identifier's type-level spelling, one `char` per cell — the bridge
+/// that lets a `#[derive(FromRow)]` field find a column it has never been
+/// told the path of.
+fn type_level_name(name: &str) -> TokenStream2 {
+    let chars = name.chars();
+    quote! { ::qbrs::type_name!(#(#chars),*) }
 }
 
 fn to_camel_case(s: &str) -> String {

@@ -133,6 +133,15 @@ complete, runnable code for everything below.
   expression is keyed by the function that produced it (`row.count()`,
   `row.row_number()`); `label!(name, ..)` renames one when the same
   function is selected twice, and emits the name as the column's `AS`.
+- **Rows into your own structs** —
+  [`17_from_row`](examples/examples/17_from_row.rs). `#[derive(FromRow)]`
+  fills a plain struct by matching field *names*: the struct declares no
+  column path, no table, and no join, so it can live in a domain module with
+  `#[derive(Serialize)]` and be filled from any query that selects columns of
+  those names and types. Selection order doesn't matter and extra columns are
+  ignored. Nothing is copied — fields move out of the row, and no `Clone`
+  bound exists to do otherwise. Where a name doesn't line up, `row.take(col)`
+  moves one field out and hands back the rest.
 - **Select / Insert / Update / Delete** —
   [`01_select_basic`](examples/examples/01_select_basic.rs),
   [`03_insert`](examples/examples/03_insert.rs),
@@ -204,6 +213,12 @@ complete, runnable code for everything below.
 - Naming a row type in a signature takes a type alias, and one long enough
   to trip `clippy::type_complexity`; inference covers every use that stays
   inside a function.
+- `#[derive(FromRow)]` matches on field name, so a `with!{}` CTE column can't
+  take part (a declarative macro can't spell a name at the type level) — give
+  it a `label!` alias, or map it by hand with `take`. Two selected columns
+  with the same name are likewise ambiguous until one is aliased.
+- `Row` converts into a struct with `into_struct()`/`into_structs()`, not
+  `.into()`: `From` has no room for the inferred lookup indices.
 
 ## Status
 
@@ -218,8 +233,8 @@ complete, runnable code for everything below.
 correlated subqueries (`EXISTS`/`NOT EXISTS`), the `sql!{}` escape hatch,
 reusable named-placeholder prepared statements (`prepare!{}`), upsert
 (`ON CONFLICT`), `UNION`/`INTERSECT`/`EXCEPT`, ranking window functions
-(`row_number()`/`rank()`/`dense_rank()`), non-recursive CTEs (`with!{}`), and
-column-keyed result rows
+(`row_number()`/`rank()`/`dense_rank()`), non-recursive CTEs (`with!{}`),
+column-keyed result rows, and `#[derive(FromRow)]` struct mapping
 are implemented and tested against a real Postgres instance. Not yet done:
 `WITH RECURSIVE`, aggregate-as-window-functions (`sum(col) OVER (..)`), and
 relations/eager-loading (intentionally scoped out until the core

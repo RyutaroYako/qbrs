@@ -112,6 +112,18 @@ position to disambiguate, so there is nothing to key. `Row::into_tuple` /
 `Vec<Row<_>>::into_tuples` / `From<Row<..>> for (..)` give the positional view back; the
 arity limit lives in `row::Prepend`'s impls and nowhere else.
 
+Two lookups, deliberately distinct. `GetField`/`TakeField` search by key *identity*
+(`row.get(users::email)` must not also match `archived_users::email`); `TakeNamed` searches
+by `row::Named`, an identifier spelled one `char` per cell (`NameChar<'e', ..>`), which is
+what lets `#[derive(FromRow)]` fill a struct that has never been told a column path. `char`
+is one of the three types stable const generics accept — a `&'static str` parameter is not
+— and that spelling is why `label!`, `#[derive(Table)]`, and `#[derive(FromRow)]` all have
+to be proc macros. Keep the spelling out of diagnostics: it lives in `Named::Name`, and
+`TakeNamed` reports the `FromRow` field marker instead.
+
+`FromRow` cannot be `From`/`Into`: the per-field lookup indices have nowhere to live in a
+foreign trait's fixed shape (`E0207`). Hence `into_struct`/`into_structs`.
+
 Two consequences to preserve. Shape comparisons between *different* queries (`cte::with`,
 `select::SetOp`) go through `RowValues::Values`, not `Selection::Output`: two branches of a
 `UNION` over different tables never share row keys, and a CTE declares its own column names
