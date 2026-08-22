@@ -75,6 +75,11 @@ impl Dialect for Sqlite {
 
 /// `RETURNING` support (Postgres, SQLite 3.35+). MySQL has no equivalent
 /// SQL construct at any version.
+#[diagnostic::on_unimplemented(
+    message = "`{Self}` has no `RETURNING`",
+    label = "Postgres and SQLite do; MySQL has no equivalent at any version",
+    note = "read the rows back with a second statement, or write the query for a dialect that has it"
+)]
 pub trait SupportsReturning: Dialect {}
 impl SupportsReturning for Postgres {}
 impl SupportsReturning for Sqlite {}
@@ -82,6 +87,10 @@ impl SupportsReturning for Sqlite {}
 /// `ON CONFLICT DO UPDATE/NOTHING` support (Postgres, SQLite). MySQL's
 /// differently-shaped `ON DUPLICATE KEY UPDATE` gets its own capability
 /// trait when it lands.
+#[diagnostic::on_unimplemented(
+    message = "`{Self}` has no `ON CONFLICT`",
+    label = "Postgres and SQLite do; MySQL spells upsert as `ON DUPLICATE KEY UPDATE`, which is a different clause and isn't built yet"
+)]
 pub trait SupportsOnConflict: Dialect {}
 impl SupportsOnConflict for Postgres {}
 impl SupportsOnConflict for Sqlite {}
@@ -89,6 +98,10 @@ impl SupportsOnConflict for Sqlite {}
 /// `RIGHT JOIN` support: Postgres and MySQL always, SQLite 3.39+. Kept
 /// separate from `SupportsFullOuterJoin` because MySQL has this one but not
 /// that one.
+#[diagnostic::on_unimplemented(
+    message = "`{Self}` has no `RIGHT JOIN`",
+    label = "SQLite gained it in 3.39; before that, swap the two tables and use `.left_join(..)`"
+)]
 pub trait SupportsRightJoin: Dialect {}
 impl SupportsRightJoin for Postgres {}
 impl SupportsRightJoin for MySql {}
@@ -98,6 +111,11 @@ impl SupportsRightJoin for Sqlite {}
 /// version. The usual MySQL workaround is a `UNION` of `LEFT` and `RIGHT`
 /// joins — a different SQL shape, not something `.full_join()` should
 /// silently rewrite into.
+#[diagnostic::on_unimplemented(
+    message = "`{Self}` has no `FULL JOIN`",
+    label = "Postgres and SQLite do; MySQL's idiom is a `UNION` of a `LEFT` and a `RIGHT` join",
+    note = "that rewrite is a different query shape, so `.full_join(..)` doesn't do it silently"
+)]
 pub trait SupportsFullOuterJoin: Dialect {}
 impl SupportsFullOuterJoin for Postgres {}
 impl SupportsFullOuterJoin for Sqlite {}

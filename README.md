@@ -201,7 +201,9 @@ A schema is a `#[derive(Table)]` struct, shown in the
   `Defaultable<Option<T>>`, whose third state the builder spells
   `.column_null()`. `*Update` mirrors all this with `Option<T>` /
   `Option<Option<T>>` (untouched / `NULL` / value), and a request struct's
-  `Option<T>` converts into either. An `*Insert` is built by naming its
+  `Option<T>` converts into either. An assignment a value can't say —
+  `updated_at = now()`, `version = version + 1` — goes in with
+  `.set_to(column, expression)`, checked against the table being written to. An `*Insert` is built by naming its
   columns — `UsersInsert::builder().email(..).build()` — and `build()` is
   reachable only once every column that is neither nullable nor defaulted
   has a value, so no column can be dropped and no two of the same type
@@ -297,10 +299,10 @@ A schema is a `#[derive(Table)]` struct, shown in the
   tx.commit().await?;
   ```
 - **Errors** — every `.load()`/`.execute()` returns `qbrs_sqlx::Result<T>`
-  (`= Result<T, qbrs_sqlx::Error>`), not a raw `sqlx::Result`. `Error` has
-  two variants: `Sqlx` (a real driver/database error) and
-  `UnresolvedPlaceholder` (a `prepare!{}` placeholder with no matching
-  value — a qbrs-level misuse, not a database error). Keeping these
+  (`= Result<T, qbrs_sqlx::Error>`), not a raw `sqlx::Result`. `Error`
+  separates a real driver/database error (`Sqlx`) from the qbrs-level
+  misuses: `UnresolvedPlaceholder`, `NothingToSet`, `NothingToInsert`, and
+  `FeatureNotEnabled` (a column type on in `qbrs` and off in `qbrs-sqlx`). Keeping these
   distinct means a caller can `match` on the cause instead of
   string-matching an error message.
 
@@ -325,6 +327,10 @@ A schema is a `#[derive(Table)]` struct, shown in the
   It surfaces as `error[E0284]: type annotations needed`, and the fix is to
   `label!` one of them. Reading either by its own column value
   (`row.get(users::id)`) is unaffected.
+- `select((a::All, b::All))` where both tables have a column of the same
+  name can't be read by name: `#[derive(FromRow)]` reports `E0284`, and the
+  usual fix — `label!` one of them — has nowhere to attach inside `All`.
+  Select the columns of one of the two by hand.
 - An aggregate is read back by the value that selected it
   (`row.get(sum(orders::total))`) or by name (`#[derive(FromRow)]`), but not
   through the column's generated accessor: `sum(orders::total)` is its own
@@ -394,10 +400,12 @@ A schema is a `#[derive(Table)]` struct, shown in the
   look. One known difference: `DEFAULT` in an `INSERT ... VALUES` is Postgres
   and MySQL only, and SQLite rejects it, which makes `Defaultable::Default`
   unusable there.
-- A computed expression over a column has to say what it decodes to —
-  `expr.decodes_as::<Nullable<BigInt>>()` — because its NULL-ability doesn't
-  follow from any one column's join. Like any unnamed selection it is then
-  read positionally, or by name once `.label(label::x)` gives it one.
+- An expression the *builder* inferred a type for — a comparison, an
+  arithmetic combination — has to say what it decodes to before it can be
+  selected: `expr.decodes_as::<Bool>()`. Its NULL-ability doesn't follow from
+  any one column's join, and the inferred `S` can contradict it. A `sql!`
+  fragment already states its type, so it needs nothing. Either is then read
+  positionally, or by name once `.label(label::x)` gives it one.
 
 ## Status
 

@@ -3,9 +3,9 @@
 use std::marker::PhantomData;
 
 use crate::dialect::Dialect;
-use crate::expr::{ExprKind, Value};
-use crate::render::{QuerySink, Sink, render_and_list, render_ident};
-use crate::scope::{BaseTable, Table};
+use crate::expr::{Column, ColumnKey, Comparable, ExprKind, IntoExpr, SqlType, Value};
+use crate::render::{QuerySink, Sink, render_and_list, render_expr, render_ident};
+use crate::scope::{BaseTable, Superset, Table};
 use crate::select::{Condition, Predicate};
 use crate::statement::{Statement, WrittenTable};
 
@@ -34,29 +34,37 @@ pub use private::Sealed as UpdateRowSealed;
 /// assignments at all, so the check belongs where such a value enters a
 /// statement rather than at rendering time.
 pub struct Assignments {
-    sets: Vec<(&'static str, Value)>,
+    sets: Vec<(&'static str, ExprKind)>,
 }
 
 impl Assignments {
     /// `col = $n, col = $n` — the one renderer for a `SET` list, shared by
     /// `UPDATE` and `ON CONFLICT DO UPDATE`.
     pub(crate) fn render_into<D: Dialect>(&self, sink: &mut dyn Sink) {
-        for (i, (col, val)) in self.sets.iter().enumerate() {
+        for (i, (col, value)) in self.sets.iter().enumerate() {
             if i > 0 {
                 sink.text(", ");
             }
             render_ident::<D>(sink, col);
             sink.text(" = ");
-            sink.bind(val);
+            render_expr::<D>(value, sink);
         }
     }
 
     pub(crate) fn new<R: UpdateRow>(row: R) -> Result<Self, NothingToSet> {
-        let sets = row.sets();
+        let sets: Vec<_> = row
+            .sets()
+            .into_iter()
+            .map(|(col, value)| (col, ExprKind::Value(value)))
+            .collect();
         if sets.is_empty() {
             return Err(NothingToSet);
         }
         Ok(Assignments { sets })
+    }
+
+    fn push(&mut self, column: &'static str, value: ExprKind) {
+        self.sets.push((column, value));
     }
 }
 
@@ -132,6 +140,30 @@ impl<D, T: Table> Update<D, T> {
     ) -> Self {
         self.wheres
             .extend(conds.into_iter().map(Predicate::into_kind));
+        self
+    }
+}
+
+impl<D, T: Table> Update<D, T> {
+    /// `SET column = <expression>`, for the assignments a value can't say:
+    /// `updated_at = now()`, `version = version + 1`. The expression is
+    /// checked against the table being written to, exactly as a `WHERE`
+    /// condition is, and appends to whatever `.set(..)` already assigned.
+    pub fn set_to<C, S, Req, Idxs>(
+        mut self,
+        _column: Column<C>,
+        value: impl IntoExpr<S, Req = Req>,
+    ) -> Self
+    where
+        C: ColumnKey<Table = T>,
+        // The same relation a comparison uses: a `Text` expression assigns
+        // to a `Nullable<Text>` column, and an `Integer` one to a `BigInt`.
+        C::Sql: Comparable<S>,
+        S: SqlType,
+        WrittenTable<T>: Superset<Req, Idxs>,
+    {
+        self.sets
+            .push(<C as crate::row::Named>::NAME, value.into_expr().kind);
         self
     }
 }

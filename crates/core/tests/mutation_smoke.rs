@@ -153,6 +153,32 @@ impl UpdateRow for UsersUpdate {
 }
 
 #[test]
+fn set_to_assigns_an_expression_and_appends_to_the_row() {
+    let (sql, params) = update::<Postgres, _>(users::Table)
+        .set(UsersUpdate {
+            email: Some("new@example.com".into()),
+            display_name: None,
+        })
+        .expect("email is set")
+        .set_to(
+            users::display_name,
+            qbrs_core::sql!(
+                qbrs_core::scope::Nullable<qbrs_core::expr::Text>,
+                "upper(?)",
+                users::email
+            ),
+        )
+        .filter(users::id.eq(1))
+        .to_sql();
+    assert_eq!(
+        sql,
+        "UPDATE \"users\" SET \"email\" = $1, \"display_name\" = (upper(\"users\".\"email\")) \
+         WHERE (\"users\".\"id\" = $2)"
+    );
+    assert_eq!(params.len(), 2);
+}
+
+#[test]
 fn insert_omits_default_as_the_default_keyword() {
     let (sql, params) = insert::<Postgres, _>(users::Table)
         .values(UsersInsert::builder().email("a@example.com").build())

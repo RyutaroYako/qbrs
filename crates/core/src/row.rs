@@ -225,11 +225,11 @@ impl<L: RowKeys> RowKeys for Row<L> {
 
 /// One column can stand in for another: they are called the same thing.
 #[diagnostic::on_unimplemented(
-    message = "column `{Self}` can't stand in for `{Declared}`",
+    message = "column `{Self}` can't stand in for `{Other}`",
     label = "these two columns must have the same name",
     note = "matched by name: `.label(label::..)` whichever side is spelled wrong — and an unnamed expression (`Anon`) has no name to match with at all"
 )]
-pub trait SameNameAs<Declared> {}
+pub trait SameNameAs<Other> {}
 
 #[diagnostic::do_not_recommend]
 impl<A, B> SameNameAs<B> for A
@@ -246,7 +246,7 @@ where
     message = "these columns don't line up by name",
     label = "each column must have the same name, in the same order, as the one it stands in for"
 )]
-pub trait SameNames<Declared> {}
+pub trait SameNames<Other> {}
 
 impl SameNames<Nil> for Nil {}
 
@@ -322,8 +322,11 @@ impl<Req, S: SqlType> RowKey for crate::expr::Expr<Req, S> {
 )]
 pub trait LookupKey: RowKey {}
 
+#[diagnostic::do_not_recommend]
 impl<C: ColumnKey> LookupKey for Column<C> {}
+#[diagnostic::do_not_recommend]
 impl<K: Spelled, Req, S: SqlType> LookupKey for Keyed<K, Req, S> {}
+#[diagnostic::do_not_recommend]
 impl<K: Spelled, Inner> LookupKey for Labeled<K, Inner> {}
 
 /// A decoded row. Its fields are fixed by the query's selection list, and

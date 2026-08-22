@@ -34,6 +34,22 @@ async fn main() {
         .expect("update display_name");
     println!("renamed {affected} row(s)");
 
+    // An assignment the database computes: the value never passes through
+    // this process, so `now()` is the database's clock and a counter can be
+    // bumped without reading it first.
+    let stamped = update::<Postgres, _>(users::Table)
+        .set(UsersUpdate {
+            display_name: Some(Some("Ada L.".into())),
+            ..Default::default()
+        })
+        .expect("display_name is set")
+        .set_to(users::email, sql!(Text, "lower(?)", users::email))
+        .filter(users::id.eq(ada_id))
+        .execute(&pool)
+        .await
+        .expect("stamp");
+    println!("normalised {stamped} row(s)");
+
     // `Some(None)` means "set this nullable column to NULL", distinct from
     // `None` ("don't touch it") — clearing the display name explicitly.
     let cleared = update::<Postgres, _>(users::Table)
