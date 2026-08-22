@@ -129,6 +129,7 @@ async fn full_crud_roundtrip_against_real_postgres() {
             display_name: Some(Some("Ada Lovelace".into())),
             ..Default::default()
         })
+        .expect("display_name is set")
         .filter(users::id.eq(ada_id))
         .execute(&pool)
         .await

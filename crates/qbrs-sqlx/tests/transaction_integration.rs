@@ -130,6 +130,7 @@ async fn transactions_against_real_postgres() {
         .set(UsersUpdate {
             email: Some("a2@example.com".to_string()),
         })
+        .expect("email is set")
         .filter(users::id.eq(ids[0]))
         .execute(&mut *tx)
         .await

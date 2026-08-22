@@ -157,7 +157,10 @@ A schema is a `#[derive(Table)]` struct, shown in the
   [`05_delete`](examples/examples/05_delete.rs). A NOT NULL column with a
   schema default gets a three-state `Defaultable<Option<T>>` on `*Insert`
   (omit / explicit `NULL` / explicit value); `*Update` mirrors this with
-  `Option<Option<T>>` (untouched / `NULL` / value).
+  `Option<Option<T>>` (untouched / `NULL` / value). An `*Update` with every
+  field untouched — a PATCH body that changed nothing — has no SQL form, so
+  `.set(..)` hands back `Result<_, NothingToSet>` rather than panicking at
+  render time.
 - **Upsert** (`ON CONFLICT`, Postgres/SQLite only) —
   [`11_upsert`](examples/examples/11_upsert.rs). No typed `EXCLUDED.column`
   yet.

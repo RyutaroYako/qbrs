@@ -59,6 +59,7 @@ async fn main() {
                 ..Default::default()
             },
         )
+        .expect("display_name is set")
         .returning(users::display_name)
         .load(&pool)
         .await

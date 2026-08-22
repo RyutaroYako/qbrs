@@ -17,6 +17,42 @@ pub trait UpdateRow {
     fn sets(self) -> Vec<(&'static str, Value)>;
 }
 
+/// A `SET` list that is known non-empty, which is the only kind that has a
+/// SQL form. Every `*Update` derives `Default`, and that value — what a
+/// PATCH handler holds when the request changed nothing — has no
+/// assignments at all, so the check belongs where such a value enters a
+/// statement rather than at rendering time.
+pub struct Assignments {
+    sets: Vec<(&'static str, Value)>,
+}
+
+impl Assignments {
+    pub(crate) fn iter(&self) -> impl Iterator<Item = &(&'static str, Value)> {
+        self.sets.iter()
+    }
+
+    pub fn new<R: UpdateRow>(row: R) -> Result<Self, NothingToSet> {
+        let sets = row.sets();
+        if sets.is_empty() {
+            return Err(NothingToSet);
+        }
+        Ok(Assignments { sets })
+    }
+}
+
+/// Every field of an `*Update` was untouched, so there is nothing to
+/// assign. Returned rather than panicked because request-shaped data
+/// produces it: the caller decides whether that is a no-op or an error.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct NothingToSet;
+
+impl std::fmt::Display for NothingToSet {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("an UPDATE must set at least one column, but every field of this `*Update` is untouched")
+    }
+}
+impl std::error::Error for NothingToSet {}
+
 pub struct UpdateSeed<D, T> {
     _marker: PhantomData<fn() -> (D, T)>,
 }
@@ -28,27 +64,19 @@ pub fn update<D, T: BaseTable>(_table: T) -> UpdateSeed<D, T> {
 }
 
 impl<D, T: Table> UpdateSeed<D, T> {
-    pub fn set<R: UpdateRow<Table = T>>(self, row: R) -> Update<D, T> {
-        Update {
-            sets: row.sets(),
+    pub fn set<R: UpdateRow<Table = T>>(self, row: R) -> Result<Update<D, T>, NothingToSet> {
+        Ok(Update {
+            sets: Assignments::new(row)?,
             wheres: Vec::new(),
             _marker: PhantomData,
-        }
+        })
     }
 }
 
 fn render_set_clause<D: Dialect, T: Table>(
-    sets: &[(&'static str, Value)],
+    sets: &Assignments,
     wheres: &[ExprKind],
 ) -> QuerySink<D> {
-    // An `UPDATE` with nothing set has no SQL form, and `*Update`'s derived
-    // `Default` is exactly that shape — the state a PATCH handler holds when
-    // the request changed nothing.
-    assert!(
-        !sets.is_empty(),
-        "an UPDATE must set at least one column; every field of this `*Update` is untouched"
-    );
-
     let mut sink = QuerySink::<D>::new();
     sink.text("UPDATE ");
     render_ident::<D>(&mut sink, T::NAME);
@@ -76,7 +104,7 @@ fn render_set_clause<D: Dialect, T: Table>(
 }
 
 pub struct Update<D, T: Table> {
-    sets: Vec<(&'static str, Value)>,
+    sets: Assignments,
     wheres: Vec<ExprKind>,
     _marker: PhantomData<fn() -> (D, T)>,
 }
@@ -117,7 +145,7 @@ impl<D: SupportsReturning, T: Table> Update<D, T> {
 }
 
 pub struct UpdateReturning<D, T: Table, Sel> {
-    sets: Vec<(&'static str, Value)>,
+    sets: Assignments,
     wheres: Vec<ExprKind>,
     returning: Vec<SelectItem>,
     _marker: PhantomData<fn() -> (D, T, Sel)>,

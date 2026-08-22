@@ -117,6 +117,7 @@ pub async fn seed(pool: &sqlx::PgPool) {
             active: Some(false),
             ..Default::default()
         })
+        .expect("active is set")
         .filter(users::id.eq(ids[1]))
         .execute(pool)
         .await

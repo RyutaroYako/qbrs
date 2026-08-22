@@ -28,6 +28,7 @@ async fn main() {
             display_name: Some(Some("Ada, Countess of Lovelace".into())),
             ..Default::default()
         })
+        .expect("display_name is set")
         .filter(users::id.eq(ada_id))
         .execute(&pool)
         .await
@@ -41,6 +42,7 @@ async fn main() {
             display_name: Some(None),
             ..Default::default()
         })
+        .expect("display_name is set")
         .filter(users::id.eq(ada_id))
         .returning(users::display_name)
         .load(&pool)

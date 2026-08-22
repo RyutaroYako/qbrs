@@ -70,6 +70,7 @@ fn update_only_sends_touched_fields() {
             display_name: Some(Some("New Name".into())),
             ..Default::default()
         })
+        .expect("display_name is set")
         .filter(users::id.eq(1i64))
         .to_sql();
 

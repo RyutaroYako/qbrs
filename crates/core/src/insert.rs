@@ -14,7 +14,7 @@ use crate::expr::{Column, ColumnKey, Value};
 use crate::render::{QuerySink, SelectItem, Sink, render_ident, render_select_list};
 use crate::scope::{BaseTable, Cons, Nil, NotNull, Table, TableSlot};
 use crate::select::Selection;
-use crate::update::UpdateRow;
+use crate::update::{Assignments, NothingToSet, UpdateRow};
 
 #[derive(Debug, Clone, PartialEq, Default)]
 pub enum Defaultable<T> {
@@ -102,7 +102,7 @@ enum ConflictAction {
     /// **Known limitation**: only literal/bound values, not
     /// `EXCLUDED.column` (`SET total = users.total + EXCLUDED.total`), which
     /// needs its own typed API.
-    DoUpdate(Vec<(&'static str, Value)>),
+    DoUpdate(Assignments),
 }
 
 struct ConflictClause {
@@ -122,13 +122,6 @@ fn render_conflict_clause<D: Dialect>(clause: &ConflictClause, sink: &mut dyn Si
     match &clause.action {
         ConflictAction::DoNothing => sink.text(" DO NOTHING"),
         ConflictAction::DoUpdate(sets) => {
-            // Same reason `update` refuses one: `DO UPDATE SET` with nothing
-            // after it is not a statement, and `*Update`'s derived `Default`
-            // is exactly that shape.
-            assert!(
-                !sets.is_empty(),
-                "ON CONFLICT DO UPDATE must set at least one column; every field of this `*Update` is untouched"
-            );
             sink.text(" DO UPDATE SET ");
             for (i, (col, val)) in sets.iter().enumerate() {
                 if i > 0 {
@@ -232,12 +225,12 @@ impl<D: SupportsOnConflict, T: Table, R: InsertRow<Table = T>> Insert<D, T, R> {
         mut self,
         target: impl ConflictTarget<T>,
         set: U,
-    ) -> Self {
+    ) -> Result<Self, NothingToSet> {
         self.on_conflict = Some(ConflictClause {
             target: target.column_names(),
-            action: ConflictAction::DoUpdate(set.sets()),
+            action: ConflictAction::DoUpdate(Assignments::new(set)?),
         });
-        self
+        Ok(self)
     }
 }
 
