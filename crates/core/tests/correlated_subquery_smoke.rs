@@ -30,7 +30,6 @@ mod users {
         impl ColumnKey for id {
             type Table = UsersMarker;
             type Sql = Integer;
-            const NAME: &'static str = "id";
         }
         impl qbrs_core::row::Named for id {
             type Name = qbrs_core::type_name!('i', 'd');
@@ -55,7 +54,6 @@ mod orders {
         impl ColumnKey for user_id {
             type Table = OrdersMarker;
             type Sql = Integer;
-            const NAME: &'static str = "user_id";
         }
         impl qbrs_core::row::Named for user_id {
             type Name = qbrs_core::type_name!('u', 's', 'e', 'r', '_', 'i', 'd');

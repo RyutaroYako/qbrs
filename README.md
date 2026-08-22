@@ -163,6 +163,15 @@ A schema is a `#[derive(Table)]` struct, shown in the
   isn't supported yet.
 - **CTEs** (`with!{}` + `cte::with(..)`) —
   [`14_cte`](examples/examples/14_cte.rs). Non-recursive, single-level only.
+- **Correlated subqueries** —
+  [`18_correlated_exists`](examples/examples/18_correlated_exists.rs).
+  `outer.correlated(table, sel)` builds a subquery whose scope is the outer
+  query's plus its own table, so referencing an outer column is legal; the
+  resulting `EXISTS` is tagged with those tables, so filtering it onto a
+  query that doesn't have them is a compile error.
+- **One query, two shapes** — `Select` is `Clone`, and `.reselect(sel)`
+  swaps the selection while keeping every clause, which is how one built-up
+  query serves both a `count()` and a page.
 - **Dynamic composition, no escape hatch** —
   [`07_dynamic_filters`](examples/examples/07_dynamic_filters.rs).
   `.filter()` doesn't change `Select`'s type, so it can be called

@@ -31,7 +31,6 @@ mod users {
         impl ColumnKey for id {
             type Table = UsersMarker;
             type Sql = Integer;
-            const NAME: &'static str = "id";
         }
         impl qbrs_core::row::Named for id {
             type Name = qbrs_core::type_name!('i', 'd');
@@ -42,7 +41,6 @@ mod users {
         impl ColumnKey for name {
             type Table = UsersMarker;
             type Sql = Text;
-            const NAME: &'static str = "name";
         }
         impl qbrs_core::row::Named for name {
             type Name = qbrs_core::type_name!('n', 'a', 'm', 'e');
@@ -53,7 +51,6 @@ mod users {
         impl ColumnKey for active {
             type Table = UsersMarker;
             type Sql = Bool;
-            const NAME: &'static str = "active";
         }
         impl qbrs_core::row::Named for active {
             type Name = qbrs_core::type_name!('a', 'c', 't', 'i', 'v', 'e');
@@ -64,7 +61,6 @@ mod users {
         impl ColumnKey for created_at {
             type Table = UsersMarker;
             type Sql = Integer;
-            const NAME: &'static str = "created_at";
         }
         impl qbrs_core::row::Named for created_at {
             type Name = qbrs_core::type_name!('c', 'r', 'e', 'a', 't', 'e', 'd', '_', 'a', 't');
@@ -93,7 +89,6 @@ mod orders {
         impl ColumnKey for user_id {
             type Table = OrdersMarker;
             type Sql = Integer;
-            const NAME: &'static str = "user_id";
         }
         impl qbrs_core::row::Named for user_id {
             type Name = qbrs_core::type_name!('u', 's', 'e', 'r', '_', 'i', 'd');
@@ -104,7 +99,6 @@ mod orders {
         impl ColumnKey for total {
             type Table = OrdersMarker;
             type Sql = Integer;
-            const NAME: &'static str = "total";
         }
         impl qbrs_core::row::Named for total {
             type Name = qbrs_core::type_name!('t', 'o', 't', 'a', 'l');

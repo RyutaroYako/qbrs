@@ -209,7 +209,6 @@ fn gen_schema_mod(
             impl ::qbrs::expr::ColumnKey for #name {
                 type Table = super::Table;
                 type Sql = #col_sql_ty;
-                const NAME: &'static str = #col_name_str;
             }
             #[doc(hidden)]
             impl ::qbrs::row::Named for #name {
@@ -474,7 +473,6 @@ fn expand_with(decl: CteDecl) -> TokenStream2 {
             impl ::qbrs::expr::ColumnKey for columns::#field {
                 type Table = Table;
                 type Sql = #ty;
-                const NAME: &'static str = #field_str;
             }
             #[doc(hidden)]
             impl ::qbrs::row::Named for columns::#field {

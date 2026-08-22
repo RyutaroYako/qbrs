@@ -9,7 +9,7 @@
 use std::marker::PhantomData;
 
 use crate::render::Fragment;
-use crate::scope::{Concat, Cons, MaybeNull, Nil, Table};
+use crate::scope::{Concat, Cons, MaybeNull, Nil, Table, WrapNullable};
 
 /// A SQL scalar type. Implemented only by the closed set of leaf types
 /// declared via `sql_leaf_type!` below, plus `Nullable<T>`.
@@ -211,10 +211,9 @@ impl<Req, S: SqlType> IntoExpr<S> for Expr<Req, S> {
 /// pseudo-columns), which is what lets a column be a *key* — two columns of
 /// the same table and SQL type are still distinct types here, so a row can
 /// be indexed by column without ambiguity.
-pub trait ColumnKey: Copy + 'static {
+pub trait ColumnKey: crate::row::Named + Copy + 'static {
     type Table: Table;
     type Sql: SqlType;
-    const NAME: &'static str;
 }
 
 /// A column reference, identified entirely by its `ColumnKey`. Generated
@@ -249,7 +248,7 @@ impl<C: ColumnKey> IntoExpr<C::Sql> for Column<C> {
     fn into_expr(self) -> Expr<Self::Req, C::Sql> {
         Expr::from_kind(ExprKind::Column {
             table: <C::Table as Table>::NAME,
-            name: C::NAME,
+            name: <C as crate::row::Named>::NAME,
         })
     }
 }
@@ -479,11 +478,10 @@ where
     })
 }
 
-/// The SQL types `LIKE` accepts. A nullable text column is still text, so
-/// the marker covers both rather than `Text` alone.
-pub trait TextLike: SqlType {}
-impl TextLike for Text {}
-impl TextLike for crate::scope::Nullable<Text> {}
+/// The SQL types `LIKE` accepts: whatever compares with `Text`, which is
+/// `Text` and its nullable form.
+pub trait TextLike: Comparable<Text> {}
+impl<T: Comparable<Text>> TextLike for T {}
 
 /// `.like()` is text-only, so it's a separate trait rather than part of the
 /// generic `ExprMethods` — still blanket-implemented, so it works directly
@@ -640,19 +638,6 @@ impl<T: Summable> Summable for crate::scope::Nullable<T> {
     const AVG_CAST: Option<CastTarget> = T::AVG_CAST;
 }
 
-/// The unwrapped SQL type an aggregate that returns "one of the inputs"
-/// (`min`/`max`) produces: always nullable, never doubly so.
-pub trait Aggregatable: SqlType {
-    type Bare: SqlType;
-}
-impl<T: SqlType> Aggregatable for crate::scope::Nullable<T> {
-    type Bare = T;
-}
-macro_rules! aggregatable_leaf {
-    ($($name:ident),+) => { $( impl Aggregatable for $name { type Bare = $name; } )+ };
-}
-aggregatable_leaf!(Integer, BigInt, Real, Text, Bool, Bytes);
-
 /// The row key an aggregate over `C` is filed under: distinct per function
 /// *and* per column, so `sum(a)` and `sum(b)` don't collide, and named after
 /// the column so a DTO field or a CTE column can match it.
@@ -676,7 +661,7 @@ fn aggregate_kind<C: ColumnKey>(name: &'static str, cast: Option<CastTarget>) ->
         name,
         arg: Box::new(ExprKind::Column {
             table: <C::Table as Table>::NAME,
-            name: C::NAME,
+            name: <C as crate::row::Named>::NAME,
         }),
     };
     match cast {
@@ -689,7 +674,7 @@ fn aggregate_kind<C: ColumnKey>(name: &'static str, cast: Option<CastTarget>) ->
 }
 
 macro_rules! aggregate {
-    ($op:ident, $func:ident, $sql:literal, $out:ty, $bound:ident, $cast:expr, $doc:literal) => {
+    ($op:ident, $func:ident, $sql:literal, $out:ty, $bound:path, $cast:expr, $doc:literal) => {
         #[doc = $doc]
         pub struct $op;
 
@@ -699,6 +684,7 @@ macro_rules! aggregate {
         ) -> Keyed<Agg<$op, C>, Cons<C::Table, Nil>, $out>
         where
             C::Sql: $bound,
+            $out: SqlType,
         {
             Keyed::from_kind(aggregate_kind::<C>($sql, $cast))
         }
@@ -718,8 +704,8 @@ aggregate!(
     Min,
     min,
     "min",
-    crate::scope::Nullable<<C::Sql as Aggregatable>::Bare>,
-    Aggregatable,
+    <C::Sql as WrapNullable<MaybeNull>>::Output,
+    WrapNullable<MaybeNull>,
     None,
     "`min(column)`. NULL over zero rows."
 );
@@ -727,8 +713,8 @@ aggregate!(
     Max,
     max,
     "max",
-    crate::scope::Nullable<<C::Sql as Aggregatable>::Bare>,
-    Aggregatable,
+    <C::Sql as WrapNullable<MaybeNull>>::Output,
+    WrapNullable<MaybeNull>,
     None,
     "`max(column)`. NULL over zero rows."
 );
@@ -746,7 +732,7 @@ aggregate!(
     count_of,
     "count",
     BigInt,
-    Aggregatable,
+    SqlType,
     None,
     "`count(column)` — non-NULL values, unlike `count()`'s `count(*)` rows."
 );

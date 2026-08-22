@@ -533,6 +533,39 @@ impl<D, Outer, Scope, Sel> Correlated<D, Outer, Scope, Sel> {
         self
     }
 
+    /// AND-folds a runtime-length collection of discharged conditions, the
+    /// same way `Select::filter_all` does.
+    pub fn filter_all(mut self, conds: impl IntoIterator<Item = Predicate<Scope>>) -> Self {
+        self.inner = self.inner.filter_all(conds);
+        self
+    }
+
+    pub fn group_by<S: SqlType, Req, Idxs>(mut self, key: impl IntoExpr<S, Req = Req>) -> Self
+    where
+        Scope: Superset<Req, Idxs>,
+    {
+        self.inner = self.inner.group_by(key);
+        self
+    }
+
+    pub fn having<Req, Idxs>(mut self, cond: Expr<Req, Bool>) -> Self
+    where
+        Scope: Superset<Req, Idxs>,
+    {
+        self.inner = self.inner.having(cond);
+        self
+    }
+
+    pub fn limit(mut self, n: impl crate::row::IntoLimit) -> Self {
+        self.inner = self.inner.limit(n);
+        self
+    }
+
+    pub fn offset(mut self, n: impl crate::row::IntoLimit) -> Self {
+        self.inner = self.inner.offset(n);
+        self
+    }
+
     pub fn inner_join<New: Table, Req, Idxs>(
         self,
         table: New,
@@ -543,6 +576,20 @@ impl<D, Outer, Scope, Sel> Correlated<D, Outer, Scope, Sel> {
     {
         Correlated {
             inner: self.inner.inner_join(table, on),
+            _marker: PhantomData,
+        }
+    }
+
+    pub fn left_join<New: Table, Req, Idxs>(
+        self,
+        table: New,
+        on: Expr<Req, Bool>,
+    ) -> Correlated<D, Outer, Cons<TableSlot<New, MaybeNull>, Scope>, Sel>
+    where
+        Cons<TableSlot<New, MaybeNull>, Scope>: Superset<Req, Idxs>,
+    {
+        Correlated {
+            inner: self.inner.left_join(table, on),
             _marker: PhantomData,
         }
     }

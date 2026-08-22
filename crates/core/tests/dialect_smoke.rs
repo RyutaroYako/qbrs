@@ -33,7 +33,6 @@ mod quoted {
         impl ColumnKey for id {
             type Table = QuotedMarker;
             type Sql = Integer;
-            const NAME: &'static str = "id";
         }
         impl qbrs_core::row::Named for id {
             type Name = qbrs_core::type_name!('i', 'd');
@@ -59,7 +58,6 @@ mod users {
         impl ColumnKey for id {
             type Table = UsersMarker;
             type Sql = Integer;
-            const NAME: &'static str = "id";
         }
         impl qbrs_core::row::Named for id {
             type Name = qbrs_core::type_name!('i', 'd');
@@ -70,7 +68,6 @@ mod users {
         impl ColumnKey for email {
             type Table = UsersMarker;
             type Sql = Text;
-            const NAME: &'static str = "email";
         }
         impl qbrs_core::row::Named for email {
             type Name = qbrs_core::type_name!('e', 'm', 'a', 'i', 'l');
