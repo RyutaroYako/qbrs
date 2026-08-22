@@ -5,13 +5,9 @@
 //! a runtime error; here it's the exact struct `prepare!{}` generated).
 //! Run: `cargo run -p qbrs-examples --example 10_prepared`
 
-use qbrs::dialect::Postgres;
-use qbrs::expr::{ExprMethods, Text};
-use qbrs::prepare;
-use qbrs::row::IntoTuples;
-use qbrs::select::select;
-use qbrs_examples::{seed, setup_db, users};
-use qbrs_sqlx::PreparedExt;
+use qbrs::prelude::*;
+use qbrs_examples::*;
+use qbrs_sqlx::prelude::*;
 
 prepare! {
     struct ByEmail { email: Text }

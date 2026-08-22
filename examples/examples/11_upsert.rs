@@ -6,36 +6,34 @@
 //! Known limitation: no typed way yet to reference `EXCLUDED.column`.
 //! Run: `cargo run -p qbrs-examples --example 11_upsert`
 
-use qbrs::dialect::Postgres;
-use qbrs::expr::ExprMethods;
-use qbrs_examples::{UsersInsert, UsersUpdate, setup_db, users};
-use qbrs_sqlx::{ExecuteExt, LoadExt};
+use qbrs::prelude::*;
+use qbrs_examples::*;
+use qbrs_sqlx::prelude::*;
 
 #[tokio::main]
 async fn main() {
     let (pool, _db) = setup_db().await;
 
-    let (id, display_name): (i64, Option<String>) =
-        qbrs::insert::insert::<Postgres, _>(users::Table)
-            .values(
-                UsersInsert::builder()
-                    .email("grace@example.com")
-                    .display_name("Grace Hopper")
-                    .build(),
-            )
-            .returning((users::id, users::display_name))
-            .load(&pool)
-            .await
-            .expect("insert grace")
-            .into_iter()
-            .next()
-            .expect("returning row")
-            .into_tuple();
+    let (id, display_name): (i64, Option<String>) = insert::<Postgres, _>(users::Table)
+        .values(
+            UsersInsert::builder()
+                .email("grace@example.com")
+                .display_name("Grace Hopper")
+                .build(),
+        )
+        .returning((users::id, users::display_name))
+        .load(&pool)
+        .await
+        .expect("insert grace")
+        .into_iter()
+        .next()
+        .expect("returning row")
+        .into_tuple();
     println!("inserted: id={id} display_name={display_name:?}");
 
     // `email` already exists — DO NOTHING means this row is silently
     // skipped, so the original `display_name` survives untouched.
-    qbrs::insert::insert::<Postgres, _>(users::Table)
+    insert::<Postgres, _>(users::Table)
         .values(
             UsersInsert::builder()
                 .email("grace@example.com")
@@ -60,7 +58,7 @@ async fn main() {
     // Same conflicting email, but this time DO UPDATE SET reuses the same
     // `*Update` struct `.set(..)` takes — only the fields actually set on
     // it are updated.
-    let updated: Option<String> = qbrs::insert::insert::<Postgres, _>(users::Table)
+    let updated: Option<String> = insert::<Postgres, _>(users::Table)
         .values(
             UsersInsert::builder()
                 .email("grace@example.com")

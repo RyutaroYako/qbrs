@@ -2,10 +2,9 @@
 //! distinguish "leave alone" from "set to NULL" via `Option<Option<T>>`.
 //! Run: `cargo run -p qbrs-examples --example 04_update`
 
-use qbrs::dialect::Postgres;
-use qbrs::expr::ExprMethods;
-use qbrs_examples::{UsersUpdate, seed, setup_db, users};
-use qbrs_sqlx::{ExecuteExt, LoadExt};
+use qbrs::prelude::*;
+use qbrs_examples::*;
+use qbrs_sqlx::prelude::*;
 
 #[tokio::main]
 async fn main() {
@@ -23,7 +22,7 @@ async fn main() {
     // Only `display_name` is sent in the SET clause — `email`/`active`
     // are entirely absent from the rendered SQL, not just left unchanged
     // via a redundant `email = email` self-assignment.
-    let affected = qbrs::update::update::<Postgres, _>(users::Table)
+    let affected = update::<Postgres, _>(users::Table)
         .set(UsersUpdate {
             display_name: Some(Some("Ada, Countess of Lovelace".into())),
             ..Default::default()
@@ -37,7 +36,7 @@ async fn main() {
 
     // `Some(None)` means "set this nullable column to NULL", distinct from
     // `None` ("don't touch it") — clearing the display name explicitly.
-    let cleared = qbrs::update::update::<Postgres, _>(users::Table)
+    let cleared = update::<Postgres, _>(users::Table)
         .set(UsersUpdate {
             display_name: Some(None),
             ..Default::default()

@@ -11,7 +11,7 @@
 
 use qbrs::prelude::*;
 use qbrs_examples::*;
-use qbrs_sqlx::LoadExt;
+use qbrs_sqlx::prelude::*;
 
 #[tokio::main]
 async fn main() {

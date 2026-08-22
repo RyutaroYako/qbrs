@@ -36,7 +36,7 @@ async fn main() {
     let rows = select((users::email, big_spenders::total))
         .from::<Postgres, _>(users::Table)
         .inner_join(
-            qbrs::cte::with(big_spenders::Table, &totals),
+            cte::with(big_spenders::Table, &totals),
             big_spenders::user_id.eq(users::id),
         )
         .load(&pool)

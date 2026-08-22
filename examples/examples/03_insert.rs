@@ -2,21 +2,21 @@
 //! bulk insert, and `RETURNING`.
 //! Run: `cargo run -p qbrs-examples --example 03_insert`
 
-use qbrs::dialect::Postgres;
-use qbrs_examples::{UsersInsert, setup_db, users};
-use qbrs_sqlx::LoadExt;
+use qbrs::prelude::*;
+use qbrs_examples::*;
+use qbrs_sqlx::prelude::*;
 
 #[tokio::main]
 async fn main() {
     let (pool, _db) = setup_db().await;
 
-    // `email` is required (NOT NULL, no default) — `new()` only asks for
-    // that. `display_name` is nullable with no default, so it's omitted
-    // (stays NULL) unless `.display_name(..)` is called. `active` is
-    // NOT NULL with a schema default, so omitting it renders the SQL
-    // keyword `DEFAULT` rather than sending a value at all.
+    // `email` is required (NOT NULL, no default), so `build()` is out of
+    // reach until it's given. `display_name` is nullable with no default,
+    // so it's omitted (stays NULL) unless `.display_name(..)` is called.
+    // `active` is NOT NULL with a schema default, so omitting it renders
+    // the SQL keyword `DEFAULT` rather than sending a value at all.
     let (id, email, display_name): (i64, String, Option<String>) =
-        qbrs::insert::insert::<Postgres, _>(users::Table)
+        insert::<Postgres, _>(users::Table)
             .values(
                 UsersInsert::builder()
                     .email("grace@example.com")
@@ -36,7 +36,7 @@ async fn main() {
     // Bulk insert in one statement, mixing rows that do/don't override
     // `display_name` — each row independently uses DEFAULT/a bound value
     // for the columns it omits/sets, all sharing the same column list.
-    let ids: Vec<i64> = qbrs::insert::insert::<Postgres, _>(users::Table)
+    let ids: Vec<i64> = insert::<Postgres, _>(users::Table)
         .values(UsersInsert::builder().email("a@example.com").build())
         .values(
             UsersInsert::builder()

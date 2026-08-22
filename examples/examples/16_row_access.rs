@@ -6,7 +6,7 @@
 
 use qbrs::prelude::*;
 use qbrs_examples::*;
-use qbrs_sqlx::LoadExt;
+use qbrs_sqlx::prelude::*;
 
 /// Takes any row carrying `users::email`, whatever else it holds — the
 /// static equivalent of width subtyping, which a tuple can't express.

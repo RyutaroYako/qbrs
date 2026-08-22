@@ -2,12 +2,9 @@
 //! type-tagged and still parameterized (never string-spliced).
 //! Run: `cargo run -p qbrs-examples --example 06_raw_sql`
 
-use qbrs::dialect::Postgres;
-use qbrs::expr::{Bool, ExprMethods};
-use qbrs::select::select;
-use qbrs::sql;
-use qbrs_examples::{seed, setup_db, users};
-use qbrs_sqlx::LoadExt;
+use qbrs::prelude::*;
+use qbrs_examples::*;
+use qbrs_sqlx::prelude::*;
 
 #[tokio::main]
 async fn main() {

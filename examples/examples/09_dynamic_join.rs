@@ -5,7 +5,6 @@
 //! Run: `cargo run -p qbrs-examples --example 09_dynamic_join`
 
 use qbrs::prelude::*;
-use qbrs::row::{RowCons, RowNil};
 use qbrs_examples::*;
 use qbrs_sqlx::prelude::*;
 

@@ -2,12 +2,9 @@
 //! become nullable, mirroring Drizzle's `AppendToNullabilityMap` rule.
 //! Run: `cargo run -p qbrs-examples --example 08_right_full_join`
 
-use qbrs::dialect::Postgres;
-use qbrs::expr::ExprMethods;
-use qbrs::row::IntoTuples;
-use qbrs::select::select;
-use qbrs_examples::{orders, seed, setup_db, users};
-use qbrs_sqlx::LoadExt;
+use qbrs::prelude::*;
+use qbrs_examples::*;
+use qbrs_sqlx::prelude::*;
 
 #[tokio::main]
 async fn main() {
