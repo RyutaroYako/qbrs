@@ -4,7 +4,7 @@ use std::marker::PhantomData;
 
 use crate::dialect::{Dialect, SupportsReturning};
 use crate::expr::{Bool, Expr, ExprKind, Value};
-use crate::render::{SelectItem, render_expr, render_ident, render_select_list};
+use crate::render::{QuerySink, SelectItem, Sink, render_expr, render_ident, render_select_list};
 use crate::scope::{BaseTable, Cons, Nil, NotNull, Superset, Table, TableSlot};
 use crate::select::Selection;
 
@@ -15,22 +15,22 @@ pub fn delete<D, T: BaseTable>(_table: T) -> Delete<D, T> {
     }
 }
 
-fn render_delete<D: Dialect, T: Table>(wheres: &[ExprKind]) -> (String, Vec<Value>) {
-    let mut sql = String::from("DELETE FROM ");
-    render_ident::<D>(&mut sql, T::NAME);
-    let mut params = Vec::new();
+fn render_delete<D: Dialect, T: Table>(wheres: &[ExprKind]) -> QuerySink<D> {
+    let mut sink = QuerySink::<D>::new();
+    sink.text("DELETE FROM ");
+    render_ident::<D>(&mut sink, T::NAME);
 
     if !wheres.is_empty() {
-        sql.push_str(" WHERE ");
+        sink.text(" WHERE ");
         for (i, w) in wheres.iter().enumerate() {
             if i > 0 {
-                sql.push_str(" AND ");
+                sink.text(" AND ");
             }
-            render_expr::<D>(w, &mut sql, &mut params);
+            render_expr::<D>(w, &mut sink);
         }
     }
 
-    (sql, params)
+    sink
 }
 
 pub struct Delete<D, T: Table> {
@@ -50,7 +50,7 @@ impl<D, T: Table> Delete<D, T> {
 
 impl<D: Dialect, T: Table> Delete<D, T> {
     pub fn to_sql(&self) -> (String, Vec<Value>) {
-        render_delete::<D, T>(&self.wheres)
+        render_delete::<D, T>(&self.wheres).finish()
     }
 }
 
@@ -77,9 +77,9 @@ pub struct DeleteReturning<D, T: Table, Sel> {
 
 impl<D: Dialect, T: Table, Sel> DeleteReturning<D, T, Sel> {
     pub fn to_sql(&self) -> (String, Vec<Value>) {
-        let (mut sql, mut params) = render_delete::<D, T>(&self.wheres);
-        sql.push_str(" RETURNING ");
-        render_select_list::<D>(&self.returning, &mut sql, &mut params);
-        (sql, params)
+        let mut sink = render_delete::<D, T>(&self.wheres);
+        sink.text(" RETURNING ");
+        render_select_list::<D>(&self.returning, &mut sink);
+        sink.finish()
     }
 }

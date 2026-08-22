@@ -328,6 +328,37 @@ comparable_across!(
 /// and `Named::NAME` the only place the name is written.
 pub trait AliasKey: crate::row::Named + Copy + 'static {}
 
+/// A table-referencing expression together with the SQL type its author
+/// says it decodes to. A computed expression's NULL-ability doesn't follow
+/// from any one column's join — `coalesce(o.total, 0)` isn't nullable and
+/// `o.total + 1` is — so it is the one thing the builder can't derive, and
+/// the call site is the only honest place to state it.
+pub struct Declared<Req, S: SqlType> {
+    pub(crate) kind: ExprKind,
+    _marker: PhantomData<fn() -> (Req, S)>,
+}
+
+impl<Req, S: SqlType> Clone for Declared<Req, S> {
+    fn clone(&self) -> Self {
+        Declared {
+            kind: self.kind.clone(),
+            _marker: PhantomData,
+        }
+    }
+}
+
+impl<Req, S: SqlType> Expr<Req, S> {
+    /// States what this expression decodes to, which is what makes it
+    /// selectable: `S` was inferred from whatever built the expression, and
+    /// an inference can contradict the join the query actually has.
+    pub fn declare<S2: SqlType>(self) -> Declared<Req, S2> {
+        Declared {
+            kind: self.kind,
+            _marker: PhantomData,
+        }
+    }
+}
+
 /// A selected item filed under an `AliasKey` instead of under its own
 /// identity, and rendered with that name as its `AS`.
 pub struct Aliased<K, Inner> {
@@ -361,6 +392,7 @@ pub trait AliasExt: Sized {
 impl<C: ColumnKey> AliasExt for Column<C> {}
 impl<Req, S: SqlType> AliasExt for Expr<Req, S> {}
 impl<K, Req, S: SqlType> AliasExt for Keyed<K, Req, S> {}
+impl<Req, S: SqlType> AliasExt for Declared<Req, S> {}
 
 /// Comparison/boolean-combinator methods, blanket-implemented for anything
 /// convertible to a typed expression (columns, literals, and `Expr` itself).

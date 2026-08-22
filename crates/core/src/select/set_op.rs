@@ -13,7 +13,7 @@ use std::marker::PhantomData;
 use super::{Select, Selection, SortDir};
 use crate::dialect::Dialect;
 use crate::expr::Value;
-use crate::render::Fragment;
+use crate::render::{Fragment, QuerySink, Sink};
 use crate::row::SameShape;
 
 enum SetOpKind {
@@ -127,43 +127,40 @@ impl<D: Dialect, Output> SetOp<D, Output> {
     }
 
     pub fn to_sql(&self) -> (String, Vec<Value>) {
-        let mut sql = String::new();
-        let mut params = Vec::new();
+        let mut sink = QuerySink::<D>::new();
 
-        sql.push('(');
-        self.first.splice_into::<D>(&mut sql, &mut params);
-        sql.push(')');
+        let branch = |sink: &mut QuerySink<D>, fragment: &Fragment| {
+            if D::PARENTHESIZED_SET_OP_BRANCHES {
+                sink.ch('(');
+                fragment.splice_into(sink);
+                sink.ch(')');
+            } else {
+                fragment.splice_into(sink);
+            }
+        };
 
-        for (kind, branch) in &self.rest {
-            sql.push_str(kind.keyword());
-            sql.push('(');
-            branch.splice_into::<D>(&mut sql, &mut params);
-            sql.push(')');
+        branch(&mut sink, &self.first);
+        for (kind, fragment) in &self.rest {
+            sink.text(kind.keyword());
+            branch(&mut sink, fragment);
         }
 
         if !self.order_by.is_empty() {
-            sql.push_str(" ORDER BY ");
+            sink.text(" ORDER BY ");
             for (i, (position, dir)) in self.order_by.iter().enumerate() {
                 if i > 0 {
-                    sql.push_str(", ");
+                    sink.text(", ");
                 }
-                sql.push_str(&position.to_string());
-                sql.push_str(match dir {
+                sink.text(&position.to_string());
+                sink.text(match dir {
                     SortDir::Asc => " ASC",
                     SortDir::Desc => " DESC",
                 });
             }
         }
-        if let Some(l) = self.limit {
-            sql.push_str(" LIMIT ");
-            sql.push_str(&l.to_string());
-        }
-        if let Some(o) = self.offset {
-            sql.push_str(" OFFSET ");
-            sql.push_str(&o.to_string());
-        }
+        crate::select::render_limit_offset::<D>(&mut sink, self.limit, self.offset);
 
-        (sql, params)
+        sink.finish()
     }
 }
 

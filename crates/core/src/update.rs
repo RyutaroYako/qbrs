@@ -4,7 +4,7 @@ use std::marker::PhantomData;
 
 use crate::dialect::{Dialect, SupportsReturning};
 use crate::expr::{Bool, Expr, ExprKind, Value};
-use crate::render::{SelectItem, render_expr, render_ident, render_select_list};
+use crate::render::{QuerySink, SelectItem, Sink, render_expr, render_ident, render_select_list};
 use crate::scope::{BaseTable, Cons, Nil, NotNull, Superset, Table, TableSlot};
 use crate::select::Selection;
 
@@ -40,7 +40,7 @@ impl<D, T: Table> UpdateSeed<D, T> {
 fn render_set_clause<D: Dialect, T: Table>(
     sets: &[(&'static str, Value)],
     wheres: &[ExprKind],
-) -> (String, Vec<Value>) {
+) -> QuerySink<D> {
     // An `UPDATE` with nothing set has no SQL form, and `*Update`'s derived
     // `Default` is exactly that shape — the state a PATCH handler holds when
     // the request changed nothing.
@@ -49,31 +49,30 @@ fn render_set_clause<D: Dialect, T: Table>(
         "an UPDATE must set at least one column; every field of this `*Update` is untouched"
     );
 
-    let mut sql = String::from("UPDATE ");
-    render_ident::<D>(&mut sql, T::NAME);
-    sql.push_str(" SET ");
-    let mut params = Vec::new();
+    let mut sink = QuerySink::<D>::new();
+    sink.text("UPDATE ");
+    render_ident::<D>(&mut sink, T::NAME);
+    sink.text(" SET ");
     for (i, (col, val)) in sets.iter().enumerate() {
         if i > 0 {
-            sql.push_str(", ");
+            sink.text(", ");
         }
-        render_ident::<D>(&mut sql, col);
-        sql.push_str(" = ");
-        params.push(val.clone());
-        sql.push_str(&D::placeholder(params.len()));
+        render_ident::<D>(&mut sink, col);
+        sink.text(" = ");
+        sink.bind(val);
     }
 
     if !wheres.is_empty() {
-        sql.push_str(" WHERE ");
+        sink.text(" WHERE ");
         for (i, w) in wheres.iter().enumerate() {
             if i > 0 {
-                sql.push_str(" AND ");
+                sink.text(" AND ");
             }
-            render_expr::<D>(w, &mut sql, &mut params);
+            render_expr::<D>(w, &mut sink);
         }
     }
 
-    (sql, params)
+    sink
 }
 
 pub struct Update<D, T: Table> {
@@ -97,7 +96,7 @@ impl<D, T: Table> Update<D, T> {
 
 impl<D: Dialect, T: Table> Update<D, T> {
     pub fn to_sql(&self) -> (String, Vec<Value>) {
-        render_set_clause::<D, T>(&self.sets, &self.wheres)
+        render_set_clause::<D, T>(&self.sets, &self.wheres).finish()
     }
 }
 
@@ -126,9 +125,9 @@ pub struct UpdateReturning<D, T: Table, Sel> {
 
 impl<D: Dialect, T: Table, Sel> UpdateReturning<D, T, Sel> {
     pub fn to_sql(&self) -> (String, Vec<Value>) {
-        let (mut sql, mut params) = render_set_clause::<D, T>(&self.sets, &self.wheres);
-        sql.push_str(" RETURNING ");
-        render_select_list::<D>(&self.returning, &mut sql, &mut params);
-        (sql, params)
+        let mut sink = render_set_clause::<D, T>(&self.sets, &self.wheres);
+        sink.text(" RETURNING ");
+        render_select_list::<D>(&self.returning, &mut sink);
+        sink.finish()
     }
 }

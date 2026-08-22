@@ -12,12 +12,14 @@ pub struct UsersMarker;
 impl TableTrait for UsersMarker {
     const NAME: &'static str = "users";
 }
+impl qbrs_core::scope::BaseTableSealed for UsersMarker {}
 impl qbrs_core::scope::BaseTable for UsersMarker {}
 
 pub struct QuotedMarker;
 impl TableTrait for QuotedMarker {
     const NAME: &'static str = "a\"b";
 }
+impl qbrs_core::scope::BaseTableSealed for QuotedMarker {}
 impl qbrs_core::scope::BaseTable for QuotedMarker {}
 
 #[allow(non_upper_case_globals)]
@@ -211,4 +213,42 @@ fn a_quote_inside_an_identifier_is_doubled() {
         .from::<qbrs_core::dialect::Postgres, _>(quoted::Table)
         .to_sql();
     assert_eq!(sql, "SELECT \"a\"\"b\".\"id\" FROM \"a\"\"b\"");
+}
+
+#[test]
+fn a_bare_offset_gets_the_filler_limit_its_dialect_needs() {
+    let pg = select((users::id,))
+        .from::<qbrs_core::dialect::Postgres, _>(users::Table)
+        .offset(5)
+        .to_sql()
+        .0;
+    let lite = select((users::id,))
+        .from::<Sqlite, _>(users::Table)
+        .offset(5)
+        .to_sql()
+        .0;
+    let my = select((users::id,))
+        .from::<MySql, _>(users::Table)
+        .offset(5)
+        .to_sql()
+        .0;
+    assert!(pg.ends_with("OFFSET 5"), "{pg}");
+    assert!(lite.ends_with("LIMIT -1 OFFSET 5"), "{lite}");
+    assert!(my.ends_with("LIMIT 18446744073709551615 OFFSET 5"), "{my}");
+}
+
+#[test]
+fn sqlite_takes_its_union_branches_unparenthesised() {
+    let a = select((users::id,)).from::<Sqlite, _>(users::Table);
+    let b = select((users::id,)).from::<Sqlite, _>(users::Table);
+    let (sql, _) = a.union(&b).to_sql();
+    assert_eq!(
+        sql,
+        "SELECT \"users\".\"id\" FROM \"users\" UNION SELECT \"users\".\"id\" FROM \"users\""
+    );
+
+    let c = select((users::id,)).from::<qbrs_core::dialect::Postgres, _>(users::Table);
+    let d = select((users::id,)).from::<qbrs_core::dialect::Postgres, _>(users::Table);
+    let (pg, _) = c.union(&d).to_sql();
+    assert!(pg.starts_with('('), "{pg}");
 }

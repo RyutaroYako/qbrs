@@ -4,9 +4,11 @@
 
 use std::marker::PhantomData;
 
-use crate::dialect::{Dialect, RawEmbed, SupportsFullOuterJoin, SupportsRightJoin};
+use crate::dialect::{Dialect, SupportsFullOuterJoin, SupportsRightJoin};
 use crate::expr::{Bool, Expr, ExprKind, IntoExpr, SqlType, Value};
-use crate::render::{Fragment, SelectItem, render_expr, render_select_list};
+use crate::render::{
+    Fragment, FragmentSink, QuerySink, SelectItem, Sink, render_expr, render_select_list,
+};
 use crate::scope::{
     BaseTable, Cons, MapNullable, MaybeNull, Nil, NotNull, ScopeTables, Superset, TableSlot,
 };
@@ -412,7 +414,7 @@ impl<D: Dialect, Scope, Sel> Select<D, Scope, Sel> {
     where
         Sel: Selection<Scope, Idx>,
     {
-        self.render_as::<D, Idx>()
+        self.render_as::<Idx>()
     }
 
     /// How many rows this query would return, ignoring its
@@ -423,18 +425,27 @@ impl<D: Dialect, Scope, Sel> Select<D, Scope, Sel> {
     /// A grouped query counts its *groups*, since that is what a page of it
     /// would show, so the body becomes a subquery rather than having its
     /// `GROUP BY` dropped or kept.
-    pub fn count_sql(&self) -> (String, Vec<Value>) {
+    pub fn count_sql<Idx>(&self) -> (String, Vec<Value>)
+    where
+        Sel: Selection<Scope, Idx>,
+    {
         let mut body = self.body.clone();
         body.order_by.clear();
         body.limit = None;
         body.offset = None;
-        let grouped = !body.group_by.is_empty();
-        let (sql, params) = body.render::<D>(&[crate::expr::count_item()]);
+        // `HAVING` without `GROUP BY` groups the whole result into one row,
+        // and a failing condition yields none — so it needs wrapping too.
+        let grouped = !body.group_by.is_empty() || !body.having.is_empty();
+        let mut sink = QuerySink::<D>::new();
+        body.render_into::<D>(&[crate::expr::count_item()], &mut sink);
+        let (sql, params) = sink.finish();
         if grouped {
-            let mut wrapped = String::from("SELECT count(*) FROM (");
-            wrapped.push_str(&sql);
-            wrapped.push_str(") AS ");
-            crate::render::render_ident::<D>(&mut wrapped, "qbrs_total");
+            let mut outer = QuerySink::<D>::new();
+            outer.text("SELECT count(*) FROM (");
+            outer.text(&sql);
+            outer.text(") AS ");
+            crate::render::render_ident::<D>(&mut outer, "qbrs_total");
+            let (wrapped, _) = outer.finish();
             (wrapped, params)
         } else {
             (sql, params)
@@ -449,20 +460,25 @@ impl<D: Dialect, Scope, Sel> Select<D, Scope, Sel> {
     where
         Sel: Selection<Scope, Idx>,
     {
-        let (sql, params) = self.render_as::<RawEmbed<D>, Idx>();
-        Fragment::from_rendered(&sql, params)
+        let mut sink = FragmentSink::new();
+        self.body
+            .render_into::<D>(&self.selection.items(), &mut sink);
+        sink.finish()
     }
 
-    fn render_as<RD: Dialect, Idx>(&self) -> (String, Vec<Value>)
+    fn render_as<Idx>(&self) -> (String, Vec<Value>)
     where
         Sel: Selection<Scope, Idx>,
     {
-        self.body.render::<RD>(&self.selection.items())
+        let mut sink = QuerySink::<D>::new();
+        self.body
+            .render_into::<D>(&self.selection.items(), &mut sink);
+        sink.finish()
     }
 }
 
 impl SelectBody {
-    pub(super) fn render<RD: Dialect>(&self, selection: &[SelectItem]) -> (String, Vec<Value>) {
+    pub(super) fn render_into<RD: Dialect>(&self, selection: &[SelectItem], sink: &mut dyn Sink) {
         let SelectBody {
             ctes,
             from_table,
@@ -475,88 +491,76 @@ impl SelectBody {
             offset,
         } = self;
         let (limit, offset) = (*limit, *offset);
-        let mut sql = String::new();
-        let mut params = Vec::new();
-
         if !ctes.is_empty() {
-            sql.push_str("WITH ");
+            sink.text("WITH ");
             for (i, cte) in ctes.iter().enumerate() {
                 if i > 0 {
-                    sql.push_str(", ");
+                    sink.text(", ");
                 }
-                crate::render::render_ident::<RD>(&mut sql, cte.name);
-                sql.push_str(" (");
+                crate::render::render_ident::<RD>(sink, cte.name);
+                sink.text(" (");
                 for (i, col) in cte.column_names.iter().enumerate() {
                     if i > 0 {
-                        sql.push_str(", ");
+                        sink.text(", ");
                     }
-                    crate::render::render_ident::<RD>(&mut sql, col);
+                    crate::render::render_ident::<RD>(sink, col);
                 }
-                sql.push_str(") AS (");
-                cte.body.splice_into::<RD>(&mut sql, &mut params);
-                sql.push(')');
+                sink.text(") AS (");
+                cte.body.splice_into(sink);
+                sink.ch(')');
             }
-            sql.push(' ');
+            sink.ch(' ');
         }
-        sql.push_str("SELECT ");
+        sink.text("SELECT ");
 
-        render_select_list::<RD>(selection, &mut sql, &mut params);
+        render_select_list::<RD>(selection, sink);
 
-        sql.push_str(" FROM ");
-        crate::render::render_ident::<RD>(&mut sql, from_table);
+        sink.text(" FROM ");
+        crate::render::render_ident::<RD>(sink, from_table);
 
         for j in joins {
-            sql.push(' ');
-            sql.push_str(match j.kind {
+            sink.ch(' ');
+            sink.text(match j.kind {
                 JoinKind::Inner => "INNER JOIN",
                 JoinKind::Left => "LEFT JOIN",
                 JoinKind::Right => "RIGHT JOIN",
                 JoinKind::Full => "FULL JOIN",
             });
-            sql.push(' ');
-            crate::render::render_ident::<RD>(&mut sql, j.table);
-            sql.push_str(" ON ");
-            render_expr::<RD>(&j.on, &mut sql, &mut params);
+            sink.ch(' ');
+            crate::render::render_ident::<RD>(sink, j.table);
+            sink.text(" ON ");
+            render_expr::<RD>(&j.on, sink);
         }
 
-        push_and_list::<RD>(&mut sql, &mut params, " WHERE ", wheres);
+        push_and_list::<RD>(sink, " WHERE ", wheres);
 
         if !group_by.is_empty() {
-            sql.push_str(" GROUP BY ");
+            sink.text(" GROUP BY ");
             for (i, g) in group_by.iter().enumerate() {
                 if i > 0 {
-                    sql.push_str(", ");
+                    sink.text(", ");
                 }
-                render_expr::<RD>(g, &mut sql, &mut params);
+                render_expr::<RD>(g, sink);
             }
         }
 
-        push_and_list::<RD>(&mut sql, &mut params, " HAVING ", having);
+        push_and_list::<RD>(sink, " HAVING ", having);
 
         if !order_by.is_empty() {
-            sql.push_str(" ORDER BY ");
+            sink.text(" ORDER BY ");
             for (i, (e, dir)) in order_by.iter().enumerate() {
                 if i > 0 {
-                    sql.push_str(", ");
+                    sink.text(", ");
                 }
-                render_expr::<RD>(e, &mut sql, &mut params);
-                sql.push_str(match dir {
+                render_expr::<RD>(e, sink);
+                sink.text(match dir {
                     SortDir::Asc => " ASC",
                     SortDir::Desc => " DESC",
                 });
             }
         }
 
-        if let Some(l) = limit {
-            sql.push_str(" LIMIT ");
-            sql.push_str(&l.to_string());
-        }
-        if let Some(o) = offset {
-            sql.push_str(" OFFSET ");
-            sql.push_str(&o.to_string());
-        }
-
-        (sql, params)
+        render_limit_offset::<RD>(sink, limit, offset);
     }
 }
 
@@ -693,20 +697,39 @@ impl<D: Dialect, Outer: ScopeTables, Scope, Sel> Correlated<D, Outer, Scope, Sel
     }
 }
 
-fn push_and_list<D: Dialect>(
-    sql: &mut String,
-    params: &mut Vec<Value>,
-    keyword: &str,
-    list: &[ExprKind],
+/// `LIMIT`/`OFFSET`, with the filler a dialect needs when there's an offset
+/// and no limit — a bare `OFFSET` is Postgres-only.
+pub(crate) fn render_limit_offset<D: Dialect>(
+    sink: &mut dyn Sink,
+    limit: Option<i64>,
+    offset: Option<i64>,
 ) {
+    match (limit, offset, D::OFFSET_WITHOUT_LIMIT) {
+        (Some(l), _, _) => {
+            sink.text(" LIMIT ");
+            sink.text(&l.to_string());
+        }
+        (None, Some(_), Some(filler)) => {
+            sink.text(" LIMIT ");
+            sink.text(filler);
+        }
+        _ => {}
+    }
+    if let Some(o) = offset {
+        sink.text(" OFFSET ");
+        sink.text(&o.to_string());
+    }
+}
+
+fn push_and_list<D: Dialect>(sink: &mut dyn Sink, keyword: &str, list: &[ExprKind]) {
     if list.is_empty() {
         return;
     }
-    sql.push_str(keyword);
+    sink.text(keyword);
     for (i, e) in list.iter().enumerate() {
         if i > 0 {
-            sql.push_str(" AND ");
+            sink.text(" AND ");
         }
-        render_expr::<D>(e, sql, params);
+        render_expr::<D>(e, sink);
     }
 }

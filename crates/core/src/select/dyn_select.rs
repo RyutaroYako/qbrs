@@ -5,7 +5,7 @@ use std::marker::PhantomData;
 use super::{Select, SelectBody, Selection};
 use crate::dialect::Dialect;
 use crate::expr::Value;
-use crate::render::SelectItem;
+use crate::render::{QuerySink, SelectItem};
 
 /// The one unavoidable escape hatch in this design: a single static type
 /// cannot mean "this table is joined" in one branch of an `if` and "it
@@ -57,6 +57,8 @@ impl<D, Output> DynSelect<D, Output> {
 
 impl<D: Dialect, Output> DynSelect<D, Output> {
     pub fn to_sql(&self) -> (String, Vec<Value>) {
-        self.body.render::<D>(&self.selection)
+        let mut sink = QuerySink::<D>::new();
+        self.body.render_into::<D>(&self.selection, &mut sink);
+        sink.finish()
     }
 }

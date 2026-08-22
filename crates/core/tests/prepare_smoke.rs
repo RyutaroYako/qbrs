@@ -11,6 +11,7 @@ pub struct UsersMarker;
 impl TableTrait for UsersMarker {
     const NAME: &'static str = "users";
 }
+impl qbrs_core::scope::BaseTableSealed for UsersMarker {}
 impl qbrs_core::scope::BaseTable for UsersMarker {}
 
 #[allow(non_upper_case_globals)]

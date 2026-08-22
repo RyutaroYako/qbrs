@@ -38,7 +38,7 @@ impl<D, Scope, Sel> Select<D, Scope, Sel> {
         D: Dialect,
         Sel: Selection<Scope, Idx>,
     {
-        let (sql, template) = self.render_as::<D, Idx>();
+        let (sql, template) = self.render_as::<Idx>();
         Prepared {
             sql,
             template,

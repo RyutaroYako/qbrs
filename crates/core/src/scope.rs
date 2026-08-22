@@ -26,7 +26,17 @@ pub trait Table: 'static {
     label = "a `with!{{}}` pseudo-table is entered through its `cte::with(..)` binding",
     note = "use `.from_cte(binding)` or `.inner_join_cte(binding, on)` — binding a CTE is what puts it in scope"
 )]
-pub trait BaseTable: Table {}
+pub trait BaseTable: Table + private::Sealed {}
+
+mod private {
+    /// Sealed the way `dialect::Dialect` is: a gate anyone can implement
+    /// isn't one. `#[derive(Table)]` emits both impls; `with!` emits
+    /// neither.
+    pub trait Sealed {}
+}
+
+#[doc(hidden)]
+pub use private::Sealed as BaseTableSealed;
 
 /// Marker trait for the two nullability states a table can have in a
 /// query's scope, depending on how it was joined.

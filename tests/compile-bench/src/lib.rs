@@ -16,6 +16,7 @@ macro_rules! declare_tables {
             impl Table for $name {
                 const NAME: &'static str = stringify!($name);
             }
+            impl qbrs_core::scope::BaseTableSealed for $name {}
             impl qbrs_core::scope::BaseTable for $name {}
         )*
     };

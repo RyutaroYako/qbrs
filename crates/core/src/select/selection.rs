@@ -1,6 +1,6 @@
 //! What a `.select(..)` list decodes to once a row comes back.
 
-use crate::expr::{AliasKey, Aliased, Column, ColumnKey, Expr, ExprKind, Keyed, SqlType};
+use crate::expr::{AliasKey, Aliased, Column, ColumnKey, Declared, Expr, ExprKind, Keyed, SqlType};
 use crate::render::SelectItem;
 use crate::row::{Named, Row, RowCons, RowKey, RowNil};
 use crate::scope::{Find, Nil, Superset, Table, WrapNullable};
@@ -63,11 +63,22 @@ where
     }
 }
 
-/// An expression that names tables is selectable once it's been given a
-/// name: the alias is where the caller says what the column is called, and
-/// declaring `S` is where they say what it decodes to — the two things a
-/// bare `Expr` leaves unanswered.
-impl<K: AliasKey, Req, S: SqlType, Scope, Idx> RowField<Scope, Idx> for Aliased<K, Expr<Req, S>>
+/// A scope-free expression — what `sql!{}` produces — needs only a name.
+impl<K: AliasKey, S: SqlType, Scope, Idx> RowField<Scope, Idx> for Aliased<K, Expr<Nil, S>>
+where
+    Scope: Superset<Nil, Idx>,
+{
+    type Value = S::Native;
+    fn item(&self) -> SelectItem {
+        SelectItem::labeled(self.inner.kind.clone(), <K as Named>::NAME)
+    }
+}
+
+/// One that names tables needs a name *and* a stated type: `S` on an `Expr`
+/// was inferred from whatever built it, and that inference can contradict
+/// the join — `orders::total` is `i64` on its own and `Option<i64>` through
+/// a LEFT JOIN. `declare` is where the caller settles it.
+impl<K: AliasKey, Req, S: SqlType, Scope, Idx> RowField<Scope, Idx> for Aliased<K, Declared<Req, S>>
 where
     Scope: Superset<Req, Idx>,
 {

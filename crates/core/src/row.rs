@@ -290,6 +290,10 @@ impl<Req, S: SqlType> RowKey for crate::expr::Expr<Req, S> {
     type Key = Anon;
 }
 
+impl<Req, S: SqlType> RowKey for crate::expr::Declared<Req, S> {
+    type Key = Anon;
+}
+
 /// A decoded row. Its fields are fixed by the query's selection list, and
 /// each is read by the same value that selected it.
 pub struct Row<L>(L);

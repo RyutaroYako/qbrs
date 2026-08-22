@@ -26,6 +26,15 @@ pub trait Dialect: 'static + private::Sealed {
     const CAST_BIGINT: &'static str = "BIGINT";
     const CAST_DOUBLE: &'static str = "DOUBLE PRECISION";
 
+    /// Whether a set operation's branches may be parenthesised. SQLite's
+    /// grammar has no place for a parenthesised `SELECT` around `UNION`.
+    const PARENTHESIZED_SET_OP_BRANCHES: bool = true;
+
+    /// What to put in a `LIMIT` when a query has an `OFFSET` and no limit.
+    /// Postgres takes a bare `OFFSET`; SQLite and MySQL don't, and each
+    /// spells "no limit" differently.
+    const OFFSET_WITHOUT_LIMIT: Option<&'static str> = None;
+
     /// Renders the placeholder for the `n`th bound parameter (1-indexed).
     /// Postgres numbers them (`$1`, `$2`, ...); MySQL/SQLite are purely
     /// positional (`?` every time, matched by order of appearance).
@@ -49,6 +58,7 @@ impl private::Sealed for MySql {}
 impl Dialect for MySql {
     const CAST_BIGINT: &'static str = "SIGNED";
     const CAST_DOUBLE: &'static str = "DOUBLE";
+    const OFFSET_WITHOUT_LIMIT: Option<&'static str> = Some("18446744073709551615");
     const IDENTIFIER_QUOTE: char = '`';
     // Uses the default `?` placeholder.
 }
@@ -56,6 +66,8 @@ impl Dialect for MySql {
 pub struct Sqlite;
 impl private::Sealed for Sqlite {}
 impl Dialect for Sqlite {
+    const PARENTHESIZED_SET_OP_BRANCHES: bool = false;
+    const OFFSET_WITHOUT_LIMIT: Option<&'static str> = Some("-1");
     const IDENTIFIER_QUOTE: char = '"';
     // Uses the default `?` placeholder.
 }
@@ -88,19 +100,3 @@ impl SupportsRightJoin for Sqlite {}
 pub trait SupportsFullOuterJoin: Dialect {}
 impl SupportsFullOuterJoin for Postgres {}
 impl SupportsFullOuterJoin for Sqlite {}
-
-/// An internal rendering-only wrapper: same identifier quoting as `D`, but
-/// always emits the bind marker for placeholders. Used for a fragment that will be
-/// spliced into a larger query (a subquery, CTE body, or `UNION` branch) and
-/// renumbered into the outer query's placeholder sequence — it must not
-/// pre-commit to `$N` numbers that would collide with the outer count.
-pub(crate) struct RawEmbed<D>(std::marker::PhantomData<D>);
-impl<D: Dialect> private::Sealed for RawEmbed<D> {}
-impl<D: Dialect> Dialect for RawEmbed<D> {
-    const IDENTIFIER_QUOTE: char = D::IDENTIFIER_QUOTE;
-    const CAST_BIGINT: &'static str = D::CAST_BIGINT;
-    const CAST_DOUBLE: &'static str = D::CAST_DOUBLE;
-    fn placeholder(_n: usize) -> String {
-        crate::render::BIND_MARKER.to_string()
-    }
-}

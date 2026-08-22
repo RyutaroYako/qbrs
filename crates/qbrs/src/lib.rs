@@ -16,16 +16,18 @@ pub mod prelude {
     pub use qbrs_core::delete::delete;
     pub use qbrs_core::dialect::{MySql, Postgres, Sqlite};
     pub use qbrs_core::expr::Column;
-    pub use qbrs_core::expr::Expr;
     pub use qbrs_core::expr::{
         AliasExt, BigInt, Bool, Bytes, ExprMethods, HasCount, Integer, Real, SortDir, Text,
         TextExprMethods, avg, count, count_of, max, min, sum,
     };
+    pub use qbrs_core::expr::{Declared, Expr, Keyed};
     pub use qbrs_core::insert::{Defaultable, insert};
     pub use qbrs_core::row::{IntoStructs, IntoTuples, Named, Row, RowCons, RowNil};
-    pub use qbrs_core::scope::{Cons, Find, MaybeNull, Nil, NotNull, Nullable, TableSlot};
+    pub use qbrs_core::scope::{
+        Cons, Find, MaybeNull, Nil, NotNull, Nullable, Superset, TableSlot,
+    };
     pub use qbrs_core::select::{
-        Correlated, DynSelect, OrderExt, Predicate, Select, predicate, select,
+        Correlated, DynSelect, OrderExt, Predicate, Prepared, Select, SetOp, predicate, select,
     };
     pub use qbrs_core::update::update;
     pub use qbrs_core::window::{

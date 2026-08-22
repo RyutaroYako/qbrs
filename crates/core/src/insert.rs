@@ -11,7 +11,7 @@ use std::marker::PhantomData;
 
 use crate::dialect::{Dialect, SupportsOnConflict, SupportsReturning};
 use crate::expr::{Column, ColumnKey, Value};
-use crate::render::{SelectItem, render_ident, render_select_list};
+use crate::render::{QuerySink, SelectItem, Sink, render_ident, render_select_list};
 use crate::scope::{BaseTable, Cons, Nil, NotNull, Table, TableSlot};
 use crate::select::Selection;
 use crate::update::UpdateRow;
@@ -110,21 +110,17 @@ struct ConflictClause {
     action: ConflictAction,
 }
 
-fn render_conflict_clause<D: Dialect>(
-    clause: &ConflictClause,
-    sql: &mut String,
-    params: &mut Vec<Value>,
-) {
-    sql.push_str(" ON CONFLICT (");
+fn render_conflict_clause<D: Dialect>(clause: &ConflictClause, sink: &mut dyn Sink) {
+    sink.text(" ON CONFLICT (");
     for (i, c) in clause.target.iter().enumerate() {
         if i > 0 {
-            sql.push_str(", ");
+            sink.text(", ");
         }
-        render_ident::<D>(sql, c);
+        render_ident::<D>(sink, c);
     }
-    sql.push(')');
+    sink.ch(')');
     match &clause.action {
-        ConflictAction::DoNothing => sql.push_str(" DO NOTHING"),
+        ConflictAction::DoNothing => sink.text(" DO NOTHING"),
         ConflictAction::DoUpdate(sets) => {
             // Same reason `update` refuses one: `DO UPDATE SET` with nothing
             // after it is not a statement, and `*Update`'s derived `Default`
@@ -133,15 +129,14 @@ fn render_conflict_clause<D: Dialect>(
                 !sets.is_empty(),
                 "ON CONFLICT DO UPDATE must set at least one column; every field of this `*Update` is untouched"
             );
-            sql.push_str(" DO UPDATE SET ");
+            sink.text(" DO UPDATE SET ");
             for (i, (col, val)) in sets.iter().enumerate() {
                 if i > 0 {
-                    sql.push_str(", ");
+                    sink.text(", ");
                 }
-                render_ident::<D>(sql, col);
-                sql.push_str(" = ");
-                params.push(val.clone());
-                sql.push_str(&D::placeholder(params.len()));
+                render_ident::<D>(sink, col);
+                sink.text(" = ");
+                sink.bind(val);
             }
         }
     }
@@ -170,44 +165,41 @@ impl<D, T: Table> InsertSeed<D, T> {
 fn render_values_clause<D: Dialect, T: Table, R: InsertRow<Table = T>>(
     rows: &[Vec<InsertValue>],
     on_conflict: &Option<ConflictClause>,
-) -> (String, Vec<Value>) {
-    let mut sql = String::from("INSERT INTO ");
-    render_ident::<D>(&mut sql, T::NAME);
-    sql.push_str(" (");
+) -> QuerySink<D> {
+    let mut sink = QuerySink::<D>::new();
+    sink.text("INSERT INTO ");
+    render_ident::<D>(&mut sink, T::NAME);
+    sink.text(" (");
     for (i, c) in R::COLUMNS.iter().enumerate() {
         if i > 0 {
-            sql.push_str(", ");
+            sink.text(", ");
         }
-        render_ident::<D>(&mut sql, c);
+        render_ident::<D>(&mut sink, c);
     }
-    sql.push_str(") VALUES ");
+    sink.text(") VALUES ");
 
-    let mut params = Vec::new();
     for (row_i, row) in rows.iter().enumerate() {
         if row_i > 0 {
-            sql.push_str(", ");
+            sink.text(", ");
         }
-        sql.push('(');
+        sink.ch('(');
         for (i, v) in row.iter().enumerate() {
             if i > 0 {
-                sql.push_str(", ");
+                sink.text(", ");
             }
             match v {
-                InsertValue::Default => sql.push_str("DEFAULT"),
-                InsertValue::Value(v) => {
-                    params.push(v.clone());
-                    sql.push_str(&D::placeholder(params.len()));
-                }
+                InsertValue::Default => sink.text("DEFAULT"),
+                InsertValue::Value(v) => sink.bind(v),
             }
         }
-        sql.push(')');
+        sink.ch(')');
     }
 
     if let Some(clause) = on_conflict {
-        render_conflict_clause::<D>(clause, &mut sql, &mut params);
+        render_conflict_clause::<D>(clause, &mut sink);
     }
 
-    (sql, params)
+    sink
 }
 
 pub struct Insert<D, T: Table, R: InsertRow<Table = T>> {
@@ -251,7 +243,7 @@ impl<D: SupportsOnConflict, T: Table, R: InsertRow<Table = T>> Insert<D, T, R> {
 
 impl<D: Dialect, T: Table, R: InsertRow<Table = T>> Insert<D, T, R> {
     pub fn to_sql(&self) -> (String, Vec<Value>) {
-        render_values_clause::<D, T, R>(&self.rows, &self.on_conflict)
+        render_values_clause::<D, T, R>(&self.rows, &self.on_conflict).finish()
     }
 }
 
@@ -286,9 +278,9 @@ pub struct InsertReturning<D, T: Table, R: InsertRow<Table = T>, Sel> {
 
 impl<D: Dialect, T: Table, R: InsertRow<Table = T>, Sel> InsertReturning<D, T, R, Sel> {
     pub fn to_sql(&self) -> (String, Vec<Value>) {
-        let (mut sql, mut params) = render_values_clause::<D, T, R>(&self.rows, &self.on_conflict);
-        sql.push_str(" RETURNING ");
-        render_select_list::<D>(&self.returning, &mut sql, &mut params);
-        (sql, params)
+        let mut sink = render_values_clause::<D, T, R>(&self.rows, &self.on_conflict);
+        sink.text(" RETURNING ");
+        render_select_list::<D>(&self.returning, &mut sink);
+        sink.finish()
     }
 }

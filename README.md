@@ -281,7 +281,17 @@ A schema is a `#[derive(Table)]` struct, shown in the
   only be filtered onto that query — but `prepare!{}` doesn't tie its
   `Params` struct to the query it was built from, and a mismatch surfaces at
   `.execute()` as `UnresolvedPlaceholder` rather than at compile time.
-- `sql!{}` treats `?` as a bind slot; write `??` for a literal one.
+- `sql!{}` treats `?` as a bind slot; write `??` for a literal one. Its text
+  must be a constant — a literal, a `const`, `concat!`, `include_str!` — so
+  runtime-assembled text can never become SQL shape.
+- Only Postgres is executed in CI. SQL rendered for MySQL and SQLite is
+  asserted as strings, not run, so dialect differences are caught only where
+  someone thought to look: `DEFAULT` in an `INSERT ... VALUES` is Postgres
+  and MySQL only, and SQLite rejects it, which makes `Defaultable::Default`
+  unusable there.
+- A computed expression over a column has to say what it decodes to —
+  `expr.declare::<Nullable<BigInt>>().alias(label::x)` — because its
+  NULL-ability doesn't follow from any one column's join.
 
 ## Status
 

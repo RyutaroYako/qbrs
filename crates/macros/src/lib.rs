@@ -240,6 +240,7 @@ fn gen_schema_mod(
             impl ::qbrs::scope::Table for Table {
                 const NAME: &'static str = #table_name;
             }
+            impl ::qbrs::scope::BaseTableSealed for Table {}
             impl ::qbrs::scope::BaseTable for Table {}
 
             #[allow(non_camel_case_types)]

@@ -7,21 +7,99 @@
 use crate::dialect::Dialect;
 use crate::expr::{BinOp, CastTarget, ExprKind, SortDir, Value};
 
-pub(crate) fn render_expr<D: Dialect>(expr: &ExprKind, out: &mut String, params: &mut Vec<Value>) {
+/// Where rendered SQL goes. A bind parameter is *told* to the sink rather
+/// than written as text, which is what lets the same renderer produce either
+/// a finished statement or a `Fragment` whose parameters aren't numbered
+/// yet — with no character standing in for one, and so nothing to escape.
+pub(crate) trait Sink {
+    fn text(&mut self, s: &str);
+    fn ch(&mut self, c: char);
+    fn bind(&mut self, value: &Value);
+}
+
+/// Builds a finished statement, numbering each parameter as it arrives.
+pub(crate) struct QuerySink<D> {
+    sql: String,
+    params: Vec<Value>,
+    _dialect: std::marker::PhantomData<fn() -> D>,
+}
+
+impl<D: Dialect> QuerySink<D> {
+    pub(crate) fn new() -> Self {
+        QuerySink {
+            sql: String::new(),
+            params: Vec::new(),
+            _dialect: std::marker::PhantomData,
+        }
+    }
+
+    pub(crate) fn finish(self) -> (String, Vec<Value>) {
+        (self.sql, self.params)
+    }
+}
+
+impl<D: Dialect> Sink for QuerySink<D> {
+    fn text(&mut self, s: &str) {
+        self.sql.push_str(s);
+    }
+    fn ch(&mut self, c: char) {
+        self.sql.push(c);
+    }
+    fn bind(&mut self, value: &Value) {
+        self.params.push(value.clone());
+        self.sql.push_str(&D::placeholder(self.params.len()));
+    }
+}
+
+/// Builds a `Fragment`: a parameter starts a new segment instead of being
+/// written, so its eventual number is decided by whoever splices it.
+pub(crate) struct FragmentSink {
+    segments: Vec<String>,
+    params: Vec<Value>,
+}
+
+impl FragmentSink {
+    pub(crate) fn new() -> Self {
+        FragmentSink {
+            segments: vec![String::new()],
+            params: Vec::new(),
+        }
+    }
+
+    pub(crate) fn finish(self) -> Fragment {
+        Fragment::new(self.segments, self.params)
+    }
+
+    fn last(&mut self) -> &mut String {
+        self.segments.last_mut().expect("one segment to start")
+    }
+}
+
+impl Sink for FragmentSink {
+    fn text(&mut self, s: &str) {
+        self.last().push_str(s);
+    }
+    fn ch(&mut self, c: char) {
+        self.last().push(c);
+    }
+    fn bind(&mut self, value: &Value) {
+        self.params.push(value.clone());
+        self.segments.push(String::new());
+    }
+}
+
+pub(crate) fn render_expr<D: Dialect>(expr: &ExprKind, sink: &mut dyn Sink) {
     match expr {
         ExprKind::Column { table, name } => {
-            push_ident::<D>(out, table);
-            out.push('.');
-            push_ident::<D>(out, name);
+            push_ident::<D>(sink, table);
+            sink.ch('.');
+            push_ident::<D>(sink, name);
         }
-        ExprKind::Value(v) => {
-            params.push(v.clone());
-            out.push_str(&D::placeholder(params.len()));
-        }
+        ExprKind::Value(v) => sink.bind(v),
         ExprKind::BinOp { op, lhs, rhs } => {
-            out.push('(');
-            render_expr::<D>(lhs, out, params);
-            out.push_str(match op {
+            sink.ch('(');
+            render_expr::<D>(lhs, sink);
+            sink.text(match op {
                 BinOp::Eq => " = ",
                 BinOp::Ne => " <> ",
                 BinOp::Lt => " < ",
@@ -30,36 +108,36 @@ pub(crate) fn render_expr<D: Dialect>(expr: &ExprKind, out: &mut String, params:
                 BinOp::Gte => " >= ",
                 BinOp::Like => " LIKE ",
             });
-            render_expr::<D>(rhs, out, params);
-            out.push(')');
+            render_expr::<D>(rhs, sink);
+            sink.ch(')');
         }
-        ExprKind::And(parts) => render_bool_list::<D>(parts, "AND", out, params),
-        ExprKind::Or(parts) => render_bool_list::<D>(parts, "OR", out, params),
+        ExprKind::And(parts) => render_bool_list::<D>(parts, "AND", sink),
+        ExprKind::Or(parts) => render_bool_list::<D>(parts, "OR", sink),
         ExprKind::Not(inner) => {
-            out.push_str("(NOT ");
-            render_expr::<D>(inner, out, params);
-            out.push(')');
+            sink.text("(NOT ");
+            render_expr::<D>(inner, sink);
+            sink.ch(')');
         }
         ExprKind::Cast { expr, target } => {
-            out.push_str("CAST(");
-            render_expr::<D>(expr, out, params);
-            out.push_str(" AS ");
-            out.push_str(match target {
+            sink.text("CAST(");
+            render_expr::<D>(expr, sink);
+            sink.text(" AS ");
+            sink.text(match target {
                 CastTarget::BigInt => D::CAST_BIGINT,
                 CastTarget::Double => D::CAST_DOUBLE,
             });
-            out.push(')');
+            sink.ch(')');
         }
         ExprKind::Func { name, arg } => {
-            out.push_str(name);
-            out.push('(');
-            render_expr::<D>(arg, out, params);
-            out.push(')');
+            sink.text(name);
+            sink.ch('(');
+            render_expr::<D>(arg, sink);
+            sink.ch(')');
         }
         ExprKind::IsNull { expr, negated } => {
-            out.push('(');
-            render_expr::<D>(expr, out, params);
-            out.push_str(if *negated {
+            sink.ch('(');
+            render_expr::<D>(expr, sink);
+            sink.text(if *negated {
                 " IS NOT NULL)"
             } else {
                 " IS NULL)"
@@ -67,27 +145,27 @@ pub(crate) fn render_expr<D: Dialect>(expr: &ExprKind, out: &mut String, params:
         }
         ExprKind::InList { expr, values } => {
             if values.is_empty() {
-                out.push_str("FALSE");
+                sink.text("FALSE");
                 return;
             }
-            out.push('(');
-            render_expr::<D>(expr, out, params);
-            out.push_str(" IN (");
+            sink.ch('(');
+            render_expr::<D>(expr, sink);
+            sink.text(" IN (");
             for (i, v) in values.iter().enumerate() {
                 if i > 0 {
-                    out.push_str(", ");
+                    sink.text(", ");
                 }
-                render_expr::<D>(v, out, params);
+                render_expr::<D>(v, sink);
             }
-            out.push_str("))");
+            sink.text("))");
         }
         ExprKind::Raw(fragment) => {
             // A fragment's internal precedence is unknown (it may be `a OR
             // b`), so parenthesize: it must not change meaning when spliced
             // into a larger AND/OR chain.
-            out.push('(');
-            fragment.splice_into::<D>(out, params);
-            out.push(')');
+            sink.ch('(');
+            fragment.splice_into(sink);
+            sink.ch(')');
         }
         ExprKind::Window {
             func,
@@ -97,34 +175,34 @@ pub(crate) fn render_expr<D: Dialect>(expr: &ExprKind, out: &mut String, params:
             // No defensive parens here, unlike `Raw`: `OVER` only attaches
             // to a bare function-call syntax node, so `(row_number()) OVER
             // (..)` would not be valid SQL.
-            out.push_str(func);
-            out.push_str(" OVER (");
+            sink.text(func);
+            sink.text(" OVER (");
             if !partition_by.is_empty() {
-                out.push_str("PARTITION BY ");
+                sink.text("PARTITION BY ");
                 for (i, p) in partition_by.iter().enumerate() {
                     if i > 0 {
-                        out.push_str(", ");
+                        sink.text(", ");
                     }
-                    render_expr::<D>(p, out, params);
+                    render_expr::<D>(p, sink);
                 }
             }
             if !order_by.is_empty() {
                 if !partition_by.is_empty() {
-                    out.push(' ');
+                    sink.ch(' ');
                 }
-                out.push_str("ORDER BY ");
+                sink.text("ORDER BY ");
                 for (i, (e, dir)) in order_by.iter().enumerate() {
                     if i > 0 {
-                        out.push_str(", ");
+                        sink.text(", ");
                     }
-                    render_expr::<D>(e, out, params);
-                    out.push_str(match dir {
+                    render_expr::<D>(e, sink);
+                    sink.text(match dir {
                         SortDir::Asc => " ASC",
                         SortDir::Desc => " DESC",
                     });
                 }
             }
-            out.push(')');
+            sink.ch(')');
         }
     }
 }
@@ -153,27 +231,18 @@ impl SelectItem {
 
 /// Renders a comma-separated `SELECT`/`RETURNING` list, emitting each item's
 /// `AS` label where it has one.
-pub(crate) fn render_select_list<D: Dialect>(
-    items: &[SelectItem],
-    out: &mut String,
-    params: &mut Vec<Value>,
-) {
+pub(crate) fn render_select_list<D: Dialect>(items: &[SelectItem], sink: &mut dyn Sink) {
     for (i, item) in items.iter().enumerate() {
         if i > 0 {
-            out.push_str(", ");
+            sink.text(", ");
         }
-        render_expr::<D>(&item.kind, out, params);
+        render_expr::<D>(&item.kind, sink);
         if let Some(label) = item.label {
-            out.push_str(" AS ");
-            push_ident::<D>(out, label);
+            sink.text(" AS ");
+            push_ident::<D>(sink, label);
         }
     }
 }
-
-/// The character `RawEmbed` emits where a bind parameter will go, used only
-/// between rendering a nested query and splitting it into segments. A
-/// `sql!{}` literal may not contain one, which `from_authored` checks.
-pub(crate) const BIND_MARKER: char = '\u{1}';
 
 /// A piece of SQL destined to be embedded in a larger query: a subquery, a
 /// CTE body, a set-operation branch, or a `sql!{}` escape hatch. Held as the
@@ -188,26 +257,14 @@ pub struct Fragment {
 }
 
 impl Fragment {
-    /// One segment per gap, one param per boundary.
     pub(crate) fn new(segments: Vec<String>, params: Vec<Value>) -> Self {
         debug_assert_eq!(segments.len(), params.len() + 1);
         Fragment { segments, params }
     }
 
-    /// Splits a nested query's rendered text on the markers `RawEmbed` left
-    /// where its parameters go.
-    pub(crate) fn from_rendered(sql: &str, params: Vec<Value>) -> Self {
-        let segments: Vec<String> = sql.split(BIND_MARKER).map(str::to_string).collect();
-        Fragment::new(segments, params)
-    }
-
     /// Splits `sql!{}`'s authored text on its `?` placeholders. `??` is a
     /// literal `?`.
     pub(crate) fn from_authored(sql: &'static str, params: Vec<Value>) -> Self {
-        assert!(
-            !sql.contains(BIND_MARKER),
-            "`sql!` text may not contain U+0001"
-        );
         let mut segments = vec![String::new()];
         let mut chars = sql.chars().peekable();
         while let Some(c) = chars.next() {
@@ -245,60 +302,54 @@ impl Fragment {
         self
     }
 
-    /// Appends this fragment to a query being rendered, numbering its
-    /// parameters into `params`' sequence.
-    pub(crate) fn splice_into<D: Dialect>(&self, out: &mut String, params: &mut Vec<Value>) {
+    /// Appends this fragment to whatever is being rendered, handing each of
+    /// its parameters to the sink in turn.
+    pub(crate) fn splice_into(&self, sink: &mut dyn Sink) {
         for (i, segment) in self.segments.iter().enumerate() {
-            out.push_str(segment);
+            sink.text(segment);
             if let Some(value) = self.params.get(i) {
-                params.push(value.clone());
-                out.push_str(&D::placeholder(params.len()));
+                sink.bind(value);
             }
         }
     }
 }
 
-fn push_ident<D: Dialect>(out: &mut String, ident: &str) {
-    out.push(D::IDENTIFIER_QUOTE);
+fn push_ident<D: Dialect>(sink: &mut dyn Sink, ident: &str) {
+    sink.ch(D::IDENTIFIER_QUOTE);
     for c in ident.chars() {
         // A quote inside an identifier is escaped by doubling it, in every
         // dialect this crate speaks. `#[table(name = "..")]` takes an
         // arbitrary string, so an unescaped one would end the identifier.
         if c == D::IDENTIFIER_QUOTE {
-            out.push(c);
+            sink.ch(c);
         }
-        out.push(c);
+        sink.ch(c);
     }
-    out.push(D::IDENTIFIER_QUOTE);
+    sink.ch(D::IDENTIFIER_QUOTE);
 }
 
-fn render_bool_list<D: Dialect>(
-    parts: &[ExprKind],
-    joiner: &str,
-    out: &mut String,
-    params: &mut Vec<Value>,
-) {
+fn render_bool_list<D: Dialect>(parts: &[ExprKind], joiner: &str, sink: &mut dyn Sink) {
     if parts.is_empty() {
         // An empty AND/OR should never make it into a real query (the
         // builder never pushes one), but render a harmless tautology/
         // contradiction rather than emitting invalid SQL if it ever did.
-        out.push_str(if joiner == "AND" { "TRUE" } else { "FALSE" });
+        sink.text(if joiner == "AND" { "TRUE" } else { "FALSE" });
         return;
     }
-    out.push('(');
+    sink.ch('(');
     for (i, part) in parts.iter().enumerate() {
         if i > 0 {
-            out.push(' ');
-            out.push_str(joiner);
-            out.push(' ');
+            sink.ch(' ');
+            sink.text(joiner);
+            sink.ch(' ');
         }
-        render_expr::<D>(part, out, params);
+        render_expr::<D>(part, sink);
     }
-    out.push(')');
+    sink.ch(')');
 }
 
 /// Renders a bare identifier (a table name in a `FROM`/`INSERT INTO`/etc.
 /// clause, not part of an `ExprKind`) with the dialect's quoting.
-pub(crate) fn render_ident<D: Dialect>(out: &mut String, ident: &str) {
-    push_ident::<D>(out, ident);
+pub(crate) fn render_ident<D: Dialect>(sink: &mut dyn Sink, ident: &str) {
+    push_ident::<D>(sink, ident);
 }
