@@ -29,6 +29,19 @@ impl<T> Defaultable<T> {
     }
 }
 
+/// A request struct's `Option<T>` field maps onto an insert's three-state
+/// column the one way that makes sense — absent means "let the schema
+/// decide" — so a `POST` body reaches an `*Insert` field-for-field, the way
+/// a `PATCH` body already reaches an `*Update`.
+impl<T> From<Option<T>> for Defaultable<T> {
+    fn from(v: Option<T>) -> Self {
+        match v {
+            Some(v) => Defaultable::Value(v),
+            None => Defaultable::Default,
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub enum InsertValue {
     Value(Value),
@@ -153,7 +166,40 @@ impl<D, T: Table> InsertSeed<D, T> {
             _marker: PhantomData,
         }
     }
+
+    /// Every row of a collection at once — the shape a bulk import has,
+    /// where the rows are already in a `Vec` and the first one isn't
+    /// special. `INSERT` with no rows has no SQL form, so an empty
+    /// collection is refused here rather than rendered.
+    pub fn values_all<R: InsertRow<Table = T>>(
+        self,
+        rows: impl IntoIterator<Item = R>,
+    ) -> Result<Insert<D, T, R>, NothingToInsert> {
+        let rows: Vec<_> = rows.into_iter().map(R::into_values).collect();
+        if rows.is_empty() {
+            return Err(NothingToInsert);
+        }
+        Ok(Insert {
+            rows,
+            on_conflict: None,
+            _marker: PhantomData,
+        })
+    }
 }
+
+/// An `INSERT` was given no rows at all. Returned rather than panicked for
+/// the reason `update::NothingToSet` gives: an empty collection is ordinary
+/// request-shaped data, and the caller decides whether it is a no-op or an
+/// error.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct NothingToInsert;
+
+impl std::fmt::Display for NothingToInsert {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("an INSERT must have at least one row, but no rows were given")
+    }
+}
+impl std::error::Error for NothingToInsert {}
 
 fn render_values_clause<D: Dialect, T: Table, R: InsertRow<Table = T>>(
     rows: &[Vec<InsertValue>],

@@ -273,7 +273,22 @@ fn a_grouped_count_counts_groups_not_the_first_group() {
         .count_sql();
     assert_eq!(
         sql,
-        "SELECT count(*) FROM (SELECT count(*) FROM \"users\" GROUP BY \"users\".\"id\") AS \"qbrs_total\""
+        "SELECT count(*) FROM (SELECT \"users\".\"id\", count(*) FROM \"users\" \
+         GROUP BY \"users\".\"id\") AS \"qbrs_total\""
+    );
+}
+
+#[test]
+fn counting_a_distinct_query_counts_its_distinct_rows() {
+    let (sql, _params) = select((users::id,))
+        .from::<Postgres, _>(users::Table)
+        .inner_join(orders::Table, orders::user_id.eq(users::id))
+        .distinct()
+        .count_sql();
+    assert_eq!(
+        sql,
+        "SELECT count(*) FROM (SELECT DISTINCT \"users\".\"id\" FROM \"users\" \
+         INNER JOIN \"orders\" ON (\"orders\".\"user_id\" = \"users\".\"id\")) AS \"qbrs_total\""
     );
 }
 

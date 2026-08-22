@@ -246,6 +246,28 @@ async fn sqlite_executes_every_rendered_statement_shape() {
     .await;
     assert_eq!(raw.len(), 2);
 
+    let distinct = run(
+        &pool,
+        select((users::email,))
+            .from::<Sqlite, _>(users::Table)
+            .inner_join(orders::Table, orders::user_id.eq(users::id))
+            .distinct()
+            .to_sql(),
+    )
+    .await;
+    assert_eq!(distinct.len(), 2);
+
+    let bulk = run(
+        &pool,
+        insert::<Sqlite, _>(orders::Table)
+            .values_all((10..13).map(|n| OrdersInsert::new(1, n)))
+            .expect("three rows")
+            .returning(orders::id)
+            .to_sql(),
+    )
+    .await;
+    assert_eq!(bulk.len(), 3);
+
     let deleted = run(
         &pool,
         delete::<Sqlite, _>(orders::Table)
@@ -254,7 +276,7 @@ async fn sqlite_executes_every_rendered_statement_shape() {
             .to_sql(),
     )
     .await;
-    assert_eq!(deleted.len(), 1);
+    assert_eq!(deleted.len(), 4);
 
     let remaining = run(
         &pool,

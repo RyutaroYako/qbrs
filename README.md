@@ -176,10 +176,16 @@ A schema is a `#[derive(Table)]` struct, shown in the
   [`05_delete`](examples/examples/05_delete.rs). A NOT NULL column with a
   schema default gets a three-state `Defaultable<Option<T>>` on `*Insert`
   (omit / explicit `NULL` / explicit value); `*Update` mirrors this with
-  `Option<Option<T>>` (untouched / `NULL` / value). An `*Update` with every
-  field untouched — a PATCH body that changed nothing — has no SQL form, so
-  `.set(..)` hands back `Result<_, NothingToSet>` rather than panicking at
-  render time.
+  `Option<Option<T>>` (untouched / `NULL` / value). A request struct's
+  `Option<T>` converts into either. Rows arrive one at a time with
+  `.values(row)` or all at once with `.values_all(rows)`; a statement with
+  nothing in it — an `*Update` whose every field is untouched, an insert of
+  zero rows — has no SQL form, so those hand back
+  `Result<_, NothingToSet>` / `Result<_, NothingToInsert>` rather than
+  panicking at render time.
+- **`SELECT DISTINCT`** — `.distinct()`, the answer to a one-to-many join
+  that repeats its left side. A count of such a query counts its distinct
+  rows.
 - **Upsert** (`ON CONFLICT`, Postgres/SQLite only) —
   [`11_upsert`](examples/examples/11_upsert.rs). No typed `EXCLUDED.column`
   yet.
@@ -273,6 +279,8 @@ A schema is a `#[derive(Table)]` struct, shown in the
 - Naming a row type in a signature takes a type alias, and one long enough
   to trip `clippy::type_complexity`; inference covers every use that stays
   inside a function.
+- `ORDER BY` takes an expression, not an output alias: sort by
+  `sum(orders::total).desc()`, not by the `label!` it was aliased to.
 - One `label!` per scope — it declares a `label` module, and a scope holds
   one. List every name that scope needs in the one invocation.
 - A helper generic over rows needs one index type parameter per column it
@@ -305,6 +313,8 @@ A schema is a `#[derive(Table)]` struct, shown in the
   only be filtered onto that query — but `prepare!{}` doesn't tie its
   `Params` struct to the query it was built from, and a mismatch surfaces at
   `.load()` as `UnresolvedPlaceholder` rather than at compile time.
+- The derives expand to `::qbrs::` paths, so depend on the `qbrs` facade
+  rather than on `qbrs-core` + `qbrs-macros` directly.
 - `sql!{}` treats `?` as a bind slot; write `??` for a literal one. Its text
   must be a constant — a literal, a `const`, `concat!`, `include_str!` — so
   runtime-assembled text can never become SQL shape, and the placeholder

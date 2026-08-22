@@ -193,7 +193,7 @@ impl<Req, S: SqlType> Clone for Expr<Req, S> {
 /// bare column, or whatever `Req` an already-built `Expr` carries).
 #[diagnostic::on_unimplemented(
     message = "`{Self}` can't be used as a SQL expression of type `{S}`",
-    note = "an `Option` is never one: `= NULL` is never true in SQL, so the question is `.is_null()`"
+    label = "a column, a literal, an aggregate, or a `sql!{{}}` fragment can be; a `label!` name is not one, and neither is an `Option` — `= NULL` is never true in SQL, so the question is `.is_null()`"
 )]
 pub trait IntoExpr<S: SqlType> {
     type Req;

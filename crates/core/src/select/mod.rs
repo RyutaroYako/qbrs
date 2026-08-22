@@ -185,6 +185,7 @@ impl<Sel> SelectSeed<Sel> {
 #[derive(Clone)]
 pub(super) struct SelectBody {
     ctes: Vec<CteDef>,
+    distinct: bool,
     from_table: &'static str,
     joins: Vec<JoinClause>,
     wheres: Vec<ExprKind>,
@@ -199,6 +200,7 @@ impl SelectBody {
     fn new(from_table: &'static str) -> Self {
         SelectBody {
             ctes: Vec::new(),
+            distinct: false,
             from_table,
             joins: Vec::new(),
             wheres: Vec::new(),
@@ -211,28 +213,27 @@ impl SelectBody {
     }
 
     /// `SELECT count(*)` over this body with its paging dropped: a total
-    /// counts the rows that match, not the page being shown. A grouped
-    /// query counts its *groups*, since that is what a page of it would
-    /// show, so its body becomes a subquery instead of having its
-    /// `GROUP BY` dropped or kept.
-    fn count_sql<D: Dialect>(&self) -> (String, Vec<Value>) {
+    /// counts the rows that match, not the page being shown.
+    ///
+    /// A query whose rows aren't one per matching row — `GROUP BY`,
+    /// `HAVING`, `DISTINCT` — is counted by wrapping it, selection and all,
+    /// since what a page of it would show is what has to be counted.
+    fn count_sql<D: Dialect>(&self, selection: &[SelectItem]) -> (String, Vec<Value>) {
         let mut body = self.clone();
         body.order_by.clear();
         body.limit = None;
         body.offset = None;
-        // `HAVING` without `GROUP BY` groups the whole result into one row,
-        // and a failing condition yields none — so it needs wrapping too.
-        let grouped = !body.group_by.is_empty() || !body.having.is_empty();
+        let one_row_each = body.group_by.is_empty() && body.having.is_empty() && !body.distinct;
 
         let mut sink = QuerySink::<D>::new();
-        if grouped {
-            sink.text("SELECT count(*) FROM (");
+        if one_row_each {
+            body.render_into::<D>(&[crate::expr::count_item()], &mut sink);
+            return sink.finish();
         }
-        body.render_into::<D>(&[crate::expr::count_item()], &mut sink);
-        if grouped {
-            sink.text(") AS ");
-            crate::render::render_ident::<D>(&mut sink, "qbrs_total");
-        }
+        sink.text("SELECT count(*) FROM (");
+        body.render_into::<D>(selection, &mut sink);
+        sink.text(") AS ");
+        crate::render::render_ident::<D>(&mut sink, "qbrs_total");
         sink.finish()
     }
 
@@ -311,6 +312,15 @@ impl<D, Scope, Sel> Select<D, Scope, Sel> {
         Scope: Superset<Req, Idxs>,
     {
         self.body.order_by.push((key.kind, key.dir));
+        self
+    }
+
+    /// `SELECT DISTINCT`: one row per distinct selected tuple. The natural
+    /// answer to a one-to-many join that repeats its left side, and unlike a
+    /// `GROUP BY` of the whole selection it doesn't have to be restated when
+    /// the selection changes. Idempotent — a query is distinct or it isn't.
+    pub fn distinct(mut self) -> Self {
+        self.body.distinct = true;
         self
     }
 
@@ -447,7 +457,7 @@ impl<D: Dialect, Scope, Sel> Select<D, Scope, Sel> {
     where
         Sel: Selection<Scope, Idx>,
     {
-        self.body.count_sql::<D>()
+        self.body.count_sql::<D>(&self.selection.items())
     }
 
     /// This query as an embeddable `Fragment`: an `EXISTS (..)` subquery, a
@@ -479,6 +489,7 @@ impl SelectBody {
     pub(super) fn render_into<RD: Dialect>(&self, selection: &[SelectItem], sink: &mut dyn Sink) {
         let SelectBody {
             ctes,
+            distinct,
             from_table,
             joins,
             wheres,
@@ -510,6 +521,9 @@ impl SelectBody {
             sink.ch(' ');
         }
         sink.text("SELECT ");
+        if *distinct {
+            sink.text("DISTINCT ");
+        }
 
         render_select_list::<RD>(selection, sink);
 

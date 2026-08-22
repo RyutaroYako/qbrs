@@ -211,10 +211,11 @@ query is the intended usage and sidesteps that. Nullability comes from `Option<T
 separate attribute); attributes are only `#[column(primary_key | generated | default)]`.
 Insert fields use `Defaultable<T>` (and `Defaultable<Option<T>>` for nullable-with-default) so
 omit / explicit-NULL / explicit-value stay distinguishable; update fields use `Option<T>` /
-`Option<Option<T>>` for untouched / set-NULL / set-value. `UPDATE .. SET` needs at least one
-assignment, and an all-untouched `*Update` is request-shaped data rather than a bug, so
-`update().set(..)` and `.on_conflict_do_update(..)` return `Result<_, NothingToSet>` and the
-renderers take a non-empty `update::Assignments`.
+`Option<Option<T>>` for untouched / set-NULL / set-value. A statement with nothing in it —
+`UPDATE .. SET` with no assignments, `INSERT` with no rows — has no SQL form, and both
+shapes are ordinary request-shaped data rather than bugs, so `update().set(..)`,
+`.on_conflict_do_update(..)` and `.values_all(..)` return a `Result` (`NothingToSet` /
+`NothingToInsert`) and the renderers take a non-empty `update::Assignments`.
 
 `with!{}` generates the same shape for a CTE pseudo-table — markers, consts, and accessor
 traits alike — so a CTE *is* a real table to `Scope`/`Find`/`Superset` with no separate

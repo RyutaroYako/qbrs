@@ -115,6 +115,20 @@ mod orders {
 }
 
 #[test]
+fn distinct_deduplicates_the_rows_a_join_repeats() {
+    let (sql, _params) = select((users::id, users::name))
+        .from::<Postgres, _>(users::Table)
+        .inner_join(orders::Table, orders::user_id.eq(users::id))
+        .distinct()
+        .to_sql();
+    assert_eq!(
+        sql,
+        "SELECT DISTINCT \"users\".\"id\", \"users\".\"name\" FROM \"users\" \
+         INNER JOIN \"orders\" ON (\"orders\".\"user_id\" = \"users\".\"id\")"
+    );
+}
+
+#[test]
 fn basic_select_renders_expected_sql() {
     let q = select((users::id, users::name))
         .from::<Postgres, _>(users::Table)
