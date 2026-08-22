@@ -3,7 +3,7 @@
 //! A tuple selection decodes to `Row<..>`: a type-level list of
 //! `(key, value)` cells. A column's key is its `expr::ColumnKey`, a computed
 //! expression's is the identity it carries (`expr::Count`,
-//! `window::RowNumber`), and `label!{}` supplies one for anything that has
+//! `window::RowNumber`), and `.label(label::..)` supplies one for anything that has
 //! none. `Field` looks a key up the way `scope::Find` looks a table up, with
 //! the same `Here`/`There` index.
 //!
@@ -20,13 +20,13 @@
 //!
 //! **Known limitations**: a key selected twice is ambiguous at the point it
 //! is read, rather than resolving to the first — give one of them a
-//! `label!{}` alias. `into_tuple` is implemented up to 16 columns; `Row`
+//! `label!{}` label. `into_tuple` is implemented up to 16 columns; `Row`
 //! itself has no such limit. A field with no name (a bare `sql!{}`
-//! fragment) can only be reached positionally until `label!{}` gives it one.
+//! fragment) can only be reached positionally until `.label(label::..)` gives it one.
 
 use std::marker::PhantomData;
 
-use crate::expr::{Aliased, Column, ColumnKey, Keyed, SqlType};
+use crate::expr::{Column, ColumnKey, Keyed, Labeled, SqlType};
 use crate::scope::{Cons, Here, Nil, There};
 
 /// The empty row.
@@ -74,7 +74,7 @@ impl<K, V, Tail> RowCons<K, V, Tail> {
 #[diagnostic::on_unimplemented(
     message = "`{K}` is not in this query's selection",
     label = "a row can only be read by a key the query selected",
-    note = "add `{K}` to the query's selection list, or `label!{{}}` an alias onto the expression you meant"
+    note = "add `{K}` to the query's selection list, or `.label(label::..)` the expression you meant"
 )]
 pub trait Field<K, Idx> {
     type Value;
@@ -133,7 +133,7 @@ macro_rules! type_name {
 /// A key that has a name, so a field can be found by what it is called
 /// rather than by which key type produced it, and so a row can print itself
 /// keyed. Implemented by `#[derive(Table)]` for columns, by `label!` for
-/// aliases, and by the built-in expression keys.
+/// labels, and by the built-in expression keys.
 pub trait Named {
     type Name;
     const NAME: &'static str;
@@ -155,7 +155,7 @@ impl Named for Anon {
 #[diagnostic::on_unimplemented(
     message = "this query's rows have no field matching `{F}`",
     label = "the selection needs a column of that name, decoding to that type",
-    note = "a computed expression is matched by name only once `label!{{}}` gives it one"
+    note = "a computed expression is matched by name only once `.label(label::..)` gives it one"
 )]
 pub trait TakeNamed<F, Idx> {
     type Value;
@@ -210,7 +210,7 @@ impl<L: RowKeys> RowKeys for Row<L> {
 #[diagnostic::on_unimplemented(
     message = "column `{Self}` can't stand in for `{Declared}`",
     label = "these two columns must have the same name",
-    note = "give the selected expression a `label!{{}}` alias if it should be called `{Declared}`"
+    note = "`.label(label::{Declared})` the selected expression if that is what it should be called"
 )]
 pub trait SameNameAs<Declared> {}
 
@@ -262,10 +262,22 @@ macro_rules! key_list {
 )]
 pub trait SameShape<Other> {}
 
+/// The values half of `SameShape`, split out so a mismatch reports itself
+/// rather than surfacing as an associated-type equality failure inside the
+/// blanket impl below.
+#[diagnostic::on_unimplemented(
+    message = "these two selections don't decode to the same values",
+    label = "the same types, in the same order, are needed on both sides"
+)]
+pub trait SameValues<Other> {}
+
+#[diagnostic::do_not_recommend]
+impl<A: RowValues, B: RowValues<Values = <A as RowValues>::Values>> SameValues<B> for A {}
+
 impl<A, B> SameShape<Row<B>> for Row<A>
 where
-    Row<A>: RowValues + RowKeys,
-    Row<B>: RowValues<Values = <Row<A> as RowValues>::Values> + RowKeys,
+    Row<A>: SameValues<Row<B>> + RowKeys,
+    Row<B>: RowKeys,
     <Row<A> as RowKeys>::Keys: SameNames<<Row<B> as RowKeys>::Keys>,
 {
 }
@@ -284,7 +296,7 @@ impl<K, Req, S: SqlType> RowKey for Keyed<K, Req, S> {
     type Key = K;
 }
 
-impl<K, Inner> RowKey for Aliased<K, Inner> {
+impl<K, Inner> RowKey for Labeled<K, Inner> {
     type Key = K;
 }
 
@@ -303,13 +315,13 @@ impl<Req, S: SqlType> RowKey for crate::expr::Declared<Req, S> {
 #[diagnostic::on_unimplemented(
     message = "`{Self}` doesn't name a field",
     label = "an unlabelled expression has no name to look up",
-    note = "give it one with `.alias(label::..)`, or read it positionally with `into_tuple()`"
+    note = "give it one with `.label(label::..)`, or read it positionally with `into_tuple()`"
 )]
 pub trait LookupKey: RowKey {}
 
 impl<C: ColumnKey> LookupKey for Column<C> {}
 impl<K, Req, S: SqlType> LookupKey for Keyed<K, Req, S> {}
-impl<K, Inner> LookupKey for Aliased<K, Inner> {}
+impl<K, Inner> LookupKey for Labeled<K, Inner> {}
 
 /// A decoded row. Its fields are fixed by the query's selection list, and
 /// each is read by the same value that selected it.

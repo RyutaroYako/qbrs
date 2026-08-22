@@ -97,11 +97,10 @@ pub async fn setup_db() -> (sqlx::PgPool, Db) {
 /// inactive, one with no orders) and a handful of orders — enough to make
 /// filters/joins/nullability actually demonstrate something.
 pub async fn seed(pool: &sqlx::PgPool) {
-    use qbrs::dialect::Postgres;
-    use qbrs::expr::ExprMethods;
-    use qbrs_sqlx::{ExecuteExt, LoadExt};
+    use qbrs::prelude::*;
+    use qbrs_sqlx::prelude::*;
 
-    let ids: Vec<i64> = qbrs::insert::insert::<Postgres, _>(users::Table)
+    let ids: Vec<i64> = insert::<Postgres, _>(users::Table)
         .values(
             UsersInsert::builder()
                 .email("ada@example.com")
@@ -127,7 +126,7 @@ pub async fn seed(pool: &sqlx::PgPool) {
 
     // Dan (ids[1]) intentionally gets no orders and active=false, so the
     // examples have something interesting to filter/outer-join against.
-    qbrs::update::update::<Postgres, _>(users::Table)
+    update::<Postgres, _>(users::Table)
         .set(UsersUpdate {
             active: Some(false),
             ..Default::default()
@@ -138,7 +137,7 @@ pub async fn seed(pool: &sqlx::PgPool) {
         .await
         .expect("deactivate dan");
 
-    qbrs::insert::insert::<Postgres, _>(orders::Table)
+    insert::<Postgres, _>(orders::Table)
         .values(OrdersInsert::builder().user_id(ids[0]).total(1500).build())
         .values(
             OrdersInsert::builder()

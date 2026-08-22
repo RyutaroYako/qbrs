@@ -1,14 +1,15 @@
 //! What a `.select(..)` list decodes to once a row comes back.
 
-use crate::expr::{AliasKey, Aliased, Column, ColumnKey, Declared, Expr, ExprKind, Keyed, SqlType};
+use crate::expr::{Column, ColumnKey, Declared, Expr, ExprKind, Keyed, LabelKey, Labeled, SqlType};
 use crate::render::SelectItem;
 use std::marker::PhantomData;
 
 use crate::row::{Named, Row, RowCons, RowKey, RowNil};
 use crate::scope::{Find, Nil, Superset, Table, WrapNullable};
 
-/// One element of a selection list: the key its value is filed under in the
-/// resulting `Row`, and the Rust type it decodes to.
+/// One *field* of a resulting `Row`: the key its value is filed under, and
+/// the Rust type it decodes to. A selection list is a chain of
+/// `SelectionPart`s, one of which — `All` — carries many of these at once.
 ///
 /// Parameterized by `Scope` so a bare column's `Value` is `Option<T>` when —
 /// and only when — that column's table is nullable in *this* query, via
@@ -67,7 +68,7 @@ where
 
 /// A table-referencing expression that has stated what it decodes to is
 /// selectable on the same terms as a scope-free one: filed under `Anon`, and
-/// so readable positionally rather than by name until `.alias(..)` gives it
+/// so readable positionally rather than by name until `.label(..)` gives it
 /// one.
 impl<Req, S: SqlType, Scope, Idx> RowField<Scope, Idx> for Declared<Req, S>
 where
@@ -80,7 +81,7 @@ where
 }
 
 /// A scope-free expression — what `sql!{}` produces — needs only a name.
-impl<K: AliasKey, S: SqlType, Scope, Idx> RowField<Scope, Idx> for Aliased<K, Expr<Nil, S>>
+impl<K: LabelKey, S: SqlType, Scope, Idx> RowField<Scope, Idx> for Labeled<K, Expr<Nil, S>>
 where
     Scope: Superset<Nil, Idx>,
 {
@@ -93,8 +94,8 @@ where
 /// One that names tables needs a name *and* a stated type: `S` on an `Expr`
 /// was inferred from whatever built it, and that inference can contradict
 /// the join — `orders::total` is `i64` on its own and `Option<i64>` through
-/// a LEFT JOIN. `declare` is where the caller settles it.
-impl<K: AliasKey, Req, S: SqlType, Scope, Idx> RowField<Scope, Idx> for Aliased<K, Declared<Req, S>>
+/// a LEFT JOIN. `decodes_as` is where the caller settles it.
+impl<K: LabelKey, Req, S: SqlType, Scope, Idx> RowField<Scope, Idx> for Labeled<K, Declared<Req, S>>
 where
     Scope: Superset<Req, Idx>,
 {
@@ -104,7 +105,7 @@ where
     }
 }
 
-impl<K: AliasKey, C: ColumnKey, Scope, Idx> RowField<Scope, Idx> for Aliased<K, Column<C>>
+impl<K: LabelKey, C: ColumnKey, Scope, Idx> RowField<Scope, Idx> for Labeled<K, Column<C>>
 where
     Column<C>: RowField<Scope, Idx>,
 {
@@ -114,8 +115,8 @@ where
     }
 }
 
-impl<K: AliasKey, K0, Req, S: SqlType, Scope, Idx> RowField<Scope, Idx>
-    for Aliased<K, Keyed<K0, Req, S>>
+impl<K: LabelKey, K0, Req, S: SqlType, Scope, Idx> RowField<Scope, Idx>
+    for Labeled<K, Keyed<K0, Req, S>>
 where
     Keyed<K0, Req, S>: RowField<Scope, Idx>,
 {
@@ -155,7 +156,7 @@ scalar_selection!(impl[C: ColumnKey] Column<C>);
 scalar_selection!(impl[S: SqlType] Expr<Nil, S>);
 scalar_selection!(impl[Req, S: SqlType] Declared<Req, S>);
 scalar_selection!(impl[K, Req, S: SqlType] Keyed<K, Req, S>);
-scalar_selection!(impl[K, Inner] Aliased<K, Inner>);
+scalar_selection!(impl[K, Inner] Labeled<K, Inner>);
 
 /// One element of a selection list. A column or an expression contributes
 /// one field; `All` contributes a whole table's worth. `Fields<Tail>` is
@@ -187,7 +188,7 @@ field_part!(impl[C: ColumnKey] Column<C>);
 field_part!(impl[S: SqlType] Expr<Nil, S>);
 field_part!(impl[Req, S: SqlType] Declared<Req, S>);
 field_part!(impl[K, Req, S: SqlType] Keyed<K, Req, S>);
-field_part!(impl[K, Inner] Aliased<K, Inner>);
+field_part!(impl[K, Inner] Labeled<K, Inner>);
 
 /// Every column of one table, in declaration order — `select(users::All)`.
 /// The table's own `#[derive(Table)]` supplies the chain through

@@ -29,9 +29,10 @@ pub trait Table: 'static {
 pub trait BaseTable: Table + private::Sealed {}
 
 mod private {
-    /// Sealed the way `dialect::Dialect` is: a gate anyone can implement
-    /// isn't one. `#[derive(Table)]` emits both impls; `with!` emits
-    /// neither.
+    /// The gate itself. Re-exported `#[doc(hidden)]` below, because
+    /// `#[derive(Table)]` expands in the caller's crate and has to emit the
+    /// impl there; `with!` deliberately emits neither, which is what keeps
+    /// a CTE's pseudo-table out of `.from(..)` except through its binding.
     pub trait Sealed {}
 }
 

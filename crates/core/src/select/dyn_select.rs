@@ -39,11 +39,29 @@ impl<D, Scope, Sel> Select<D, Scope, Sel> {
     }
 }
 
+/// Never implemented: it exists so `DynSelect::filter` can name a bound
+/// that always fails, and say why. Without the method, `.filter(..)` on an
+/// erased query resolves to `Iterator::filter` and the error talks about
+/// iterators.
+#[diagnostic::on_unimplemented(
+    message = "an erased query can't be filtered",
+    label = "add `.filter(..)` before `.erase()` — erasure gives up the scope a condition is checked against",
+    note = "`.erase()` is for unifying two fully-built branches with different joins; compose the query first"
+)]
+pub trait CannotFilterAfterErase {}
+
 impl<D, Output> DynSelect<D, Output> {
     /// `LIMIT`/`OFFSET` survive erasure because they reference nothing: a
     /// row count needs no proof that a table is joined. `order_by` doesn't
     /// follow them here — a sort key is a column reference, and the scope
     /// that would justify it is exactly what `.erase()` gave up.
+    /// Always a compile error — see `CannotFilterAfterErase`. Present so
+    /// the error is that one, rather than `Iterator::filter`'s.
+    #[doc(hidden)]
+    pub fn filter<T: CannotFilterAfterErase>(self, _cond: T) -> Self {
+        self
+    }
+
     pub fn limit(mut self, n: impl super::IntoLimit) -> Self {
         self.body.limit = Some(n.into_limit());
         self

@@ -17,10 +17,10 @@ pub mod prelude {
     pub use qbrs_core::dialect::{MySql, Postgres, Sqlite};
     pub use qbrs_core::expr::Column;
     pub use qbrs_core::expr::{
-        AliasExt, BigInt, Bool, Bytes, ExprMethods, HasCount, Integer, Real, SortDir, Text,
+        BigInt, Bool, Bytes, ExprMethods, HasCount, Integer, LabelExt, Real, SortDir, Text,
         TextExprMethods, avg, count, count_of, max, min, sum,
     };
-    pub use qbrs_core::expr::{Aliased, Declared, Expr, IntoExpr, Keyed};
+    pub use qbrs_core::expr::{Declared, Expr, IntoExpr, Keyed, Labeled};
     pub use qbrs_core::insert::{Defaultable, NothingToInsert, insert};
     pub use qbrs_core::row::{IntoStructs, IntoTuples, Named, Row, RowCons, RowNil};
     pub use qbrs_core::scope::{

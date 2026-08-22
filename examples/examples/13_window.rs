@@ -46,7 +46,7 @@ async fn main() {
     // them; the declared name reaches the SQL as the column's `AS` too.
     // Declaring it here rather than at module level keeps it next to the
     // query, and puts it out of reach of any local binding.
-    qbrs::label!(within_user, overall);
+    label!(within_user, overall);
 
     let ranked = select((
         users::email,
@@ -57,10 +57,10 @@ async fn main() {
                     .partition_by(users::id)
                     .order_by(orders::total.desc()),
             )
-            .alias(label::within_user),
+            .label(label::within_user),
         row_number()
             .over(window().order_by(orders::total.desc()))
-            .alias(label::overall),
+            .label(label::overall),
     ))
     .from::<Postgres, _>(users::Table)
     .inner_join(orders::Table, orders::user_id.eq(users::id))

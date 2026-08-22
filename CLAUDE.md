@@ -106,7 +106,7 @@ alone and offers no further `.filter()`/`.join()`.
 A tuple selection's `Selection::Output` is `Row<RowCons<Key, Value, ..>>`, not a tuple.
 Each element contributes a key via `select::RowField`: a `Column<C>` keys on its
 `expr::ColumnKey` marker `C`, `count()`/the window functions key on the function itself
-(`expr::Count`, `window::RowNumber`, ...), a `label!`-declared `row::AliasKey` overrides
+(`expr::Count`, `window::RowNumber`, ...), a `label!`-declared `row::LabelKey` overrides
 whichever was there, and a bare `Expr` gets `row::Anon` — deliberately not a `RowKey`, so
 it can't be named at a `.get()` call. `row::GetField<K, Idx>` is `scope::Find` in a
 different costume: same `Here`/`There<I>` indexed lookup, same reason the index must be a
@@ -264,7 +264,7 @@ transactional API. Everything returns `qbrs_sqlx::Result<T>`; keep `UnresolvedPl
   dialect capability trait if it isn't universal, a numbered example under `examples/examples/`
   (plus its row in `examples/README.md`), and the status/feature lists in the root `README.md`.
   A new *selectable* also needs a `select::RowField` impl (deciding its row key) and a
-  matching `qbrs_sqlx::PgDecodeField` impl.
+  matching `qbrs_sqlx::DecodeRow` impl if it decodes to a type nothing else does.
 - Core tests are pure string-rendering assertions with `#[test]`; DB behavior is tested only
   in `qbrs-sqlx` with `#[tokio::test]`. Test names are full sentences
   (`right_join_flips_previously_joined_tables_to_nullable`).

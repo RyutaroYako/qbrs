@@ -620,7 +620,7 @@ pub fn label(input: TokenStream) -> TokenStream {
                 type Key = #name;
             }
             impl ::qbrs::row::LookupKey for #name {}
-            impl ::qbrs::expr::AliasKey for #name {}
+            impl ::qbrs::expr::LabelKey for #name {}
             #[doc(hidden)]
             impl ::qbrs::row::Named for #name {
                 type Name = #type_name;
@@ -664,7 +664,7 @@ fn to_camel_case(s: &str) -> String {
 
 /// Field shape per column:
 /// generated              -> excluded entirely
-/// not_null, no default   -> `T` (required, taken by `new()`)
+/// not_null, no default   -> `T` (required, so `build()` waits for it)
 /// not_null, has default  -> `Defaultable<T>`
 /// nullable, no default   -> `Option<T>`
 /// nullable, has default  -> `Defaultable<Option<T>>`
@@ -719,10 +719,13 @@ fn gen_insert_struct(
         })
         .collect();
 
+    // No defaults on these parameters: a defaulted one is elided when the
+    // compiler prints the type, and the whole point of the slots is that the
+    // printed type says which column is still missing.
     let builder_generics = if slots.is_empty() {
         quote! {}
     } else {
-        quote! { <#(#slots = ()),*> }
+        quote! { <#(#slots),*> }
     };
     let builder_args = if slots.is_empty() {
         quote! {}
@@ -732,8 +735,10 @@ fn gen_insert_struct(
     let empty_args = if slots.is_empty() {
         quote! {}
     } else {
-        let units = slots.iter().map(|_| quote! { () });
-        quote! { <#(#units),*> }
+        let missing = required_names
+            .iter()
+            .map(|n| quote! { ::qbrs::insert::Missing<#mod_ident::columns::#n> });
+        quote! { <#(#missing),*> }
     };
     let full_args = if slots.is_empty() {
         quote! {}
@@ -755,7 +760,14 @@ fn gen_insert_struct(
         let before: Vec<TokenStream2> = slots
             .iter()
             .enumerate()
-            .map(|(j, s)| if j == i { quote! { () } } else { quote! { #s } })
+            .map(|(j, s)| {
+                if j == i {
+                    let col = &required_names[j];
+                    quote! { ::qbrs::insert::Missing<#mod_ident::columns::#col> }
+                } else {
+                    quote! { #s }
+                }
+            })
             .collect();
         let after: Vec<TokenStream2> = slots
             .iter()
@@ -799,9 +811,18 @@ fn gen_insert_struct(
                 }
             }
         } else {
+            // Nullable *and* defaulted: three states, so the third one — an
+            // explicit NULL, as opposed to letting the schema's default
+            // stand — needs a way to be said.
+            let null_setter = format_ident!("{}_null", name);
             quote! {
                 pub fn #name(mut self, value: impl ::std::convert::Into<#base>) -> Self {
                     self.#name = ::qbrs::insert::Defaultable::Value(::std::option::Option::Some(value.into()));
+                    self
+                }
+
+                pub fn #null_setter(mut self) -> Self {
+                    self.#name = ::qbrs::insert::Defaultable::Value(::std::option::Option::None);
                     self
                 }
             }
@@ -846,7 +867,7 @@ fn gen_insert_struct(
             /// once every column without a default has a value.
             pub fn builder() -> #builder_ident #empty_args {
                 #builder_ident {
-                    #(#required_names: (),)*
+                    #(#required_names: ::qbrs::insert::Missing::new(),)*
                     #(#optional_names: ::std::default::Default::default(),)*
                 }
             }

@@ -50,6 +50,14 @@ impl Ordinal {
         }
     }
 
+    /// The direction as a value, matching `select::OrderExt::sort`.
+    pub fn sort(self, dir: SortDir) -> OrdinalKey {
+        OrdinalKey {
+            position: self.0,
+            dir,
+        }
+    }
+
     pub fn desc(self) -> OrdinalKey {
         OrdinalKey {
             position: self.0,

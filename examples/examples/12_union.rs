@@ -22,9 +22,9 @@ async fn main() {
     // `(String, i64)` shape.
     // Branches must agree on column *names* as well as types, since the
     // combined result is read by key. A literal has no name of its own.
-    qbrs::label!(total);
+    label!(total);
 
-    let user_rows = select((users::email, sql!(BigInt, "0").alias(label::total)))
+    let user_rows = select((users::email, sql!(BigInt, "0").label(label::total)))
         .from::<Postgres, _>(users::Table)
         .filter(users::active.eq(true));
     let order_rows = select((users::email, orders::total))

@@ -21,7 +21,7 @@ mod selection;
 mod set_op;
 
 pub use crate::expr::SortDir;
-pub use dyn_select::DynSelect;
+pub use dyn_select::{CannotFilterAfterErase, DynSelect};
 pub use prepared::{Prepared, PreparedParams, UnresolvedPlaceholder};
 pub use selection::{All, AllColumns, RowField, Selection, SelectionPart};
 pub use set_op::{Ordinal, OrdinalKey, SetOp, nth};
@@ -70,6 +70,15 @@ pub trait OrderExt<S: SqlType>: IntoExpr<S> + Sized {
         OrderKey {
             kind: self.into_expr().kind,
             dir: SortDir::Asc,
+            _marker: PhantomData,
+        }
+    }
+    /// The direction as a value, for a sort order that arrives at runtime —
+    /// `?dir=desc` — instead of an N-way match over `.asc()`/`.desc()`.
+    fn sort(self, dir: SortDir) -> OrderKey<Self::Req> {
+        OrderKey {
+            kind: self.into_expr().kind,
+            dir,
             _marker: PhantomData,
         }
     }

@@ -261,9 +261,10 @@ where
 }
 
 /// Decodes a `DynSelect`'s `Output` positionally out of a `PgRow`. Narrower
-/// than `PgDecode`: erasure leaves only the plain-Rust `Output`, with no
-/// `Selection` impl left to hang decoding off, so this is implemented
-/// directly against the same closed set of native types.
+/// Decoding is keyed on the plain-Rust type a selection produces, not on
+/// the selection itself: erasure leaves only `Output`, with no `Selection`
+/// impl left to hang decoding off, so this is implemented directly against
+/// the closed set of native types.
 pub trait DecodeRow: Sized {
     #[doc(hidden)]
     fn decode_at(row: &PgRow, idx: &mut usize) -> sqlx::Result<Self>;

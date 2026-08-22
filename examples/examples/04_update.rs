@@ -11,7 +11,7 @@ async fn main() {
     let (pool, _db) = setup_db().await;
     seed(&pool).await;
 
-    let ada_id: i64 = qbrs::select::select(users::id)
+    let ada_id: i64 = select(users::id)
         .from::<Postgres, _>(users::Table)
         .filter(users::email.eq("ada@example.com"))
         .load_one(&pool)

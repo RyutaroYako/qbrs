@@ -1,4 +1,4 @@
-//! Rows keyed by column: what `.get()` resolves to, what an alias renders
+//! Rows keyed by column: what `.get()` resolves to, what a label renders
 //! as, and what survives a column being added to a selection.
 
 // Naming a row type spells out its key list, which is what
@@ -133,13 +133,13 @@ fn an_untupled_selection_stays_a_bare_value() {
 qbrs::label!(within_user, overall);
 
 #[test]
-fn an_alias_renders_as_and_keys_the_row() {
+fn a_label_renders_as_and_keys_the_row() {
     let (sql, _) = select((
         users::email,
         row_number()
             .over(window().partition_by(users::id))
-            .alias(label::within_user),
-        row_number().over(window()).alias(label::overall),
+            .label(label::within_user),
+        row_number().over(window()).label(label::overall),
     ))
     .from::<Postgres, _>(users::Table)
     .to_sql();
@@ -157,7 +157,7 @@ fn an_alias_renders_as_and_keys_the_row() {
 }
 
 #[test]
-fn an_unaliased_expression_is_keyed_by_the_function_that_made_it() {
+fn an_unlabelled_expression_is_keyed_by_the_function_that_made_it() {
     let (sql, _) = select((users::email, count()))
         .from::<Postgres, _>(users::Table)
         .group_by(users::email)
@@ -213,7 +213,7 @@ struct Ranked {
 }
 
 #[test]
-fn a_label_alias_is_matched_by_its_declared_name() {
+fn a_declared_label_is_matched_by_its_name() {
     let row = Row::new(RowCons::<users::columns::email, _, _>::new(
         "ada@example.com".to_string(),
         RowCons::<label::within_user, _, _>::new(1i64, RowNil),
@@ -318,7 +318,7 @@ fn a_named_expression_over_a_column_states_what_it_decodes_to() {
         users::active
             .eq(true)
             .decodes_as::<qbrs::expr::Bool>()
-            .alias(label::flagged),
+            .label(label::flagged),
     ))
     .from::<Postgres, _>(users::Table)
     .to_sql();

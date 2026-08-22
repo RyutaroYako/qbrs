@@ -233,7 +233,7 @@ async fn sqlite_executes_every_rendered_statement_shape() {
                         .partition_by(orders::user_id)
                         .order_by(orders::total.desc()),
                 )
-                .alias(label::rank_in_user),
+                .label(label::rank_in_user),
         ))
         .from::<Sqlite, _>(orders::Table)
         .to_sql(),

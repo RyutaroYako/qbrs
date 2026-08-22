@@ -128,7 +128,13 @@ Not yet published to crates.io. Depend on it from git in the meantime:
 [dependencies]
 qbrs = { git = "https://github.com/RyutaroYako/qbrs" }
 qbrs-sqlx = { git = "https://github.com/RyutaroYako/qbrs" }  # Postgres execution via sqlx
+sqlx = { version = "0.9", features = ["runtime-tokio", "postgres"] }  # for `PgPool`
 ```
+
+`qbrs-sqlx`'s methods take any `sqlx::PgExecutor`, so the `sqlx` version has
+to be the same one it is built against (0.9). Column types beyond the six
+built in are features: `qbrs = { .., features = ["chrono", "uuid",
+"decimal"] }`, matched by the same feature on `qbrs-sqlx`.
 
 ## Usage
 
@@ -179,10 +185,12 @@ A schema is a `#[derive(Table)]` struct, shown in the
   [`01_select_basic`](examples/examples/01_select_basic.rs),
   [`03_insert`](examples/examples/03_insert.rs),
   [`04_update`](examples/examples/04_update.rs),
-  [`05_delete`](examples/examples/05_delete.rs). A NOT NULL column with a
-  schema default gets a three-state `Defaultable<Option<T>>` on `*Insert`
-  (omit / explicit `NULL` / explicit value); `*Update` mirrors this with
-  `Option<Option<T>>` (untouched / `NULL` / value). A request struct's
+  [`05_delete`](examples/examples/05_delete.rs). A column with a schema
+  default gets `Defaultable<T>` on `*Insert` (omit → `DEFAULT`, or a value);
+  a nullable one with a default gets the three-state
+  `Defaultable<Option<T>>`, whose third state the builder spells
+  `.column_null()`. `*Update` mirrors all this with `Option<T>` /
+  `Option<Option<T>>` (untouched / `NULL` / value), and a request struct's
   `Option<T>` converts into either. An `*Insert` is built by naming its
   columns — `UsersInsert::builder().email(..).build()` — and `build()` is
   reachable only once every column without a default has a value, so no
@@ -298,8 +306,8 @@ A schema is a `#[derive(Table)]` struct, shown in the
 - Naming a row type in a signature takes a type alias, and one long enough
   to trip `clippy::type_complexity`; inference covers every use that stays
   inside a function.
-- `ORDER BY` takes an expression, not an output alias: sort by
-  `sum(orders::total).desc()`, not by the `label!` it was aliased to.
+- `ORDER BY` takes an expression, not an output label: sort by
+  `sum(orders::total).desc()`, not by the `label!` it was labelled to.
 - One `label!` per scope — it declares a `label` module, and a scope holds
   one. List every name that scope needs in the one invocation.
 - A helper generic over rows needs one index type parameter per column it
@@ -321,7 +329,7 @@ A schema is a `#[derive(Table)]` struct, shown in the
   rejected by the database.
 - Two selections are compared by column name, so a `UNION` of branches whose
   columns are named differently, or a CTE body with a computed column, needs
-  a `label!` alias on one side. A `UNION` also needs both branches to be
+  a `label!` label on one side. A `UNION` also needs both branches to be
   tuple selections, and to agree on nullability.
 - No table aliasing. A self-join is rejected, but by an inference ambiguity
   rather than by one of this crate's own diagnostics — and declaring the same
@@ -348,7 +356,7 @@ A schema is a `#[derive(Table)]` struct, shown in the
 - A computed expression over a column has to say what it decodes to —
   `expr.decodes_as::<Nullable<BigInt>>()` — because its NULL-ability doesn't
   follow from any one column's join. Like any unnamed selection it is then
-  read positionally, or by name once `.alias(label::x)` gives it one.
+  read positionally, or by name once `.label(label::x)` gives it one.
 
 ## Status
 

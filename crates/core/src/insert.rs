@@ -17,6 +17,24 @@ use crate::select::Selection;
 use crate::statement::{Returning, Statement, WrittenTable};
 use crate::update::{Assignments, NothingToSet, UpdateRow};
 
+/// A column an `*Insert` builder hasn't been given a value for yet. Named
+/// after the column so the builder's type says which one is missing, rather
+/// than leaving a bare `()` to be counted by position.
+pub struct Missing<C>(std::marker::PhantomData<fn() -> C>);
+
+impl<C> Missing<C> {
+    #[doc(hidden)]
+    pub const fn new() -> Self {
+        Missing(std::marker::PhantomData)
+    }
+}
+
+impl<C> Default for Missing<C> {
+    fn default() -> Self {
+        Missing::new()
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Default)]
 pub enum Defaultable<T> {
     #[default]

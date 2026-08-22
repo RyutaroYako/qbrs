@@ -26,7 +26,7 @@ async fn main() {
     // over 1000. `sum(col)` is a real aggregate over a real column, so a
     // missing join is a compile error here just as it is anywhere else, and
     // the result is named after its column — which is what satisfies the
-    // CTE's declared `total` with nothing aliased. It decodes as
+    // CTE's declared `total` with nothing labelled. It decodes as
     // `Option<i64>`: a sum over zero rows is NULL, whatever the column says.
     let totals = select((orders::user_id, sum(orders::total)))
         .from::<Postgres, _>(orders::Table)

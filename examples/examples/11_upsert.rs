@@ -45,7 +45,7 @@ async fn main() {
         .await
         .expect("upsert do-nothing");
 
-    let unchanged: Option<String> = qbrs::select::select(users::display_name)
+    let unchanged: Option<String> = select(users::display_name)
         .from::<Postgres, _>(users::Table)
         .filter(users::id.eq(id))
         .load_one(&pool)
