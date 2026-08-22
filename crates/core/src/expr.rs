@@ -165,6 +165,31 @@ pub enum Value {
     Placeholder(&'static str),
 }
 
+impl Value {
+    /// The SQL type this value came from, for the one error that has to name
+    /// it: a column type enabled in this crate and not in the execution
+    /// crate. Lives here because the feature-gated variants do.
+    pub fn type_name(&self) -> &'static str {
+        match self {
+            Value::I32(_) | Value::NullI32 => "Integer",
+            Value::I64(_) | Value::NullI64 => "BigInt",
+            Value::F64(_) | Value::NullF64 => "Real",
+            Value::Text(_) | Value::NullText => "Text",
+            Value::Bool(_) | Value::NullBool => "Bool",
+            Value::Bytes(_) | Value::NullBytes => "Bytes",
+            Value::Placeholder(_) => "placeholder",
+            #[cfg(feature = "chrono")]
+            Value::Timestamptz(_) | Value::NullTimestamptz => "Timestamptz",
+            #[cfg(feature = "chrono")]
+            Value::Date(_) | Value::NullDate => "Date",
+            #[cfg(feature = "uuid")]
+            Value::Uuid(_) | Value::NullUuid => "Uuid",
+            #[cfg(feature = "decimal")]
+            Value::Numeric(_) | Value::NullNumeric => "Numeric",
+        }
+    }
+}
+
 macro_rules! value_from {
     ($ty:ty, $variant:ident) => {
         impl From<$ty> for Value {

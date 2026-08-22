@@ -107,24 +107,8 @@ fn bind_value<'q>(
         // Reachable only when a column type is on in `qbrs-core` and off
         // here: the variant exists, the arm that binds it doesn't.
         #[allow(unreachable_patterns)]
-        other => return Err(Error::FeatureNotEnabled(value_type_name(&other))),
+        other => return Err(Error::FeatureNotEnabled(other.type_name())),
     })
-}
-
-/// Names the column type a `Value` came from, for the one error that has to
-/// name it.
-fn value_type_name(value: &Value) -> &'static str {
-    match value {
-        Value::I32(_) | Value::NullI32 => "Integer",
-        Value::I64(_) | Value::NullI64 => "BigInt",
-        Value::F64(_) | Value::NullF64 => "Real",
-        Value::Text(_) | Value::NullText => "Text",
-        Value::Bool(_) | Value::NullBool => "Bool",
-        Value::Bytes(_) | Value::NullBytes => "Bytes",
-        Value::Placeholder(_) => "placeholder",
-        #[allow(unreachable_patterns)]
-        _ => "this column type",
-    }
 }
 
 fn bind_all<'q>(

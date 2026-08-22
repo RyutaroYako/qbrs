@@ -21,8 +21,8 @@ use crate::scope::{Find, Nil, Superset, Table, WrapNullable};
 /// separate check.
 #[diagnostic::on_unimplemented(
     message = "`{Self}` can't be a field of this query's rows",
-    label = "columns, aggregates, window functions and scope-free `sql!` fragments can be",
-    note = "a fragment that names a table has to say what it decodes to first — `.decodes_as::<Nullable<BigInt>>()` — since its NULL-ability doesn't follow from any one column's join"
+    label = "columns, aggregates, window functions, `<table>::All` and `sql!` fragments can be",
+    note = "an expression the builder inferred a type for — a comparison, an arithmetic combination — has to state what it decodes to with `.decodes_as::<..>()`, since that inference can contradict the join; a `sql!` fragment already states it"
 )]
 pub trait RowField<Scope, Idx>: RowKey {
     type Value;
@@ -90,7 +90,7 @@ impl<K: LabelKey, Inner: RowField<Scope, Idx>, Scope, Idx> RowField<Scope, Idx>
 #[diagnostic::on_unimplemented(
     message = "`{Self}` isn't a valid selection list here",
     label = "a selection is a column, an expression, `<table>::All`, or a tuple of up to 16 of those",
-    note = "every element has to be in scope — `.from(..)`/`.join(..)` the tables it names — and a `sql!` fragment that names one has to state its decoded type with `.decodes_as::<..>()`"
+    note = "every element has to be in scope — `.from(..)`/`.join(..)` the tables it names — and an expression the builder inferred a type for has to state its decoded type with `.decodes_as::<..>()`"
 )]
 pub trait Selection<Scope, Idx> {
     type Output;

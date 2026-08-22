@@ -149,13 +149,13 @@ add generics to `ExprKind`/`Value`, and don't make the renderer generic over que
 
 `ExprKind` is `pub(crate)` and `Expr::from_kind` is too, so the typed wrapper is the only way
 to build one — that is what makes the `Req`/`S` tags mean anything rather than merely exist.
-`expr::raw_expr` is the single `#[doc(hidden)]` door, needed because `sql!` expands in the
-caller's crate. A `sql!` slot takes an `expr::RawArg` — a value, or an expression the renderer
+`expr::raw_expr` and `expr::placeholder` are the two `#[doc(hidden)]` doors, needed because
+`sql!` and `prepare!` expand in the caller's crate. A `sql!` slot takes an `expr::RawArg` — a value, or an expression the renderer
 writes out — so a column in a slot is quoted by the same code that quotes it anywhere else and
 carries its table into the fragment's `Req` (`expr::RawArgs` unions the slots' `Req`s). Only
-the text *between* slots is unchecked. Selecting still needs `Expr<Nil, S>` or a
-`decodes_as::<S>()`: an expression naming a table has a per-query nullability that `S` doesn't
-carry.
+the text *between* slots is unchecked. A fragment is selectable as written, since `sql!`'s
+first argument *is* the decoded type; what still needs `decodes_as::<S>()` is an expression
+whose `S` the builder inferred, which can contradict the join.
 
 ### Dialects and capability gating
 

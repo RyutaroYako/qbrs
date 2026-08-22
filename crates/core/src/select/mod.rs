@@ -140,7 +140,6 @@ pub trait SortBy<Scope, Idxs> {
     fn into_sort_key(self) -> SortKey<Scope>;
 }
 
-#[diagnostic::do_not_recommend]
 impl<Scope: Superset<Req, Idxs>, Req, Idxs> SortBy<Scope, Idxs> for OrderKey<Req> {
     fn into_sort_key(self) -> SortKey<Scope> {
         SortKey {
@@ -168,7 +167,6 @@ pub trait GroupBy<Scope, Idxs> {
     fn into_grouping(self) -> Grouping<Scope>;
 }
 
-#[diagnostic::do_not_recommend]
 impl<Scope: Superset<Req, Idxs>, Req, Idxs, S: SqlType, T: IntoExpr<S, Req = Req>>
     GroupBy<Scope, (Idxs, S)> for T
 {
@@ -847,7 +845,7 @@ macro_rules! into_row_count {
     ($($signed:ty),+ ; $($unsigned:ty),+) => {
         $(impl IntoRowCount for $signed {
             fn into_row_count(self) -> RowCount {
-                RowCount(RowCountKind::Literal(i64::try_from(self).unwrap_or(i64::MAX).max(0)))
+                RowCount(RowCountKind::Literal((self as i64).max(0)))
             }
         })+
         $(impl IntoRowCount for $unsigned {
