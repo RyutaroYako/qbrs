@@ -240,16 +240,6 @@ where
 {
 }
 
-/// Builds a key list from column marker types.
-#[doc(hidden)]
-#[macro_export]
-macro_rules! key_list {
-    () => { $crate::scope::Nil };
-    ($head:ty $(, $rest:ty)* $(,)?) => {
-        $crate::scope::Cons<$head, $crate::key_list!($($rest),*)>
-    };
-}
-
 /// Two selections produce the same row: the same column names, in the same
 /// order, decoding to the same types. A one-column selection decodes to a
 /// bare value rather than a `Row`, and two of those match when the value

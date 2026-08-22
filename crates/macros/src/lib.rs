@@ -494,9 +494,7 @@ fn expand_with(decl: CteDecl) -> TokenStream2 {
     let mut consts = Vec::new();
     let mut accessors = Vec::new();
     let mut accessor_uses = Vec::new();
-    let mut key_types = Vec::new();
     let mut names = Vec::new();
-    let mut natives = Vec::new();
 
     for (field, ty) in &decl.fields {
         let field_str = field.to_string();
@@ -534,10 +532,22 @@ fn expand_with(decl: CteDecl) -> TokenStream2 {
             #[allow(unused_imports)]
             pub use #mod_ident::#trait_ident as _;
         });
-        key_types.push(quote! { columns::#field });
         names.push(field_str);
-        natives.push(quote! { <#ty as ::qbrs::expr::SqlType>::Native });
     }
+
+    let declared_row =
+        decl.fields
+            .iter()
+            .rev()
+            .fold(quote! { ::qbrs::row::RowNil }, |tail, (field, ty)| {
+                quote! {
+                    ::qbrs::row::RowCons<
+                        columns::#field,
+                        <#ty as ::qbrs::expr::SqlType>::Native,
+                        #tail,
+                    >
+                }
+            });
 
     let col_idents: Vec<_> = decl.fields.iter().map(|(field, _)| field.clone()).collect();
     let all_fields = col_idents.iter().rev().fold(quote! { Tail }, |tail, name| {
@@ -587,8 +597,7 @@ fn expand_with(decl: CteDecl) -> TokenStream2 {
             }
 
             impl ::qbrs::cte::CteShape for Table {
-                type Shape = (#(#natives,)*);
-                type Keys = ::qbrs::key_list!(#(#key_types),*);
+                type Row = #declared_row;
                 const COLUMN_NAMES: &'static [&'static str] = &[#(#names),*];
             }
         }

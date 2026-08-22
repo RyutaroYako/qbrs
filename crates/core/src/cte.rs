@@ -21,7 +21,7 @@ use std::marker::PhantomData;
 
 use crate::dialect::Dialect;
 use crate::render::Fragment;
-use crate::row::{RowKeys, RowValues, SameNames};
+use crate::row::{Row, SameShape};
 use crate::scope::Table;
 use crate::select::{Select, Selection};
 
@@ -33,10 +33,10 @@ use crate::select::{Select, Selection};
 /// declared names rather than to whatever Postgres would have called the
 /// body's columns.
 pub trait CteShape: Table {
-    type Shape;
-    /// The declared columns as a key list, so a body that selects the right
-    /// types in the wrong order is rejected rather than silently bound.
-    type Keys;
+    /// The declared columns as a row — the same `RowCons` chain a selection
+    /// produces, so a body is checked against it by the one comparison
+    /// `UNION` branches already use: same names, same types, same order.
+    type Row;
     const COLUMN_NAMES: &'static [&'static str];
 }
 
@@ -71,8 +71,7 @@ pub fn with<D: Dialect, Marker: CteShape, Scope, Sel, Idx>(
 ) -> Cte<D, Marker>
 where
     Sel: Selection<Scope, Idx>,
-    Sel::Output: RowValues<Values = Marker::Shape> + RowKeys,
-    <Sel::Output as RowKeys>::Keys: SameNames<Marker::Keys>,
+    Sel::Output: SameShape<Row<Marker::Row>>,
 {
     Cte {
         name: Marker::NAME,

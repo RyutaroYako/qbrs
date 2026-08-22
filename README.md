@@ -306,6 +306,13 @@ A schema is a `#[derive(Table)]` struct, shown in the
 - Naming a row type in a signature takes a type alias, and one long enough
   to trip `clippy::type_complexity`; inference covers every use that stays
   inside a function.
+- A `RETURNING` row is decoded as many, so `load_one` hands back an
+  `Option`: `ON CONFLICT DO NOTHING` can return no row at all, even for an
+  insert of exactly one.
+- The dialect is part of a query's type (`.from::<Postgres, _>(..)`), because
+  what a dialect supports is checked while the query is being built, not when
+  it renders. A project that speaks one dialect can wrap the entry points
+  once rather than repeating the turbofish.
 - `ORDER BY` takes an expression, not an output label: sort by
   `sum(orders::total).desc()`, not by the `label!` it was labelled to.
 - One `label!` per scope — it declares a `label` module, and a scope holds

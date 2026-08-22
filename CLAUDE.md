@@ -228,8 +228,8 @@ to `.from(binding)`/`.inner_join(binding, on)` exactly where a table would go, m
 attaching the `WITH` clause and putting the pseudo-table in scope one act. Selecting
 from a CTE nobody bound, binding one and selecting from another, and splicing a body
 rendered for one dialect into another's statement are all unwritable as a result. Its declared columns are checked against the actual body at
-`cte::with()` on both values (`RowValues`) and names (`row::SameNames`), the same pair
-`SetOp` requires of `UNION` branches.
+`cte::with()` by `row::SameShape` — the same one comparison `SetOp` requires of `UNION`
+branches, against the `RowCons` chain `with!{}` declares as `CteShape::Row`.
 
 ### Execution layer (`crates/qbrs-sqlx`)
 
