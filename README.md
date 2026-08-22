@@ -277,8 +277,14 @@ A schema is a `#[derive(Table)]` struct, shown in the
   positionally until `label!` gives it one — passing one to `row.get(..)` is
   a compile error, not a lookup of some other unnamed field. The same applies wherever two
   selections are compared by name — a CTE body and a `UNION` branch.
-- Selecting the same name twice is ambiguous at the point it's read rather
-  than resolving to the first; alias one of them.
+- Selecting the same name twice is ambiguous at the point it's read by name
+  — `#[derive(FromRow)]`, `take_named` — rather than resolving to the first.
+  It surfaces as `error[E0284]: type annotations needed`, and the fix is to
+  `label!` one of them. Reading either by its own column value
+  (`row.get(users::id)`) is unaffected.
+- A selection list holds at most 16 elements. `<table>::All` counts as one
+  however many columns the table has, so the limit bites only on 17 separate
+  expressions.
 - Naming a row type in a signature takes a type alias, and one long enough
   to trip `clippy::type_complexity`; inference covers every use that stays
   inside a function.

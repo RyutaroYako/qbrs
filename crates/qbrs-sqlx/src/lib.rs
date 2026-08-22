@@ -136,6 +136,11 @@ async fn execute_only<'e, E: sqlx::PgExecutor<'e>>(
 ///
 /// `Idx` is threaded through the trait's parameter list for the reason
 /// `scope::Superset` explains. Callers never see it; it's inferred.
+#[diagnostic::on_unimplemented(
+    message = "`{Self}` doesn't decode to Postgres values",
+    label = "every selected value has to be one of the types `DecodeRow` covers",
+    note = "an invalid *selection* reports itself separately, as an unsatisfied `Selection` bound"
+)]
 pub trait LoadExt<Idx> {
     type Output: DecodeRow;
 
