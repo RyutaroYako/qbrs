@@ -33,9 +33,11 @@ async fn main() {
         .having(sum(orders::total).gt(1000i64));
 
     let rows = select((users::email, big_spenders::total))
-        .with(qbrs::cte::with(big_spenders::Table, &totals))
         .from::<Postgres, _>(users::Table)
-        .inner_join(big_spenders::Table, big_spenders::user_id.eq(users::id))
+        .inner_join_cte(
+            qbrs::cte::with(big_spenders::Table, &totals),
+            big_spenders::user_id.eq(users::id),
+        )
         .load(&pool)
         .await
         .expect("big spenders");

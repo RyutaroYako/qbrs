@@ -28,8 +28,7 @@ fn with_binds_a_named_cte_usable_as_a_real_table() {
         .filter(orders::total.gt(1000i64));
 
     let q = select((big_orders::id, big_orders::total))
-        .with(qbrs::cte::with(big_orders::Table, &inner))
-        .from::<Postgres, _>(big_orders::Table)
+        .from_cte(qbrs::cte::with(big_orders::Table, &inner))
         .filter(big_orders::id.gt(0));
 
     let (sql, params) = q.to_sql();
@@ -53,16 +52,18 @@ fn multiple_independent_ctes_render_comma_separated() {
         .from::<Postgres, _>(orders::Table)
         .filter(orders::total.lte(1000i64));
 
-    let (sql, _params) = select((big_orders::id,))
-        .with(qbrs::cte::with(big_orders::Table, &big))
-        .with(qbrs::cte::with(small_orders::Table, &small))
-        .from::<Postgres, _>(big_orders::Table)
+    let (sql, _params) = select((big_orders::id, small_orders::id))
+        .from_cte(qbrs::cte::with(big_orders::Table, &big))
+        .inner_join_cte(
+            qbrs::cte::with(small_orders::Table, &small),
+            small_orders::id.eq(big_orders::id),
+        )
         .to_sql();
     assert_eq!(
         sql,
         "WITH \"big_orders\" (\"id\", \"total\") AS (SELECT \"orders\".\"id\", \"orders\".\"total\" FROM \"orders\" WHERE (\"orders\".\"total\" > $1)), \
          \"small_orders\" (\"id\", \"total\") AS (SELECT \"orders\".\"id\", \"orders\".\"total\" FROM \"orders\" WHERE (\"orders\".\"total\" <= $2)) \
-         SELECT \"big_orders\".\"id\" FROM \"big_orders\""
+         SELECT \"big_orders\".\"id\", \"small_orders\".\"id\" FROM \"big_orders\" INNER JOIN \"small_orders\" ON (\"small_orders\".\"id\" = \"big_orders\".\"id\")"
     );
 }
 

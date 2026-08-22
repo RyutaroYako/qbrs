@@ -240,6 +240,7 @@ fn gen_schema_mod(
             impl ::qbrs::scope::Table for Table {
                 const NAME: &'static str = #table_name;
             }
+            impl ::qbrs::scope::BaseTable for Table {}
 
             #[allow(non_camel_case_types)]
             pub mod columns {
@@ -505,6 +506,9 @@ fn expand_with(decl: CteDecl) -> TokenStream2 {
         pub mod #mod_ident {
             use super::*;
 
+            // Deliberately no `BaseTable`: a CTE's pseudo-table is reached
+            // through its `cte::with(..)` binding, which is what makes
+            // selecting from an unbound one unwritable.
             pub struct Table;
             impl ::qbrs::scope::Table for Table {
                 const NAME: &'static str = #table_name;

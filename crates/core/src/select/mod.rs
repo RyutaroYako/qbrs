@@ -8,7 +8,7 @@ use crate::dialect::{Dialect, RawEmbed, SupportsFullOuterJoin, SupportsRightJoin
 use crate::expr::{Bool, Expr, ExprKind, IntoExpr, SqlType, Value};
 use crate::render::{Fragment, SelectItem, render_expr, render_select_list};
 use crate::scope::{
-    Cons, MapNullable, MaybeNull, Nil, NotNull, ScopeTables, Superset, Table, TableSlot,
+    BaseTable, Cons, MapNullable, MaybeNull, Nil, NotNull, ScopeTables, Superset, TableSlot,
 };
 
 mod dyn_select;
@@ -108,48 +108,49 @@ where
 /// query's terminal method (`.to_sql()`/`.load()`).
 pub struct SelectSeed<Sel> {
     selection: Sel,
-    ctes: Vec<CteDef>,
 }
 
 pub fn select<Sel>(selection: Sel) -> SelectSeed<Sel> {
-    SelectSeed {
-        selection,
-        ctes: Vec::new(),
-    }
+    SelectSeed { selection }
 }
 
 impl<Sel> SelectSeed<Sel> {
-    /// Binds a `WITH name AS (..)` common table expression, built via
-    /// `crate::cte::with(name::Table, &inner_query)` — see `cte::CteShape`
-    /// for how the inner query's selected columns are checked against
-    /// `name`'s `with!{}`-declared shape at compile time. Once bound,
-    /// `name::Table` behaves exactly like a real table in `.from()`/
-    /// `.inner_join()`/etc: the CTE slots into `Scope`/`Find`/`Superset` the
-    /// same way any joined table does, since it really is just another
-    /// `scope::Table` impl once its `WITH` binding exists.
-    ///
-    /// Callable multiple times for multiple independent CTEs, like
-    /// `.filter()`. **Known limitation**: a later CTE can't reference an
-    /// earlier one bound in the same chain (each `Cte` is rendered
-    /// independently at `with()` time, with no visibility into sibling
-    /// `.with()` calls) — only `WITH RECURSIVE` and CTE-referencing-CTE are
-    /// out of scope for now, not top-level multi-CTE queries themselves.
-    pub fn with<D, Marker>(mut self, cte: crate::cte::Cte<D, Marker>) -> Self {
-        self.ctes.push(CteDef {
-            name: cte.name,
-            column_names: cte.column_names,
-            body: cte.body,
-        });
-        self
-    }
-
     /// `table` is a value (the zero-sized token the schema macro generates,
     /// e.g. `users::Table`), not a turbofish — `D` and `T` are inferred
     /// from how the resulting `Select` is eventually used (its dialect from
     /// `.load(&db)`, its table from the argument's own type).
-    pub fn from<D, T: Table>(self, _table: T) -> Select<D, Cons<TableSlot<T, NotNull>, Nil>, Sel> {
+    pub fn from<D, T: BaseTable>(
+        self,
+        _table: T,
+    ) -> Select<D, Cons<TableSlot<T, NotNull>, Nil>, Sel> {
         Select {
-            body: SelectBody::new(T::NAME, self.ctes),
+            body: SelectBody::new(T::NAME, Vec::new()),
+            selection: self.selection,
+            _marker: PhantomData,
+        }
+    }
+
+    /// `FROM` a common table expression. Binding it and putting it in scope
+    /// are the same act, so a `with!{}` pseudo-table cannot be selected from
+    /// unless a `cte::with(..)` for it was passed here — and the query takes
+    /// the binding's dialect, so a body rendered for one dialect cannot be
+    /// spliced into another's statement.
+    ///
+    /// Callable once; `.join_cte(..)` attaches any further ones. **Known
+    /// limitation**: a CTE body can't reference another CTE, so the order
+    /// they're attached in doesn't matter.
+    pub fn from_cte<D, Marker: crate::cte::CteShape>(
+        self,
+        cte: crate::cte::Cte<D, Marker>,
+    ) -> Select<D, Cons<TableSlot<Marker, NotNull>, Nil>, Sel> {
+        let mut body = SelectBody::new(Marker::NAME, Vec::new());
+        body.ctes.push(CteDef {
+            name: cte.name,
+            column_names: cte.column_names,
+            body: cte.body,
+        });
+        Select {
+            body,
             selection: self.selection,
             _marker: PhantomData,
         }
@@ -286,7 +287,7 @@ impl<D, Scope, Sel> Select<D, Scope, Sel> {
     /// `New` and `Req` are both inferred from the arguments (the table
     /// token's type, and the `on` expression's own tracked requirement) —
     /// no turbofish, no closure.
-    pub fn inner_join<New: Table, Req, Idxs>(
+    pub fn inner_join<New: BaseTable, Req, Idxs>(
         mut self,
         _table: New,
         on: Expr<Req, Bool>,
@@ -302,7 +303,7 @@ impl<D, Scope, Sel> Select<D, Scope, Sel> {
         self.retype()
     }
 
-    pub fn left_join<New: Table, Req, Idxs>(
+    pub fn left_join<New: BaseTable, Req, Idxs>(
         mut self,
         _table: New,
         on: Expr<Req, Bool>,
@@ -318,10 +319,55 @@ impl<D, Scope, Sel> Select<D, Scope, Sel> {
         self.retype()
     }
 
+    /// `INNER JOIN` a common table expression, attaching its `WITH` binding
+    /// at the same time — see `SelectSeed::from_cte` for why the two are one
+    /// act.
+    pub fn inner_join_cte<Marker: crate::cte::CteShape, Req, Idxs>(
+        mut self,
+        cte: crate::cte::Cte<D, Marker>,
+        on: Expr<Req, Bool>,
+    ) -> Select<D, Cons<TableSlot<Marker, NotNull>, Scope>, Sel>
+    where
+        Cons<TableSlot<Marker, NotNull>, Scope>: Superset<Req, Idxs>,
+    {
+        self.body.ctes.push(CteDef {
+            name: cte.name,
+            column_names: cte.column_names,
+            body: cte.body,
+        });
+        self.body.joins.push(JoinClause {
+            kind: JoinKind::Inner,
+            table: Marker::NAME,
+            on: on.kind,
+        });
+        self.retype()
+    }
+
+    pub fn left_join_cte<Marker: crate::cte::CteShape, Req, Idxs>(
+        mut self,
+        cte: crate::cte::Cte<D, Marker>,
+        on: Expr<Req, Bool>,
+    ) -> Select<D, Cons<TableSlot<Marker, MaybeNull>, Scope>, Sel>
+    where
+        Cons<TableSlot<Marker, MaybeNull>, Scope>: Superset<Req, Idxs>,
+    {
+        self.body.ctes.push(CteDef {
+            name: cte.name,
+            column_names: cte.column_names,
+            body: cte.body,
+        });
+        self.body.joins.push(JoinClause {
+            kind: JoinKind::Left,
+            table: Marker::NAME,
+            on: on.kind,
+        });
+        self.retype()
+    }
+
     /// RIGHT JOIN retroactively flips every already-joined table to
     /// nullable (`MapNullable`) before adding the new, guaranteed-present
     /// table, mirroring Drizzle's `AppendToNullabilityMap` rule.
-    pub fn right_join<New: Table, Req, Idxs>(
+    pub fn right_join<New: BaseTable, Req, Idxs>(
         mut self,
         _table: New,
         on: Expr<Req, Bool>,
@@ -339,7 +385,7 @@ impl<D, Scope, Sel> Select<D, Scope, Sel> {
         self.retype()
     }
 
-    pub fn full_join<New: Table, Req, Idxs>(
+    pub fn full_join<New: BaseTable, Req, Idxs>(
         mut self,
         _table: New,
         on: Expr<Req, Bool>,
@@ -506,7 +552,7 @@ impl<D, Scope, Sel> Select<D, Scope, Sel> {
     /// columns and any outer column already in `Scope`, with no special
     /// casing: growing the scope works the same whether the new table came
     /// from a join or from a subquery's `FROM`.
-    pub fn correlated<T: Table, InnerSel>(
+    pub fn correlated<T: BaseTable, InnerSel>(
         &self,
         _table: T,
         selection: InnerSel,
@@ -566,7 +612,7 @@ impl<D, Outer, Scope, Sel> Correlated<D, Outer, Scope, Sel> {
         self
     }
 
-    pub fn inner_join<New: Table, Req, Idxs>(
+    pub fn inner_join<New: BaseTable, Req, Idxs>(
         self,
         table: New,
         on: Expr<Req, Bool>,
@@ -580,7 +626,7 @@ impl<D, Outer, Scope, Sel> Correlated<D, Outer, Scope, Sel> {
         }
     }
 
-    pub fn left_join<New: Table, Req, Idxs>(
+    pub fn left_join<New: BaseTable, Req, Idxs>(
         self,
         table: New,
         on: Expr<Req, Bool>,

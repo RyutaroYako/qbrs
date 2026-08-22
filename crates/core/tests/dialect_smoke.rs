@@ -12,11 +12,13 @@ pub struct UsersMarker;
 impl TableTrait for UsersMarker {
     const NAME: &'static str = "users";
 }
+impl qbrs_core::scope::BaseTable for UsersMarker {}
 
 pub struct QuotedMarker;
 impl TableTrait for QuotedMarker {
     const NAME: &'static str = "a\"b";
 }
+impl qbrs_core::scope::BaseTable for QuotedMarker {}
 
 #[allow(non_upper_case_globals)]
 mod quoted {

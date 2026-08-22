@@ -14,9 +14,8 @@
 //! columns by key.
 //!
 //! **Known limitations**: non-recursive, single-level CTEs only.
-//! `WITH RECURSIVE` and a CTE referencing an earlier one in the same
-//! `.with().with()` chain both need a CTE to be nameable *inside* another
-//! query being built.
+//! `WITH RECURSIVE` and a CTE body referencing another CTE both need a CTE
+//! to be nameable *inside* another query being built.
 
 use std::marker::PhantomData;
 
@@ -41,13 +40,26 @@ pub trait CteShape: Table {
     const COLUMN_NAMES: &'static [&'static str];
 }
 
-/// A `WITH name AS (..)` binding, ready to attach to an outer query via
-/// `select(..).with(cte).from(name::Table)...`.
+/// A `WITH name AS (..)` binding. Passing it to `.from_cte(..)` or
+/// `.join_cte(..)` is what both attaches the `WITH` clause and puts the
+/// pseudo-table in scope — one act, so a CTE cannot be selected from without
+/// being bound, or bound without being used.
 pub struct Cte<D, Marker> {
     pub(crate) name: &'static str,
     pub(crate) column_names: &'static [&'static str],
     pub(crate) body: Fragment,
     _marker: PhantomData<fn() -> (D, Marker)>,
+}
+
+impl<D, Marker> Clone for Cte<D, Marker> {
+    fn clone(&self) -> Self {
+        Cte {
+            name: self.name,
+            column_names: self.column_names,
+            body: self.body.clone(),
+            _marker: PhantomData,
+        }
+    }
 }
 
 /// Builds a `Cte` from `query`, checking that `query`'s selected columns

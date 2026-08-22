@@ -206,7 +206,11 @@ omit / explicit-NULL / explicit-value stay distinguishable; update fields use `O
 
 `with!{}` generates the same shape for a CTE pseudo-table — markers, consts, and accessor
 traits alike — so a CTE *is* a real table to `Scope`/`Find`/`Superset` with no separate
-virtual-table machinery. Its declared columns are checked against the actual body at
+virtual-table machinery. It deliberately does *not* emit `scope::BaseTable`, which `.from()`
+and the joins require: a CTE is entered through `.from_cte(binding)`/`.join_cte(binding, on)`,
+so attaching the `WITH` clause and putting the pseudo-table in scope are one act. Selecting
+from a CTE nobody bound, binding one and selecting from another, and splicing a body
+rendered for one dialect into another's statement are all unwritable as a result. Its declared columns are checked against the actual body at
 `cte::with()` on both values (`RowValues`) and names (`row::SameNames`), the same pair
 `SetOp` requires of `UNION` branches.
 

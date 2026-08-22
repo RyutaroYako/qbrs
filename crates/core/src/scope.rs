@@ -15,6 +15,17 @@ pub trait Table: 'static {
     const SCHEMA: Option<&'static str> = None;
 }
 
+/// A table that exists in the schema, as opposed to one a query brings into
+/// being. `.from()` and the joins take these; a CTE's pseudo-table is
+/// reached through its `Cte` binding instead, so selecting from a CTE that
+/// was never bound cannot be written.
+#[diagnostic::on_unimplemented(
+    message = "`{Self}` isn't a schema table",
+    label = "a `with!{{}}` pseudo-table is entered through its `cte::with(..)` binding",
+    note = "use `.from_cte(binding)` / `.join_cte(binding, on)` — binding a CTE is what puts it in scope"
+)]
+pub trait BaseTable: Table {}
+
 /// Marker trait for the two nullability states a table can have in a
 /// query's scope, depending on how it was joined.
 pub trait Nullability: 'static {}
