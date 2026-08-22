@@ -99,7 +99,7 @@ pub async fn setup_db() -> (sqlx::PgPool, Db) {
 pub async fn seed(pool: &sqlx::PgPool) {
     use qbrs::dialect::Postgres;
     use qbrs::expr::ExprMethods;
-    use qbrs_sqlx::{ExecuteExt, LoadReturningExt};
+    use qbrs_sqlx::{ExecuteExt, LoadExt};
 
     let ids: Vec<i64> = qbrs::insert::insert::<Postgres, _>(users::Table)
         .values(UsersInsert::new("ada@example.com").display_name("Ada Lovelace"))

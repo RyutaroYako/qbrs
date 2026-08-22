@@ -1,5 +1,5 @@
 //! `prepare!{}` executed against a real Postgres: one rendered query,
-//! reused across multiple `.execute(params)` calls with different values.
+//! reused across multiple `.load(executor, params)` calls with different values.
 //! See `postgres_integration.rs` for the DB-setup rationale (in-process
 //! WASM Postgres vs. an external `DATABASE_URL`).
 
@@ -9,7 +9,7 @@ use qbrs::dialect::Postgres;
 use qbrs::expr::{ExprMethods, Text};
 use qbrs::select::select;
 use qbrs::{Table, prepare};
-use qbrs_sqlx::{LoadReturningExt, PreparedExt};
+use qbrs_sqlx::{LoadExt, PreparedExt};
 
 #[derive(Table)]
 #[table(name = "users_prepare_test")]
@@ -57,26 +57,26 @@ async fn prepared_query_reused_across_different_params() {
         .prepare::<ByEmail, _>();
 
     let ada: Vec<i64> = query
-        .execute(
+        .load(
             &pool,
             ByEmail {
                 email: "ada@example.com".to_string(),
             },
         )
         .await
-        .expect("execute for ada");
+        .expect("load for ada");
     assert_eq!(ada, vec![ids[0]]);
 
     // Same `query` value, no re-render — just a different `params`.
     let dan: Vec<i64> = query
-        .execute(
+        .load(
             &pool,
             ByEmail {
                 email: "dan@example.com".to_string(),
             },
         )
         .await
-        .expect("execute for dan");
+        .expect("load for dan");
     assert_eq!(dan, vec![ids[1]]);
 
     sqlx::query("DROP TABLE users_prepare_test")

@@ -1,4 +1,4 @@
-//! `prepare!{}`: a query rendered once, reused across many `.execute(params)`
+//! `prepare!{}`: a query rendered once, reused across many `.load(.., params)`
 //! calls with different, compile-time-typed values — closing the gap
 //! Drizzle's own `sql.placeholder()` leaves (its `.execute()` takes an
 //! untyped `Record<string, unknown>`, so a missing/misspelled key is only
@@ -34,14 +34,14 @@ async fn main() {
         "no-such-user@example.com",
     ] {
         let rows: Vec<(i64, Option<String>)> = query
-            .execute(
+            .load(
                 &pool,
                 ByEmail {
                     email: email.to_string(),
                 },
             )
             .await
-            .expect("execute prepared query")
+            .expect("load prepared query")
             .into_tuples();
         println!("{email} -> {rows:?}");
     }

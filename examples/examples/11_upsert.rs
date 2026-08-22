@@ -9,7 +9,7 @@
 use qbrs::dialect::Postgres;
 use qbrs::expr::ExprMethods;
 use qbrs_examples::{UsersInsert, UsersUpdate, setup_db, users};
-use qbrs_sqlx::{ExecuteExt, LoadExt, LoadReturningExt};
+use qbrs_sqlx::{ExecuteExt, LoadExt};
 
 #[tokio::main]
 async fn main() {

@@ -7,7 +7,7 @@ use qbrs::dialect::Postgres;
 use qbrs::expr::ExprMethods;
 use qbrs::select::select;
 use qbrs_examples::{OrdersInsert, UsersInsert, orders, setup_db, users};
-use qbrs_sqlx::{ExecuteExt, LoadExt, LoadReturningExt};
+use qbrs_sqlx::{ExecuteExt, LoadExt};
 
 #[tokio::main]
 async fn main() {

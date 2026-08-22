@@ -41,9 +41,7 @@ pub type Result<T> = std::result::Result<T, Error>;
 /// with no decision in it — and `count` in particular resolves against
 /// `Iterator::count` with a confusing message until `CountExt` is in scope.
 pub mod prelude {
-    pub use crate::{
-        CountExt, ExecuteExt, LoadDynExt, LoadExt, LoadReturningExt, LoadSetOpExt, PreparedExt,
-    };
+    pub use crate::{CountExt, ExecuteExt, LoadExt, PreparedExt};
     pub use crate::{Error, Result};
 }
 
@@ -126,18 +124,35 @@ async fn execute_only<'e, E: sqlx::PgExecutor<'e>>(
     Ok(result.rows_affected())
 }
 
+/// Everything that produces rows: a `SELECT`, a `RETURNING` clause, an
+/// erased `DynSelect`, a `UNION` chain. One trait for all of them keeps the
+/// terminal vocabulary tied to what a statement yields rather than to which
+/// builder happens to be in hand — `load` for the rows, `load_one` for the
+/// first of them, and `ExecuteExt::execute` where there are none to decode.
+///
 /// `Idx` is threaded through the trait's parameter list for the reason
 /// `scope::Superset` explains. Callers never see it; it's inferred.
 pub trait LoadExt<Idx> {
-    type Output;
+    type Output: DecodeRow;
+
+    #[doc(hidden)]
+    fn rendered(&self) -> (String, Vec<Value>);
+
     fn load<'e, E: sqlx::PgExecutor<'e>>(
         &self,
         executor: E,
-    ) -> impl std::future::Future<Output = Result<Vec<Self::Output>>>;
+    ) -> impl std::future::Future<Output = Result<Vec<Self::Output>>> {
+        let (sql, params) = self.rendered();
+        async move { fetch_all::<Self::Output, E>(executor, &sql, params).await }
+    }
+
     fn load_one<'e, E: sqlx::PgExecutor<'e>>(
         &self,
         executor: E,
-    ) -> impl std::future::Future<Output = Result<Option<Self::Output>>>;
+    ) -> impl std::future::Future<Output = Result<Option<Self::Output>>> {
+        let (sql, params) = self.rendered();
+        async move { fetch_optional::<Self::Output, E>(executor, &sql, params).await }
+    }
 }
 
 impl<Scope, Sel, Idx> LoadExt<Idx> for Select<Postgres, Scope, Sel>
@@ -147,17 +162,8 @@ where
 {
     type Output = Sel::Output;
 
-    async fn load<'e, E: sqlx::PgExecutor<'e>>(&self, executor: E) -> Result<Vec<Self::Output>> {
-        let (sql, params) = self.to_sql::<Idx>();
-        fetch_all::<Sel::Output, E>(executor, &sql, params).await
-    }
-
-    async fn load_one<'e, E: sqlx::PgExecutor<'e>>(
-        &self,
-        executor: E,
-    ) -> Result<Option<Self::Output>> {
-        let (sql, params) = self.to_sql::<Idx>();
-        fetch_optional::<Sel::Output, E>(executor, &sql, params).await
+    fn rendered(&self) -> (String, Vec<Value>) {
+        self.to_sql::<Idx>()
     }
 }
 
@@ -217,48 +223,37 @@ type TableScope<T> = qbrs_core::scope::Cons<
     qbrs_core::scope::Nil,
 >;
 
-pub trait LoadReturningExt<Idx> {
-    type Output;
-    fn load<'e, E: sqlx::PgExecutor<'e>>(
-        &self,
-        executor: E,
-    ) -> impl std::future::Future<Output = Result<Vec<Self::Output>>>;
-}
-
-impl<T: Table, R: InsertRow<Table = T>, Sel, Idx> LoadReturningExt<Idx>
+impl<T: Table, R: InsertRow<Table = T>, Sel, Idx> LoadExt<Idx>
     for InsertReturning<Postgres, T, R, Sel>
 where
     Sel: Selection<TableScope<T>, Idx>,
     Sel::Output: DecodeRow,
 {
     type Output = Sel::Output;
-    async fn load<'e, E: sqlx::PgExecutor<'e>>(&self, executor: E) -> Result<Vec<Self::Output>> {
-        let (sql, params) = self.to_sql();
-        fetch_all::<Sel::Output, E>(executor, &sql, params).await
+    fn rendered(&self) -> (String, Vec<Value>) {
+        self.to_sql()
     }
 }
 
-impl<T: Table, Sel, Idx> LoadReturningExt<Idx> for UpdateReturning<Postgres, T, Sel>
+impl<T: Table, Sel, Idx> LoadExt<Idx> for UpdateReturning<Postgres, T, Sel>
 where
     Sel: Selection<TableScope<T>, Idx>,
     Sel::Output: DecodeRow,
 {
     type Output = Sel::Output;
-    async fn load<'e, E: sqlx::PgExecutor<'e>>(&self, executor: E) -> Result<Vec<Self::Output>> {
-        let (sql, params) = self.to_sql();
-        fetch_all::<Sel::Output, E>(executor, &sql, params).await
+    fn rendered(&self) -> (String, Vec<Value>) {
+        self.to_sql()
     }
 }
 
-impl<T: Table, Sel, Idx> LoadReturningExt<Idx> for DeleteReturning<Postgres, T, Sel>
+impl<T: Table, Sel, Idx> LoadExt<Idx> for DeleteReturning<Postgres, T, Sel>
 where
     Sel: Selection<TableScope<T>, Idx>,
     Sel::Output: DecodeRow,
 {
     type Output = Sel::Output;
-    async fn load<'e, E: sqlx::PgExecutor<'e>>(&self, executor: E) -> Result<Vec<Self::Output>> {
-        let (sql, params) = self.to_sql();
-        fetch_all::<Sel::Output, E>(executor, &sql, params).await
+    fn rendered(&self) -> (String, Vec<Value>) {
+        self.to_sql()
     }
 }
 
@@ -315,78 +310,61 @@ impl<L: DecodeRow> DecodeRow for Row<L> {
     }
 }
 
-pub trait LoadDynExt {
-    type Output;
-    fn load<'e, E: sqlx::PgExecutor<'e>>(
-        &self,
-        executor: E,
-    ) -> impl std::future::Future<Output = Result<Vec<Self::Output>>>;
-}
-
-impl<Output: DecodeRow> LoadDynExt for DynSelect<Postgres, Output> {
+/// An erased query and a set-op chain were both rendered before their
+/// selection type was gone, leaving nothing for `Idx` to index — hence
+/// `LoadExt<()>`, the same trait with an empty proof.
+impl<Output: DecodeRow> LoadExt<()> for DynSelect<Postgres, Output> {
     type Output = Output;
-    async fn load<'e, E: sqlx::PgExecutor<'e>>(&self, executor: E) -> Result<Vec<Output>> {
-        let (sql, params) = self.to_sql();
-        let rows = bind_all(sqlx::query(sqlx::AssertSqlSafe(sql.as_str())), params)?
-            .fetch_all(executor)
-            .await?;
-        rows.iter()
-            .map(|row| Output::decode_at(row, &mut 0).map_err(Error::from))
-            .collect()
+    fn rendered(&self) -> (String, Vec<Value>) {
+        self.to_sql()
     }
 }
 
-/// Loads a `UNION`/`INTERSECT`/`EXCEPT` chain. Reuses `DecodeRow` for the
-/// same reason `LoadDynExt` does: a `SetOp`'s branches were rendered to
-/// fragments at combine time, leaving only the plain `Output` to decode
-/// against.
-pub trait LoadSetOpExt {
-    type Output;
-    fn load<'e, E: sqlx::PgExecutor<'e>>(
-        &self,
-        executor: E,
-    ) -> impl std::future::Future<Output = Result<Vec<Self::Output>>>;
-}
-
-impl<Output: DecodeRow> LoadSetOpExt for SetOp<Postgres, Output> {
+impl<Output: DecodeRow> LoadExt<()> for SetOp<Postgres, Output> {
     type Output = Output;
-    async fn load<'e, E: sqlx::PgExecutor<'e>>(&self, executor: E) -> Result<Vec<Output>> {
-        let (sql, params) = self.to_sql();
-        let rows = bind_all(sqlx::query(sqlx::AssertSqlSafe(sql.as_str())), params)?
-            .fetch_all(executor)
-            .await?;
-        rows.iter()
-            .map(|row| Output::decode_at(row, &mut 0).map_err(Error::from))
-            .collect()
+    fn rendered(&self) -> (String, Vec<Value>) {
+        self.to_sql()
     }
 }
 
-/// Executes a `prepare!{}`-built query, resolving its named placeholders
-/// from `params` first. One `Prepared` is meant to serve many `execute`
-/// calls: `.resolve()` clones the template rather than re-rendering it.
+/// Runs a `prepare!{}`-built query, resolving its named placeholders from
+/// `params` first. Separate from `LoadExt` only because the values arrive at
+/// the call rather than being baked into the query: one `Prepared` is meant
+/// to serve many calls, and `.resolve()` clones the template rather than
+/// re-rendering it.
 pub trait PreparedExt<Params> {
     type Output;
-    fn execute<'e, E: sqlx::PgExecutor<'e>>(
+    fn load<'e, E: sqlx::PgExecutor<'e>>(
         &self,
         executor: E,
         params: Params,
     ) -> impl std::future::Future<Output = Result<Vec<Self::Output>>>;
+    fn load_one<'e, E: sqlx::PgExecutor<'e>>(
+        &self,
+        executor: E,
+        params: Params,
+    ) -> impl std::future::Future<Output = Result<Option<Self::Output>>>;
 }
 
 impl<Params: PreparedParams, Output: DecodeRow> PreparedExt<Params> for Prepared<Params, Output> {
     type Output = Output;
-    async fn execute<'e, E: sqlx::PgExecutor<'e>>(
+
+    async fn load<'e, E: sqlx::PgExecutor<'e>>(
         &self,
         executor: E,
         params: Params,
     ) -> Result<Vec<Output>> {
         let (sql, values) = self.resolve(params)?;
-        let rows = bind_all(sqlx::query(sqlx::AssertSqlSafe(sql.as_str())), values)?
-            .fetch_all(executor)
-            .await?;
-        rows.iter()
-            .map(|row| Output::decode_at(row, &mut 0).map_err(Error::from))
-            .collect()
+        fetch_all::<Output, E>(executor, &sql, values).await
+    }
+
+    async fn load_one<'e, E: sqlx::PgExecutor<'e>>(
+        &self,
+        executor: E,
+        params: Params,
+    ) -> Result<Option<Output>> {
+        let (sql, values) = self.resolve(params)?;
+        fetch_optional::<Output, E>(executor, &sql, values).await
     }
 }
 

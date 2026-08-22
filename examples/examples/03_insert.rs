@@ -4,7 +4,7 @@
 
 use qbrs::dialect::Postgres;
 use qbrs_examples::{UsersInsert, setup_db, users};
-use qbrs_sqlx::LoadReturningExt;
+use qbrs_sqlx::LoadExt;
 
 #[tokio::main]
 async fn main() {
