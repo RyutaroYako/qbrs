@@ -14,8 +14,8 @@ pub mod prelude {
     pub use qbrs_core::dialect::{MySql, Postgres, Sqlite};
     pub use qbrs_core::expr::Column;
     pub use qbrs_core::expr::{
-        AliasExt, BigInt, Bool, Bytes, ExprMethods, HasCount, Integer, IntoExpr, Real, SortDir,
-        Text, TextExprMethods, avg, count, count_of, max, min, sum,
+        AliasExt, BigInt, Bool, Bytes, ExprMethods, HasCount, Integer, Real, SortDir, Text,
+        TextExprMethods, avg, count, count_of, max, min, sum,
     };
     pub use qbrs_core::insert::insert;
     pub use qbrs_core::row::{IntoLimit, IntoStructs, IntoTuples, Row, RowCons, RowNil};

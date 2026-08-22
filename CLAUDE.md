@@ -144,8 +144,12 @@ generics, and `Value` is a closed enum (not `Box<dyn ToSql>`). This keeps `rende
 single function monomorphized once per *dialect*, never per query shape. Preserve this: don't
 add generics to `ExprKind`/`Value`, and don't make the renderer generic over query types.
 
-`ExprKind` is crate-private to construct — the typed `Expr` wrapper is the only supported way
-to build one, which is what makes the `Req`/`S` tags trustworthy.
+`ExprKind` is `pub(crate)` and `Expr::from_kind` is too, so the typed wrapper is the only way
+to build one — that is what makes the `Req`/`S` tags mean anything rather than merely exist.
+`expr::raw_expr` is the single `#[doc(hidden)]` door, needed because `sql!` expands in the
+caller's crate, and it pins `Req = Nil` so a raw fragment can't claim a scope. For the same
+reason only `Expr<Nil, S>` is selectable: an expression naming a table has a per-query
+nullability that `S` doesn't carry.
 
 ### Dialects and capability gating
 

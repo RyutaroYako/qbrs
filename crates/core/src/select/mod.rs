@@ -6,7 +6,7 @@ use std::marker::PhantomData;
 
 use crate::dialect::{Dialect, RawEmbed, SupportsFullOuterJoin, SupportsRightJoin};
 use crate::expr::{Bool, Expr, ExprKind, IntoExpr, SqlType, Value};
-use crate::render::{Fragment, render_expr, render_select_list};
+use crate::render::{Fragment, SelectItem, render_expr, render_select_list};
 use crate::scope::{
     Cons, MapNullable, MaybeNull, Nil, NotNull, ScopeTables, Superset, Table, TableSlot,
 };
@@ -17,7 +17,6 @@ mod selection;
 mod set_op;
 
 pub use crate::expr::SortDir;
-pub use crate::render::SelectItem;
 pub use dyn_select::DynSelect;
 pub use prepared::{Prepared, PreparedParams, UnresolvedPlaceholder};
 pub use selection::{RowField, Selection};

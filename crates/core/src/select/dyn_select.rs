@@ -2,9 +2,10 @@
 
 use std::marker::PhantomData;
 
-use super::{Select, SelectBody, SelectItem, Selection};
+use super::{Select, SelectBody, Selection};
 use crate::dialect::Dialect;
 use crate::expr::Value;
+use crate::render::SelectItem;
 
 /// The one unavoidable escape hatch in this design: a single static type
 /// cannot mean "this table is joined" in one branch of an `if` and "it

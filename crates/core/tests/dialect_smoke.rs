@@ -13,6 +13,37 @@ impl TableTrait for UsersMarker {
     const NAME: &'static str = "users";
 }
 
+pub struct QuotedMarker;
+impl TableTrait for QuotedMarker {
+    const NAME: &'static str = "a\"b";
+}
+
+#[allow(non_upper_case_globals)]
+mod quoted {
+    use super::QuotedMarker;
+    use qbrs_core::expr::{Column, Integer};
+
+    pub const Table: QuotedMarker = QuotedMarker;
+    #[allow(non_camel_case_types)]
+    pub mod columns {
+        use super::*;
+        use qbrs_core::expr::ColumnKey;
+        #[derive(Clone, Copy)]
+        pub struct id;
+        impl ColumnKey for id {
+            type Table = QuotedMarker;
+            type Sql = Integer;
+            const NAME: &'static str = "id";
+        }
+        impl qbrs_core::row::Named for id {
+            type Name = qbrs_core::type_name!('i', 'd');
+            const NAME: &'static str = "id";
+        }
+    }
+
+    pub const id: Column<columns::id> = Column::new();
+}
+
 #[allow(non_upper_case_globals)]
 mod users {
     use super::UsersMarker;
@@ -154,4 +185,31 @@ fn sqlite_supports_on_conflict_mysql_does_not() {
     // let _ = insert::<MySql, _>(users::Table)
     //     .values(UsersInsert { email: "a@example.com".into() })
     //     .on_conflict_do_nothing(users::email); // error[E0599]: no method named `on_conflict_do_nothing`
+}
+
+#[test]
+fn each_dialect_spells_an_aggregate_cast_its_own_way() {
+    let pg = select((qbrs_core::expr::avg(users::id),))
+        .from::<qbrs_core::dialect::Postgres, _>(users::Table)
+        .to_sql()
+        .0;
+    let my = select((qbrs_core::expr::avg(users::id),))
+        .from::<qbrs_core::dialect::MySql, _>(users::Table)
+        .to_sql()
+        .0;
+    assert!(
+        pg.contains("CAST(avg(\"users\".\"id\") AS DOUBLE PRECISION)"),
+        "{pg}"
+    );
+    assert!(my.contains("CAST(avg(`users`.`id`) AS DOUBLE)"), "{my}");
+}
+
+#[test]
+fn a_quote_inside_an_identifier_is_doubled() {
+    // `#[table(name = "..")]` takes an arbitrary string, so the renderer has
+    // to close the identifier itself rather than trusting the input.
+    let (sql, _) = select((quoted::id,))
+        .from::<qbrs_core::dialect::Postgres, _>(quoted::Table)
+        .to_sql();
+    assert_eq!(sql, "SELECT \"a\"\"b\".\"id\" FROM \"a\"\"b\"");
 }

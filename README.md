@@ -239,9 +239,15 @@ A schema is a `#[derive(Table)]` struct, shown in the
   `INNER JOIN` declares `T`. It names no column and no table, but it does
   pin the join's nullability.
 - `count()` is `count(*)` — rows, not non-NULL values; `count_of(col)` is
-  the latter. `sum`/`avg` on a `BIGINT` column render a `CAST` back from the
-  wider type the database picks, which can overflow where the raw sum would
-  not.
+  the latter. Both return a non-nullable count; every other aggregate is
+  nullable, since an aggregate over zero rows is NULL.
+- `sum`/`avg` render a `CAST` back from the wider type a database picks, so
+  a sum that overflows `BIGINT` fails where the raw `sum` would have
+  succeeded, and `avg` is `DOUBLE PRECISION` rather than exact.
+- Aggregates take a bare column: `sum(price * qty)`, `count(DISTINCT x)` and
+  `sum(CASE WHEN ..)` need `sql!{}`. Nothing relates `GROUP BY` to the
+  selection list, and an aggregate in `WHERE` is accepted by the builder and
+  rejected by the database.
 - Two selections are compared by column name, so a `UNION` of branches whose
   columns are named differently, or a CTE body with a computed column, needs
   a `label!` alias on one side. A `UNION` also needs both branches to be

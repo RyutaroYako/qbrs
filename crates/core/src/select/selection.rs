@@ -3,7 +3,7 @@
 use crate::expr::{AliasKey, Aliased, Column, ColumnKey, Expr, ExprKind, Keyed, SqlType};
 use crate::render::SelectItem;
 use crate::row::{Named, Row, RowCons, RowKey, RowNil};
-use crate::scope::{Find, Superset, Table, WrapNullable};
+use crate::scope::{Find, Nil, Superset, Table, WrapNullable};
 
 /// One element of a selection list: the key its value is filed under in the
 /// resulting `Row`, and the Rust type it decodes to.
@@ -38,13 +38,14 @@ where
     }
 }
 
-// `Idx` here is `Superset`'s index list rather than a single `Find` lookup:
-// an expression has no one table to look up, but it can still carry a
-// non-`Nil` `Req` — a window function's `.partition_by()` columns, say — and
-// that has to be checked when the expression is selected.
-impl<Req, S: SqlType, Scope, Idx> RowField<Scope, Idx> for Expr<Req, S>
+// Only a scope-free expression is selectable as a bare `Expr`. One that
+// names a table has a per-query nullability that `S` doesn't carry, so
+// selecting it would report the declared type where a `LEFT JOIN` produces
+// NULL; a `Column` is how a table's value is selected, and `sql!{}` — always
+// `Nil` — is how a computed one is.
+impl<S: SqlType, Scope, Idx> RowField<Scope, Idx> for Expr<Nil, S>
 where
-    Scope: Superset<Req, Idx>,
+    Scope: Superset<Nil, Idx>,
 {
     type Value = S::Native;
     fn item(&self) -> SelectItem {
@@ -99,7 +100,7 @@ macro_rules! scalar_selection {
     };
 }
 scalar_selection!(impl[C: ColumnKey] Column<C>);
-scalar_selection!(impl[Req, S: SqlType] Expr<Req, S>);
+scalar_selection!(impl[S: SqlType] Expr<Nil, S>);
 scalar_selection!(impl[K, Req, S: SqlType] Keyed<K, Req, S>);
 scalar_selection!(impl[K, Inner] Aliased<K, Inner>);
 

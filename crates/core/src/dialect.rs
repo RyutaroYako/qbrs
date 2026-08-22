@@ -19,6 +19,13 @@ pub trait Dialect: 'static + private::Sealed {
     /// for MySQL.
     const IDENTIFIER_QUOTE: char;
 
+    /// How this dialect spells the two types an aggregate is cast back to.
+    /// `CAST` itself is standard; the type names are not — MySQL takes
+    /// `SIGNED` and `DOUBLE` where Postgres takes `BIGINT` and
+    /// `DOUBLE PRECISION`.
+    const CAST_BIGINT: &'static str = "BIGINT";
+    const CAST_DOUBLE: &'static str = "DOUBLE PRECISION";
+
     /// Renders the placeholder for the `n`th bound parameter (1-indexed).
     /// Postgres numbers them (`$1`, `$2`, ...); MySQL/SQLite are purely
     /// positional (`?` every time, matched by order of appearance).
@@ -40,6 +47,8 @@ impl Dialect for Postgres {
 pub struct MySql;
 impl private::Sealed for MySql {}
 impl Dialect for MySql {
+    const CAST_BIGINT: &'static str = "SIGNED";
+    const CAST_DOUBLE: &'static str = "DOUBLE";
     const IDENTIFIER_QUOTE: char = '`';
     // Uses the default `?` placeholder.
 }
@@ -81,7 +90,7 @@ impl SupportsFullOuterJoin for Postgres {}
 impl SupportsFullOuterJoin for Sqlite {}
 
 /// An internal rendering-only wrapper: same identifier quoting as `D`, but
-/// always emits `?` for placeholders. Used for a fragment that will be
+/// always emits the bind marker for placeholders. Used for a fragment that will be
 /// spliced into a larger query (a subquery, CTE body, or `UNION` branch) and
 /// renumbered into the outer query's placeholder sequence — it must not
 /// pre-commit to `$N` numbers that would collide with the outer count.
@@ -89,5 +98,9 @@ pub(crate) struct RawEmbed<D>(std::marker::PhantomData<D>);
 impl<D: Dialect> private::Sealed for RawEmbed<D> {}
 impl<D: Dialect> Dialect for RawEmbed<D> {
     const IDENTIFIER_QUOTE: char = D::IDENTIFIER_QUOTE;
-    // Uses the default `?` placeholder.
+    const CAST_BIGINT: &'static str = D::CAST_BIGINT;
+    const CAST_DOUBLE: &'static str = D::CAST_DOUBLE;
+    fn placeholder(_n: usize) -> String {
+        crate::render::BIND_MARKER.to_string()
+    }
 }
