@@ -6,6 +6,7 @@ use qbrs_core::dialect::Postgres;
 use qbrs_core::expr::{ExprMethods, Value};
 use qbrs_core::insert::{Defaultable, InsertRow, InsertValue, insert};
 use qbrs_core::scope::Table as TableTrait;
+use qbrs_core::statement::Statement;
 use qbrs_core::update::{NothingToSet, UpdateRow, update};
 
 pub struct UsersMarker;

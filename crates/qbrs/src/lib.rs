@@ -17,19 +17,20 @@ pub mod prelude {
     pub use qbrs_core::dialect::{MySql, Postgres, Sqlite};
     pub use qbrs_core::expr::Column;
     pub use qbrs_core::expr::{
-        AliasExt, BigInt, Bool, Bytes, ExprMethods, HasCount, Integer, Real, SortDir, Text,
-        TextExprMethods, avg, count, count_of, max, min, sum,
+        AliasExt, BigInt, Bool, Bytes, ExprMethods, HasCount, Integer, Real, Text, TextExprMethods,
+        avg, count, count_of, max, min, sum,
     };
     pub use qbrs_core::expr::{Aliased, Declared, Expr, IntoExpr, Keyed};
-    pub use qbrs_core::insert::{Defaultable, insert};
+    pub use qbrs_core::insert::{Defaultable, NothingToInsert, insert};
     pub use qbrs_core::row::{IntoStructs, IntoTuples, Named, Row, RowCons, RowNil};
     pub use qbrs_core::scope::{
         Cons, Find, MaybeNull, Nil, NotNull, Nullable, Superset, TableSlot,
     };
     pub use qbrs_core::select::{
-        Correlated, DynSelect, OrderExt, Predicate, Prepared, Select, Selection, SetOp, predicate,
-        select,
+        Correlated, DynSelect, OrderExt, Predicate, Prepared, Select, Selection, SetOp, nth,
+        predicate, select,
     };
+    pub use qbrs_core::statement::Statement;
     pub use qbrs_core::update::{NothingToSet, update};
     pub use qbrs_core::window::{
         HasDenseRank, HasRank, HasRowNumber, dense_rank, rank, row_number, window,

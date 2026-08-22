@@ -15,5 +15,6 @@ pub mod render;
 pub mod row;
 pub mod scope;
 pub mod select;
+pub mod statement;
 pub mod update;
 pub mod window;

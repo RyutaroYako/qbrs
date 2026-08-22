@@ -180,7 +180,7 @@ fn chained_set_ops_and_ordinal_order_by_limit_offset() {
     let (sql, params) = a
         .union(&b)
         .union_all(&c)
-        .order_by(1, qbrs_core::select::SortDir::Desc)
+        .order_by(qbrs_core::select::nth(1).desc())
         .limit(5)
         .offset(2)
         .to_sql();

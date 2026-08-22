@@ -9,7 +9,7 @@ use crate::dialect::{Dialect, SupportsFullOuterJoin, SupportsRightJoin};
 use crate::expr::{Bool, Expr, ExprKind, IntoExpr, SqlType, Value};
 use crate::render::{
     Fragment, FragmentSink, QuerySink, SelectItem, Sink, render_and_list, render_expr,
-    render_select_list,
+    render_expr_list, render_order_by, render_select_list,
 };
 use crate::scope::{
     BaseTable, Cons, MapNullable, MaybeNull, Nil, NotNull, ScopeTables, Superset, Table, TableSlot,
@@ -24,7 +24,7 @@ pub use crate::expr::SortDir;
 pub use dyn_select::DynSelect;
 pub use prepared::{Prepared, PreparedParams, UnresolvedPlaceholder};
 pub use selection::{All, AllColumns, RowField, Selection, SelectionPart};
-pub use set_op::SetOp;
+pub use set_op::{Ordinal, OrdinalKey, SetOp, nth};
 
 /// One `name AS (body)` binding, carried in by the `Cte` a query was
 /// entered through.
@@ -546,32 +546,9 @@ impl SelectBody {
 
         render_and_list::<RD>(sink, " WHERE ", wheres);
 
-        if !group_by.is_empty() {
-            sink.text(" GROUP BY ");
-            for (i, g) in group_by.iter().enumerate() {
-                if i > 0 {
-                    sink.text(", ");
-                }
-                render_expr::<RD>(g, sink);
-            }
-        }
-
+        render_expr_list::<RD>(sink, " GROUP BY ", group_by);
         render_and_list::<RD>(sink, " HAVING ", having);
-
-        if !order_by.is_empty() {
-            sink.text(" ORDER BY ");
-            for (i, (e, dir)) in order_by.iter().enumerate() {
-                if i > 0 {
-                    sink.text(", ");
-                }
-                render_expr::<RD>(e, sink);
-                sink.text(match dir {
-                    SortDir::Asc => " ASC",
-                    SortDir::Desc => " DESC",
-                });
-            }
-        }
-
+        render_order_by::<RD>(sink, " ORDER BY ", order_by);
         render_limit_offset::<RD>(sink, limit, offset);
     }
 }

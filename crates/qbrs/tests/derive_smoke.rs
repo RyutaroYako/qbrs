@@ -2,6 +2,7 @@ use qbrs::Table;
 use qbrs::dialect::Postgres;
 use qbrs::expr::ExprMethods;
 use qbrs::select::{OrderExt, select};
+use qbrs::statement::Statement;
 
 #[derive(Table)]
 #[table(name = "users")]

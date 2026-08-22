@@ -3,14 +3,11 @@
 //! query building, SQL rendering, and every compile-time guarantee live in
 //! `qbrs-core`, which stays independent of any async runtime or driver.
 
-use qbrs_core::delete::{Delete, DeleteReturning};
 use qbrs_core::dialect::Postgres;
 use qbrs_core::expr::Value;
-use qbrs_core::insert::{Insert, InsertReturning, InsertRow};
 use qbrs_core::row::{Row, RowCons, RowNil};
-use qbrs_core::scope::Table;
 use qbrs_core::select::{DynSelect, Prepared, PreparedParams, Select, Selection, SetOp};
-use qbrs_core::update::{Update, UpdateReturning};
+use qbrs_core::statement::{Returning, Statement, WrittenTable};
 use sqlx::Row as _;
 use sqlx::postgres::PgRow;
 
@@ -225,60 +222,20 @@ pub trait ExecuteExt {
     ) -> impl std::future::Future<Output = Result<u64>>;
 }
 
-impl<T: Table, R: InsertRow<Table = T>> ExecuteExt for Insert<Postgres, T, R> {
+/// Every writing statement, counted the same way: what `execute` returns is
+/// rows affected, whichever of the three it was.
+impl<S: Statement<Dialect = Postgres>> ExecuteExt for S {
     async fn execute<'e, E: sqlx::PgExecutor<'e>>(&self, executor: E) -> Result<u64> {
         let (sql, params) = self.to_sql();
         execute_only(executor, &sql, params).await
     }
 }
 
-impl<T: Table> ExecuteExt for Update<Postgres, T> {
-    async fn execute<'e, E: sqlx::PgExecutor<'e>>(&self, executor: E) -> Result<u64> {
-        let (sql, params) = self.to_sql();
-        execute_only(executor, &sql, params).await
-    }
-}
-
-impl<T: Table> ExecuteExt for Delete<Postgres, T> {
-    async fn execute<'e, E: sqlx::PgExecutor<'e>>(&self, executor: E) -> Result<u64> {
-        let (sql, params) = self.to_sql();
-        execute_only(executor, &sql, params).await
-    }
-}
-
-/// The scope a `RETURNING` clause is checked against: just the table being
-/// written to.
-type TableScope<T> = qbrs_core::scope::Cons<
-    qbrs_core::scope::TableSlot<T, qbrs_core::scope::NotNull>,
-    qbrs_core::scope::Nil,
->;
-
-impl<T: Table, R: InsertRow<Table = T>, Sel, Idx> LoadExt<Idx>
-    for InsertReturning<Postgres, T, R, Sel>
+/// One impl for every `RETURNING`: what a statement returns is decided by
+/// its selection, not by which statement it was.
+impl<S: Statement<Dialect = Postgres>, Sel, Idx> LoadExt<Idx> for Returning<S, Sel>
 where
-    Sel: Selection<TableScope<T>, Idx>,
-    Sel::Output: DecodeRow,
-{
-    type Output = Sel::Output;
-    fn rendered(&self) -> (String, Vec<Value>) {
-        self.to_sql()
-    }
-}
-
-impl<T: Table, Sel, Idx> LoadExt<Idx> for UpdateReturning<Postgres, T, Sel>
-where
-    Sel: Selection<TableScope<T>, Idx>,
-    Sel::Output: DecodeRow,
-{
-    type Output = Sel::Output;
-    fn rendered(&self) -> (String, Vec<Value>) {
-        self.to_sql()
-    }
-}
-
-impl<T: Table, Sel, Idx> LoadExt<Idx> for DeleteReturning<Postgres, T, Sel>
-where
-    Sel: Selection<TableScope<T>, Idx>,
+    Sel: Selection<WrittenTable<S::Table>, Idx>,
     Sel::Output: DecodeRow,
 {
     type Output = Sel::Output;

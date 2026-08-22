@@ -11,9 +11,10 @@ use std::marker::PhantomData;
 
 use crate::dialect::{Dialect, SupportsOnConflict, SupportsReturning};
 use crate::expr::{Column, ColumnKey, Value};
-use crate::render::{QuerySink, SelectItem, Sink, render_ident, render_select_list};
-use crate::scope::{BaseTable, Cons, Nil, NotNull, Table, TableSlot};
+use crate::render::{QuerySink, Sink, render_ident};
+use crate::scope::{BaseTable, Table};
 use crate::select::Selection;
+use crate::statement::{Returning, Statement, WrittenTable};
 use crate::update::{Assignments, NothingToSet, UpdateRow};
 
 #[derive(Debug, Clone, PartialEq, Default)]
@@ -136,14 +137,7 @@ fn render_conflict_clause<D: Dialect>(clause: &ConflictClause, sink: &mut dyn Si
         ConflictAction::DoNothing => sink.text(" DO NOTHING"),
         ConflictAction::DoUpdate(sets) => {
             sink.text(" DO UPDATE SET ");
-            for (i, (col, val)) in sets.iter().enumerate() {
-                if i > 0 {
-                    sink.text(", ");
-                }
-                render_ident::<D>(sink, col);
-                sink.text(" = ");
-                sink.bind(val);
-            }
+            sets.render_into::<D>(sink);
         }
     }
 }
@@ -159,7 +153,7 @@ pub fn insert<D, T: BaseTable>(_table: T) -> InsertSeed<D, T> {
 }
 
 impl<D, T: Table> InsertSeed<D, T> {
-    pub fn values<R: InsertRow<Table = T>>(self, row: R) -> Insert<D, T, R> {
+    pub fn values<R: InsertRow<Table = T>>(self, row: R) -> Insert<D, R> {
         Insert {
             rows: vec![row.into_values()],
             on_conflict: None,
@@ -174,7 +168,7 @@ impl<D, T: Table> InsertSeed<D, T> {
     pub fn values_all<R: InsertRow<Table = T>>(
         self,
         rows: impl IntoIterator<Item = R>,
-    ) -> Result<Insert<D, T, R>, NothingToInsert> {
+    ) -> Result<Insert<D, R>, NothingToInsert> {
         let rows: Vec<_> = rows.into_iter().map(R::into_values).collect();
         if rows.is_empty() {
             return Err(NothingToInsert);
@@ -201,13 +195,13 @@ impl std::fmt::Display for NothingToInsert {
 }
 impl std::error::Error for NothingToInsert {}
 
-fn render_values_clause<D: Dialect, T: Table, R: InsertRow<Table = T>>(
+fn render_values_clause<D: Dialect, R: InsertRow>(
     rows: &[Vec<InsertValue>],
     on_conflict: &Option<ConflictClause>,
 ) -> QuerySink<D> {
     let mut sink = QuerySink::<D>::new();
     sink.text("INSERT INTO ");
-    render_ident::<D>(&mut sink, T::NAME);
+    render_ident::<D>(&mut sink, <R::Table as Table>::NAME);
     sink.text(" (");
     for (i, c) in R::COLUMNS.iter().enumerate() {
         if i > 0 {
@@ -241,13 +235,13 @@ fn render_values_clause<D: Dialect, T: Table, R: InsertRow<Table = T>>(
     sink
 }
 
-pub struct Insert<D, T: Table, R: InsertRow<Table = T>> {
+pub struct Insert<D, R: InsertRow> {
     rows: Vec<Vec<InsertValue>>,
     on_conflict: Option<ConflictClause>,
-    _marker: PhantomData<fn() -> (D, T, R)>,
+    _marker: PhantomData<fn() -> (D, R)>,
 }
 
-impl<D, T: Table, R: InsertRow<Table = T>> Insert<D, T, R> {
+impl<D, R: InsertRow> Insert<D, R> {
     /// Bulk insert: add another row to the same statement.
     pub fn values(mut self, row: R) -> Self {
         self.rows.push(row.into_values());
@@ -255,9 +249,9 @@ impl<D, T: Table, R: InsertRow<Table = T>> Insert<D, T, R> {
     }
 }
 
-impl<D: SupportsOnConflict, T: Table, R: InsertRow<Table = T>> Insert<D, T, R> {
+impl<D: SupportsOnConflict, R: InsertRow> Insert<D, R> {
     /// `ON CONFLICT (..) DO NOTHING`.
-    pub fn on_conflict_do_nothing(mut self, target: impl ConflictTarget<T>) -> Self {
+    pub fn on_conflict_do_nothing(mut self, target: impl ConflictTarget<R::Table>) -> Self {
         self.on_conflict = Some(ConflictClause {
             target: target.column_names(),
             action: ConflictAction::DoNothing,
@@ -267,9 +261,9 @@ impl<D: SupportsOnConflict, T: Table, R: InsertRow<Table = T>> Insert<D, T, R> {
 
     /// `ON CONFLICT (..) DO UPDATE SET ..`, reusing the same `*Update`
     /// struct `update().set(..)` takes.
-    pub fn on_conflict_do_update<U: UpdateRow<Table = T>>(
+    pub fn on_conflict_do_update<U: UpdateRow<Table = R::Table>>(
         mut self,
-        target: impl ConflictTarget<T>,
+        target: impl ConflictTarget<R::Table>,
         set: U,
     ) -> Result<Self, NothingToSet> {
         self.on_conflict = Some(ConflictClause {
@@ -280,46 +274,27 @@ impl<D: SupportsOnConflict, T: Table, R: InsertRow<Table = T>> Insert<D, T, R> {
     }
 }
 
-impl<D: Dialect, T: Table, R: InsertRow<Table = T>> Insert<D, T, R> {
-    pub fn to_sql(&self) -> (String, Vec<Value>) {
-        render_values_clause::<D, T, R>(&self.rows, &self.on_conflict).finish()
+impl<D: Dialect, R: InsertRow> crate::statement::StatementSealed for Insert<D, R> {}
+
+impl<D: Dialect, R: InsertRow> Statement for Insert<D, R> {
+    type Dialect = D;
+    type Table = R::Table;
+    fn render(&self) -> QuerySink<D> {
+        render_values_clause::<D, R>(&self.rows, &self.on_conflict)
     }
 }
 
-impl<D: SupportsReturning, T: Table, R: InsertRow<Table = T>> Insert<D, T, R> {
-    /// Returns a distinct `InsertReturning` type rather than `Self` with a
-    /// flag set: the execution layer needs `Sel`'s concrete type to know what
-    /// to decode a returned row into, and an optional field would erase
-    /// it.
-    pub fn returning<Sel, Idx>(self, sel: Sel) -> InsertReturning<D, T, R, Sel>
+impl<D: SupportsReturning, R: InsertRow> Insert<D, R> {
+    /// A distinct type rather than `Self` with a flag set, for the reason
+    /// `delete::Delete::returning` gives.
+    pub fn returning<Sel, Idx>(self, sel: Sel) -> Returning<Self, Sel>
     where
-        Sel: Selection<Cons<TableSlot<T, NotNull>, Nil>, Idx>,
+        Sel: Selection<WrittenTable<R::Table>, Idx>,
     {
-        InsertReturning {
-            rows: self.rows,
-            on_conflict: self.on_conflict,
+        Returning {
             returning: sel.items(),
+            statement: self,
             _marker: PhantomData,
         }
-    }
-}
-
-/// An `INSERT .. RETURNING ..` statement. `Sel`'s concrete type is retained
-/// (unlike a hypothetical `Option<Vec<SelectItem>>` field on `Insert` itself)
-/// specifically so the execution layer can decode returned rows into
-/// `Sel::Output` — see `Insert::returning`'s doc comment.
-pub struct InsertReturning<D, T: Table, R: InsertRow<Table = T>, Sel> {
-    rows: Vec<Vec<InsertValue>>,
-    on_conflict: Option<ConflictClause>,
-    returning: Vec<SelectItem>,
-    _marker: PhantomData<fn() -> (D, T, R, Sel)>,
-}
-
-impl<D: Dialect, T: Table, R: InsertRow<Table = T>, Sel> InsertReturning<D, T, R, Sel> {
-    pub fn to_sql(&self) -> (String, Vec<Value>) {
-        let mut sink = render_values_clause::<D, T, R>(&self.rows, &self.on_conflict);
-        sink.text(" RETURNING ");
-        render_select_list::<D>(&self.returning, &mut sink);
-        sink.finish()
     }
 }

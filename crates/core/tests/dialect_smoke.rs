@@ -7,6 +7,7 @@ use qbrs_core::expr::ExprMethods;
 use qbrs_core::insert::{Defaultable, InsertRow, InsertValue, insert};
 use qbrs_core::scope::Table as TableTrait;
 use qbrs_core::select::select;
+use qbrs_core::statement::Statement;
 
 pub struct UsersMarker;
 impl TableTrait for UsersMarker {

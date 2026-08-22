@@ -33,7 +33,7 @@ async fn main() {
 
     let feed: Vec<(String, i64)> = user_rows
         .union_all(&order_rows)
-        .order_by(1, SortDir::Asc)
+        .order_by(nth(1).asc())
         .load(&pool)
         .await
         .expect("union_all feed")
@@ -54,7 +54,7 @@ async fn main() {
 
     let both: Vec<(String,)> = active_emails
         .intersect(&ordering_emails)
-        .order_by(1, SortDir::Asc)
+        .order_by(nth(1).asc())
         .load(&pool)
         .await
         .expect("intersect")

@@ -18,7 +18,8 @@ pub(crate) trait Sink {
 }
 
 /// Builds a finished statement, numbering each parameter as it arrives.
-pub(crate) struct QuerySink<D> {
+#[doc(hidden)]
+pub struct QuerySink<D> {
     sql: String,
     params: Vec<Value>,
     _dialect: std::marker::PhantomData<fn() -> D>,
@@ -169,31 +170,9 @@ pub(crate) fn render_expr<D: Dialect>(expr: &ExprKind, sink: &mut dyn Sink) {
             // (..)` would not be valid SQL.
             sink.text(func);
             sink.text(" OVER (");
-            if !partition_by.is_empty() {
-                sink.text("PARTITION BY ");
-                for (i, p) in partition_by.iter().enumerate() {
-                    if i > 0 {
-                        sink.text(", ");
-                    }
-                    render_expr::<D>(p, sink);
-                }
-            }
-            if !order_by.is_empty() {
-                if !partition_by.is_empty() {
-                    sink.ch(' ');
-                }
-                sink.text("ORDER BY ");
-                for (i, (e, dir)) in order_by.iter().enumerate() {
-                    if i > 0 {
-                        sink.text(", ");
-                    }
-                    render_expr::<D>(e, sink);
-                    sink.text(match dir {
-                        SortDir::Asc => " ASC",
-                        SortDir::Desc => " DESC",
-                    });
-                }
-            }
+            render_expr_list::<D>(sink, "PARTITION BY ", partition_by);
+            let separator = if partition_by.is_empty() { "" } else { " " };
+            render_order_by::<D>(sink, &format!("{separator}ORDER BY "), order_by);
             sink.ch(')');
         }
     }
@@ -337,6 +316,44 @@ fn render_bool_pair<D: Dialect>(lhs: &ExprKind, joiner: &str, rhs: &ExprKind, si
     sink.ch(' ');
     render_expr::<D>(rhs, sink);
     sink.ch(')');
+}
+
+/// A comma-separated expression list behind a keyword — `GROUP BY`,
+/// `PARTITION BY` — or nothing at all when there are none.
+pub(crate) fn render_expr_list<D: Dialect>(sink: &mut dyn Sink, keyword: &str, list: &[ExprKind]) {
+    if list.is_empty() {
+        return;
+    }
+    sink.text(keyword);
+    for (i, e) in list.iter().enumerate() {
+        if i > 0 {
+            sink.text(", ");
+        }
+        render_expr::<D>(e, sink);
+    }
+}
+
+/// The same, with each key's sort direction — a statement's `ORDER BY` and a
+/// window's `OVER (.. ORDER BY ..)` are one clause written in two places.
+pub(crate) fn render_order_by<D: Dialect>(
+    sink: &mut dyn Sink,
+    keyword: &str,
+    keys: &[(ExprKind, SortDir)],
+) {
+    if keys.is_empty() {
+        return;
+    }
+    sink.text(keyword);
+    for (i, (e, dir)) in keys.iter().enumerate() {
+        if i > 0 {
+            sink.text(", ");
+        }
+        render_expr::<D>(e, sink);
+        sink.text(match dir {
+            SortDir::Asc => " ASC",
+            SortDir::Desc => " DESC",
+        });
+    }
 }
 
 /// `WHERE`/`HAVING`: a keyword, then the conditions AND-folded, or nothing

@@ -4,11 +4,10 @@ use std::marker::PhantomData;
 
 use crate::dialect::{Dialect, SupportsReturning};
 use crate::expr::{Bool, Expr, ExprKind, Value};
-use crate::render::{
-    QuerySink, SelectItem, Sink, render_and_list, render_ident, render_select_list,
-};
+use crate::render::{QuerySink, Sink, render_and_list, render_ident};
 use crate::scope::{BaseTable, Cons, Nil, NotNull, Superset, Table, TableSlot};
 use crate::select::{Predicate, Selection};
+use crate::statement::{Returning, Statement, WrittenTable};
 
 /// Implemented by the `#[derive(Table)]`-generated `*Update` struct: every
 /// field is optional (untouched vs. touched), and doubly-optional for
@@ -29,11 +28,20 @@ pub struct Assignments {
 }
 
 impl Assignments {
-    pub(crate) fn iter(&self) -> impl Iterator<Item = &(&'static str, Value)> {
-        self.sets.iter()
+    /// `col = $n, col = $n` — the one renderer for a `SET` list, shared by
+    /// `UPDATE` and `ON CONFLICT DO UPDATE`.
+    pub(crate) fn render_into<D: Dialect>(&self, sink: &mut dyn Sink) {
+        for (i, (col, val)) in self.sets.iter().enumerate() {
+            if i > 0 {
+                sink.text(", ");
+            }
+            render_ident::<D>(sink, col);
+            sink.text(" = ");
+            sink.bind(val);
+        }
     }
 
-    pub fn new<R: UpdateRow>(row: R) -> Result<Self, NothingToSet> {
+    pub(crate) fn new<R: UpdateRow>(row: R) -> Result<Self, NothingToSet> {
         let sets = row.sets();
         if sets.is_empty() {
             return Err(NothingToSet);
@@ -83,14 +91,7 @@ fn render_set_clause<D: Dialect, T: Table>(
     sink.text("UPDATE ");
     render_ident::<D>(&mut sink, T::NAME);
     sink.text(" SET ");
-    for (i, (col, val)) in sets.iter().enumerate() {
-        if i > 0 {
-            sink.text(", ");
-        }
-        render_ident::<D>(&mut sink, col);
-        sink.text(" = ");
-        sink.bind(val);
-    }
+    sets.render_into::<D>(&mut sink);
 
     render_and_list::<D>(&mut sink, " WHERE ", wheres);
 
@@ -128,40 +129,27 @@ impl<D, T: Table> Update<D, T> {
     }
 }
 
-impl<D: Dialect, T: Table> Update<D, T> {
-    pub fn to_sql(&self) -> (String, Vec<Value>) {
-        render_set_clause::<D, T>(&self.sets, &self.wheres).finish()
+impl<D: Dialect, T: Table> crate::statement::StatementSealed for Update<D, T> {}
+
+impl<D: Dialect, T: Table> Statement for Update<D, T> {
+    type Dialect = D;
+    type Table = T;
+    fn render(&self) -> QuerySink<D> {
+        render_set_clause::<D, T>(&self.sets, &self.wheres)
     }
 }
 
 impl<D: SupportsReturning, T: Table> Update<D, T> {
     /// A distinct type rather than `Self` with a flag set, for the reason
-    /// `insert::Insert::returning` gives.
-    pub fn returning<Sel, Idx>(self, sel: Sel) -> UpdateReturning<D, T, Sel>
+    /// `delete::Delete::returning` gives.
+    pub fn returning<Sel, Idx>(self, sel: Sel) -> Returning<Self, Sel>
     where
-        Sel: Selection<Cons<TableSlot<T, NotNull>, Nil>, Idx>,
+        Sel: Selection<WrittenTable<T>, Idx>,
     {
-        UpdateReturning {
-            sets: self.sets,
-            wheres: self.wheres,
+        Returning {
             returning: sel.items(),
+            statement: self,
             _marker: PhantomData,
         }
-    }
-}
-
-pub struct UpdateReturning<D, T: Table, Sel> {
-    sets: Assignments,
-    wheres: Vec<ExprKind>,
-    returning: Vec<SelectItem>,
-    _marker: PhantomData<fn() -> (D, T, Sel)>,
-}
-
-impl<D: Dialect, T: Table, Sel> UpdateReturning<D, T, Sel> {
-    pub fn to_sql(&self) -> (String, Vec<Value>) {
-        let mut sink = render_set_clause::<D, T>(&self.sets, &self.wheres);
-        sink.text(" RETURNING ");
-        render_select_list::<D>(&self.returning, &mut sink);
-        sink.finish()
     }
 }

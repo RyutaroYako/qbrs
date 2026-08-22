@@ -153,6 +153,7 @@ macro_rules! scalar_selection {
 }
 scalar_selection!(impl[C: ColumnKey] Column<C>);
 scalar_selection!(impl[S: SqlType] Expr<Nil, S>);
+scalar_selection!(impl[Req, S: SqlType] Declared<Req, S>);
 scalar_selection!(impl[K, Req, S: SqlType] Keyed<K, Req, S>);
 scalar_selection!(impl[K, Inner] Aliased<K, Inner>);
 

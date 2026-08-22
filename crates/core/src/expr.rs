@@ -796,11 +796,6 @@ aggregate!(
     "`count(column)` — non-NULL values, unlike `count()`'s `count(*)` rows."
 );
 
-/// The one door into `ExprKind` from outside the crate, and the only shape
-/// that needs one: `sql!{}` expands in the caller's. `Req` is pinned to
-/// `Nil` rather than being a parameter, so a raw fragment can't claim a
-/// scope it hasn't got.
-#[doc(hidden)]
 /// Counts the `?` placeholders in a `sql!` text, so the macro can compare
 /// that count with the number of values it was handed while both are still
 /// constants. `??` is a literal `?` and counts for nothing.
@@ -822,6 +817,12 @@ pub const fn placeholder_count(sql: &str) -> usize {
     count
 }
 
+/// The one door into `ExprKind` from outside the crate, and the only shape
+/// that needs one: `sql!{}` expands in the caller's. `Req` is pinned to
+/// `Nil` rather than being a parameter, so a raw fragment can't claim a
+/// scope it hasn't got. Reached through `sql!`, which is what checks that
+/// every `?` has a value.
+#[doc(hidden)]
 pub fn raw_expr<S: SqlType>(sql: &'static str, params: Vec<Value>) -> Expr<Nil, S> {
     Expr::from_kind(ExprKind::Raw(Fragment::from_authored(sql, params)))
 }

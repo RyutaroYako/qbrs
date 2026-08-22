@@ -3,12 +3,11 @@
 use std::marker::PhantomData;
 
 use crate::dialect::{Dialect, SupportsReturning};
-use crate::expr::{Bool, Expr, ExprKind, Value};
-use crate::render::{
-    QuerySink, SelectItem, Sink, render_and_list, render_ident, render_select_list,
-};
+use crate::expr::{Bool, Expr, ExprKind};
+use crate::render::{QuerySink, Sink, render_and_list, render_ident};
 use crate::scope::{BaseTable, Cons, Nil, NotNull, Superset, Table, TableSlot};
 use crate::select::{Predicate, Selection};
+use crate::statement::{Returning, Statement, WrittenTable};
 
 pub fn delete<D, T: BaseTable>(_table: T) -> Delete<D, T> {
     Delete {
@@ -53,38 +52,28 @@ impl<D, T: Table> Delete<D, T> {
     }
 }
 
-impl<D: Dialect, T: Table> Delete<D, T> {
-    pub fn to_sql(&self) -> (String, Vec<Value>) {
-        render_delete::<D, T>(&self.wheres).finish()
+impl<D: Dialect, T: Table> crate::statement::StatementSealed for Delete<D, T> {}
+
+impl<D: Dialect, T: Table> Statement for Delete<D, T> {
+    type Dialect = D;
+    type Table = T;
+    fn render(&self) -> QuerySink<D> {
+        render_delete::<D, T>(&self.wheres)
     }
 }
 
 impl<D: SupportsReturning, T: Table> Delete<D, T> {
-    /// See `insert::Insert::returning`'s doc comment for why this returns a
-    /// distinct type rather than `Self` with a field toggled.
-    pub fn returning<Sel, Idx>(self, sel: Sel) -> DeleteReturning<D, T, Sel>
+    /// A distinct type rather than `Self` with a flag set: the execution
+    /// layer needs `Sel`'s concrete type to know what to decode a returned
+    /// row into, and an optional field would erase it.
+    pub fn returning<Sel, Idx>(self, sel: Sel) -> Returning<Self, Sel>
     where
-        Sel: Selection<Cons<TableSlot<T, NotNull>, Nil>, Idx>,
+        Sel: Selection<WrittenTable<T>, Idx>,
     {
-        DeleteReturning {
-            wheres: self.wheres,
+        Returning {
             returning: sel.items(),
+            statement: self,
             _marker: PhantomData,
         }
-    }
-}
-
-pub struct DeleteReturning<D, T: Table, Sel> {
-    wheres: Vec<ExprKind>,
-    returning: Vec<SelectItem>,
-    _marker: PhantomData<fn() -> (D, T, Sel)>,
-}
-
-impl<D: Dialect, T: Table, Sel> DeleteReturning<D, T, Sel> {
-    pub fn to_sql(&self) -> (String, Vec<Value>) {
-        let mut sink = render_delete::<D, T>(&self.wheres);
-        sink.text(" RETURNING ");
-        render_select_list::<D>(&self.returning, &mut sink);
-        sink.finish()
     }
 }

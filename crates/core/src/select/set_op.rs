@@ -34,6 +34,37 @@ impl SetOpKind {
     }
 }
 
+/// The `n`th selected column, 1-indexed: the only thing a set operation's
+/// `ORDER BY` can name.
+pub fn nth(position: u32) -> Ordinal {
+    Ordinal(position)
+}
+
+pub struct Ordinal(u32);
+
+impl Ordinal {
+    pub fn asc(self) -> OrdinalKey {
+        OrdinalKey {
+            position: self.0,
+            dir: SortDir::Asc,
+        }
+    }
+
+    pub fn desc(self) -> OrdinalKey {
+        OrdinalKey {
+            position: self.0,
+            dir: SortDir::Desc,
+        }
+    }
+}
+
+/// One sort key of a set operation — an ordinal position and a direction,
+/// reading as one argument the way `select::OrderKey` does.
+pub struct OrdinalKey {
+    position: u32,
+    dir: SortDir,
+}
+
 /// A chain of `SELECT`s combined by set operators, all decoding to the first
 /// branch's `Output` — which is also where SQL itself takes the combined
 /// result's column names from. `ORDER BY` here is necessarily by **ordinal position**
@@ -107,12 +138,12 @@ impl<D: Dialect, Output> SetOp<D, Output> {
         self.push(SetOpKind::Except, other.fragment::<IdxB>())
     }
 
-    /// Orders the combined result by the `position`th (1-indexed) selected
-    /// column — see this struct's doc comment for why ordinal position,
-    /// not a typed column, is the only option here. Callable multiple
-    /// times like `Select::order_by`, each call appending a sort key.
-    pub fn order_by(mut self, position: u32, dir: SortDir) -> Self {
-        self.order_by.push((position, dir));
+    /// Orders the combined result by a selected column's ordinal position —
+    /// `nth(1).desc()`; see this struct's doc comment for why position, not
+    /// a typed column, is the only reference available here. Callable
+    /// multiple times like `Select::order_by`, each call appending a key.
+    pub fn order_by(mut self, key: OrdinalKey) -> Self {
+        self.order_by.push((key.position, key.dir));
         self
     }
 
