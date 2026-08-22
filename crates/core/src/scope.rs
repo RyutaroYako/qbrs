@@ -6,13 +6,15 @@
 
 use std::marker::PhantomData;
 
-/// Marker trait for anything that represents a table in the schema.
-/// `NAME` (and optionally `SCHEMA`) are what the SQL renderer prints, kept
-/// as trait consts rather than derived from the Rust type name so the
-/// derive macro can freely rename/alias tables.
+/// Marker trait for anything that represents a table in a query's scope.
+/// `NAME` is what the SQL renderer prints, kept as a trait const rather than
+/// derived from the Rust type name so the derive macro can freely rename
+/// tables.
+///
+/// **Known limitation**: no schema qualification — a table is rendered
+/// bare, so `search_path` decides which one it is.
 pub trait Table: 'static {
     const NAME: &'static str;
-    const SCHEMA: Option<&'static str> = None;
 }
 
 /// A table that exists in the schema, as opposed to one a query brings into

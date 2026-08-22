@@ -199,3 +199,32 @@ fn take_moves_one_field_and_keeps_the_rest() {
     assert_eq!(email, "ada@example.com");
     assert_eq!(total, Some(1000));
 }
+
+/// A row carries names, so another crate can walk it under its own bounds —
+/// `serde::Serialize`, `Display`, whatever — which is what `qbrs-core`
+/// cannot offer itself, having no dependencies.
+trait ToPairs {
+    fn to_pairs(&self, out: &mut Vec<(&'static str, String)>);
+}
+impl ToPairs for RowNil {
+    fn to_pairs(&self, _out: &mut Vec<(&'static str, String)>) {}
+}
+impl<K: qbrs::row::Named, V: std::fmt::Debug, T: ToPairs> ToPairs for RowCons<K, V, T> {
+    fn to_pairs(&self, out: &mut Vec<(&'static str, String)>) {
+        out.push((K::NAME, format!("{:?}", self.value())));
+        self.tail().to_pairs(out);
+    }
+}
+
+#[test]
+fn a_row_can_be_walked_by_a_downstream_trait() {
+    let mut out = Vec::new();
+    user_order_row().fields().to_pairs(&mut out);
+    assert_eq!(
+        out,
+        vec![
+            ("email", "\"ada@example.com\"".to_string()),
+            ("total", "Some(1000)".to_string()),
+        ]
+    );
+}

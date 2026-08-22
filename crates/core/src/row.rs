@@ -40,6 +40,19 @@ pub struct RowCons<K, V, Tail> {
 }
 
 impl<K, V, Tail> RowCons<K, V, Tail> {
+    /// This cell's value. With `tail` and the key's `Named::NAME`, this is
+    /// everything a downstream crate needs to walk a row under whatever
+    /// bounds it wants — `serde::Serialize`, `Display`, anything — which
+    /// `qbrs-core` can't offer itself, having no dependencies.
+    pub fn value(&self) -> &V {
+        &self.value
+    }
+
+    /// The rest of the row.
+    pub fn tail(&self) -> &Tail {
+        &self.tail
+    }
+
     #[doc(hidden)]
     pub fn new(value: V, tail: Tail) -> Self {
         RowCons {
@@ -285,6 +298,13 @@ impl<L> Row<L> {
     #[doc(hidden)]
     pub fn new(fields: L) -> Self {
         Row(fields)
+    }
+
+    /// The row's fields as a `RowCons` chain, for walking it from another
+    /// crate. `get`/`take`/`into_struct` cover reading a known field; this
+    /// is for code that has to visit every field it happens to hold.
+    pub fn fields(&self) -> &L {
+        &self.0
     }
 
     /// `row.get(users::email)` — the key is the same value that appeared in
