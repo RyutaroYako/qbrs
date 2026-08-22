@@ -7,7 +7,7 @@ use qbrs_core::expr::ExprMethods;
 use qbrs_core::insert::{Defaultable, InsertRow, InsertValue, insert};
 use qbrs_core::scope::Table as TableTrait;
 use qbrs_core::select::select;
-use qbrs_core::statement::{ReturningExt, Statement};
+use qbrs_core::statement::Statement;
 
 pub struct UsersMarker;
 impl TableTrait for UsersMarker {
@@ -39,6 +39,7 @@ mod quoted {
             type Table = QuotedMarker;
             type Sql = Integer;
         }
+        impl qbrs_core::row::NamedSealed for id {}
         impl qbrs_core::row::Named for id {
             type Name = qbrs_core::type_name!('i', 'd');
             const NAME: &'static str = "id";
@@ -65,6 +66,7 @@ mod users {
             type Table = UsersMarker;
             type Sql = Integer;
         }
+        impl qbrs_core::row::NamedSealed for id {}
         impl qbrs_core::row::Named for id {
             type Name = qbrs_core::type_name!('i', 'd');
             const NAME: &'static str = "id";
@@ -76,6 +78,7 @@ mod users {
             type Table = UsersMarker;
             type Sql = Text;
         }
+        impl qbrs_core::row::NamedSealed for email {}
         impl qbrs_core::row::Named for email {
             type Name = qbrs_core::type_name!('e', 'm', 'a', 'i', 'l');
             const NAME: &'static str = "email";

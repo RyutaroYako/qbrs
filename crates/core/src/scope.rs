@@ -131,7 +131,8 @@ impl<Head, Tail: Concat<Other>, Other> Concat<Other> for Cons<Head, Tail> {
 /// impl generics.
 #[diagnostic::on_unimplemented(
     message = "this expression references a table that isn't in scope here",
-    label = "requires {Req}, but the current query scope doesn't contain all of it"
+    label = "requires {Req}, but the current query scope doesn't contain all of it",
+    note = "in a generic helper, `Idxs` has to be a type parameter of its own — one shared index matches no scope, however right the tables look"
 )]
 pub trait Superset<Req, Idxs> {}
 

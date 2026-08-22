@@ -73,6 +73,8 @@ macro_rules! declare_columns {
                     type Table = $table;
                     type Sql = $crate::__private::BigInt;
                 }
+                impl $crate::__private::NamedSealed for $name {}
+                impl $crate::__private::Spelled for $name {}
                 impl $crate::__private::Named for $name {
                     type Name = $crate::__private::NameEnd;
                     const NAME: &'static str = stringify!($name);
@@ -103,7 +105,7 @@ macro_rules! row_of {
 #[doc(hidden)]
 pub mod __private {
     pub use qbrs_core::expr::{BigInt, Column, ColumnKey};
-    pub use qbrs_core::row::{NameEnd, Named, RowCons, RowNil};
+    pub use qbrs_core::row::{NameEnd, Named, NamedSealed, RowCons, RowNil, Spelled};
     pub use qbrs_core::scope::{Cons, Nil, NotNull, TableSlot};
 }
 

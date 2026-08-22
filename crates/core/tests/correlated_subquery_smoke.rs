@@ -35,6 +35,7 @@ mod users {
             type Table = UsersMarker;
             type Sql = Integer;
         }
+        impl qbrs_core::row::NamedSealed for id {}
         impl qbrs_core::row::Named for id {
             type Name = qbrs_core::type_name!('i', 'd');
             const NAME: &'static str = "id";
@@ -60,6 +61,7 @@ mod orders {
             type Table = OrdersMarker;
             type Sql = Integer;
         }
+        impl qbrs_core::row::NamedSealed for user_id {}
         impl qbrs_core::row::Named for user_id {
             type Name = qbrs_core::type_name!('u', 's', 'e', 'r', '_', 'i', 'd');
             const NAME: &'static str = "user_id";

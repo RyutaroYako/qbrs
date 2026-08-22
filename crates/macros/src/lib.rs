@@ -252,6 +252,8 @@ fn gen_schema_mod(
                 type Sql = #col_sql_ty;
             }
             #[doc(hidden)]
+            impl ::qbrs::row::NamedSealed for #name {}
+
             impl ::qbrs::row::Named for #name {
                 type Name = #type_name;
                 const NAME: &'static str = #col_name_str;
@@ -446,6 +448,8 @@ fn expand_from_row(input: DeriveInput) -> syn::Result<TokenStream2> {
         markers.push(quote! {
             pub struct #field_name;
             #[doc(hidden)]
+            impl ::qbrs::row::NamedSealed for #field_name {}
+
             impl ::qbrs::row::Named for #field_name {
                 type Name = #type_name;
                 const NAME: &'static str = #field_name_str;
@@ -554,6 +558,8 @@ fn expand_with(decl: CteDecl) -> TokenStream2 {
                 type Sql = #ty;
             }
             #[doc(hidden)]
+            impl ::qbrs::row::NamedSealed for columns::#field {}
+
             impl ::qbrs::row::Named for columns::#field {
                 type Name = #type_name;
                 const NAME: &'static str = #field_str;
@@ -675,6 +681,8 @@ pub fn label(input: TokenStream) -> TokenStream {
             impl ::qbrs::row::LookupKey for #name {}
             impl ::qbrs::expr::LabelKey for #name {}
             #[doc(hidden)]
+            impl ::qbrs::row::NamedSealed for #name {}
+
             impl ::qbrs::row::Named for #name {
                 type Name = #type_name;
                 const NAME: &'static str = #name_str;
@@ -875,10 +883,11 @@ fn gen_insert_struct(
             // stand — needs a way to be said.
             let null_setter = format_ident!("{}_null", name);
             quote! {
-                pub fn #name(mut self, value: impl ::qbrs::insert::IntoNullable<#base>) -> Self {
-                    self.#name = ::qbrs::insert::Defaultable::Value(
-                        ::qbrs::insert::IntoNullable::into_nullable(value),
-                    );
+                pub fn #name(
+                    mut self,
+                    value: impl ::qbrs::insert::IntoDefaultable<::std::option::Option<#base>>,
+                ) -> Self {
+                    self.#name = ::qbrs::insert::IntoDefaultable::into_defaultable(value);
                     self
                 }
 

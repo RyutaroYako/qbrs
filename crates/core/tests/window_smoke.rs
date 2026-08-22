@@ -36,6 +36,7 @@ mod employees {
             type Table = EmployeesMarker;
             type Sql = Text;
         }
+        impl qbrs_core::row::NamedSealed for department {}
         impl qbrs_core::row::Named for department {
             type Name = qbrs_core::type_name!('d', 'e', 'p', 'a', 'r', 't', 'm', 'e', 'n', 't');
             const NAME: &'static str = "department";
@@ -47,6 +48,7 @@ mod employees {
             type Table = EmployeesMarker;
             type Sql = Integer;
         }
+        impl qbrs_core::row::NamedSealed for salary {}
         impl qbrs_core::row::Named for salary {
             type Name = qbrs_core::type_name!('s', 'a', 'l', 'a', 'r', 'y');
             const NAME: &'static str = "salary";
@@ -73,6 +75,7 @@ mod orders {
             type Table = OrdersMarker;
             type Sql = Integer;
         }
+        impl qbrs_core::row::NamedSealed for total {}
         impl qbrs_core::row::Named for total {
             type Name = qbrs_core::type_name!('t', 'o', 't', 'a', 'l');
             const NAME: &'static str = "total";

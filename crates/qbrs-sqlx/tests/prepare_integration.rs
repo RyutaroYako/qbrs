@@ -8,7 +8,7 @@ mod common;
 use qbrs::dialect::Postgres;
 use qbrs::expr::{ExprMethods, Text};
 use qbrs::select::select;
-use qbrs::statement::ReturningExt;
+use qbrs::statement::Statement;
 use qbrs::{Table, prepare};
 use qbrs_sqlx::{LoadExt, PreparedExt};
 

@@ -33,7 +33,8 @@ pub enum Error {
 pub type Result<T> = std::result::Result<T, Error>;
 
 /// Every extension trait that puts a terminal method on a builder, plus the
-/// error type a caller's own signatures have to name. `Result` is
+/// error type a caller's own signatures have to name and the `DecodeRow`
+/// bound a generic helper over `LoadExt` has to spell. `Result` is
 /// deliberately absent: a glob-imported alias of that name shadows
 /// `std::result::Result` in every module that follows, and a service layer
 /// has its own error type in most of them — write `qbrs_sqlx::Result<T>`
@@ -43,7 +44,7 @@ pub type Result<T> = std::result::Result<T, Error>;
 /// `Iterator::count` with a confusing message until `CountExt` is in scope.
 pub mod prelude {
     pub use crate::Error;
-    pub use crate::{CountExt, DecodeRow, ExecuteExt, LoadExt, PreparedExt};
+    pub use crate::{CountExt, DecodeRow, ExecuteExt, LoadExt, PreparedCountExt, PreparedExt};
 }
 
 /// Binds a `Value` to a Postgres query parameter. `Value`'s typed `NullX`
@@ -377,6 +378,22 @@ impl<Params: PreparedParams, Output: DecodeRow> PreparedExt<Params> for Prepared
     ) -> Result<Option<Output>> {
         let (sql, values) = self.resolve(params)?;
         fetch_optional::<Output, E>(executor, &sql, values).await
+    }
+}
+
+/// A prepared total. Separate from `PreparedExt` for the reason `CountExt`
+/// is separate from `LoadExt`: a count produces a number, not rows.
+pub trait PreparedCountExt<Params> {
+    fn count<'e, E: sqlx::PgExecutor<'e>>(
+        &self,
+        executor: E,
+        params: Params,
+    ) -> impl std::future::Future<Output = Result<i64>>;
+}
+
+impl<Params: PreparedParams> PreparedCountExt<Params> for Prepared<Params, i64> {
+    async fn count<'e, E: sqlx::PgExecutor<'e>>(&self, executor: E, params: Params) -> Result<i64> {
+        count_rows(executor, self.resolve(params)?).await
     }
 }
 

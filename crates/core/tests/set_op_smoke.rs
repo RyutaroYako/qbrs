@@ -36,6 +36,7 @@ mod users {
             type Table = UsersMarker;
             type Sql = Integer;
         }
+        impl qbrs_core::row::NamedSealed for id {}
         impl qbrs_core::row::Named for id {
             type Name = qbrs_core::type_name!('i', 'd');
             const NAME: &'static str = "id";
@@ -47,6 +48,7 @@ mod users {
             type Table = UsersMarker;
             type Sql = Text;
         }
+        impl qbrs_core::row::NamedSealed for email {}
         impl qbrs_core::row::Named for email {
             type Name = qbrs_core::type_name!('e', 'm', 'a', 'i', 'l');
             const NAME: &'static str = "email";
@@ -74,6 +76,7 @@ mod archived_users {
             type Table = ArchivedUsersMarker;
             type Sql = Integer;
         }
+        impl qbrs_core::row::NamedSealed for id {}
         impl qbrs_core::row::Named for id {
             type Name = qbrs_core::type_name!('i', 'd');
             const NAME: &'static str = "id";
@@ -85,6 +88,7 @@ mod archived_users {
             type Table = ArchivedUsersMarker;
             type Sql = Text;
         }
+        impl qbrs_core::row::NamedSealed for email {}
         impl qbrs_core::row::Named for email {
             type Name = qbrs_core::type_name!('e', 'm', 'a', 'i', 'l');
             const NAME: &'static str = "email";

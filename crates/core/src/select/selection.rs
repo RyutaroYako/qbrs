@@ -110,15 +110,16 @@ macro_rules! scalar_selection {
         }
     };
 }
-scalar_selection!(impl[C: ColumnKey] Column<C>);
-scalar_selection!(impl[S: SqlType] Expr<Nil, S>);
-scalar_selection!(impl[K, Req, S: SqlType] Keyed<K, Req, S>);
-scalar_selection!(impl[K, Inner] Labeled<K, Inner>);
 
 /// One element of a selection list. A column or an expression contributes
 /// one field; `All` contributes a whole table's worth. `Fields<Tail>` is
 /// what it puts in front of whatever the rest of the list contributes, so a
 /// list is assembled by nesting rather than by concatenating afterwards.
+#[diagnostic::on_unimplemented(
+    message = "`{Self}` can't be part of a selection list",
+    label = "columns, aggregates, window functions, `<table>::All` and scope-free `sql!` fragments can be",
+    note = "a fragment that names a table has to say what it decodes to first — `.decodes_as::<Nullable<BigInt>>()` — since its NULL-ability doesn't follow from any one column's join"
+)]
 pub trait SelectionPart<Scope, Idx> {
     type Fields<Tail>;
     fn push_items(&self, out: &mut Vec<SelectItem>);
@@ -141,10 +142,19 @@ macro_rules! field_part {
         }
     };
 }
-field_part!(impl[C: ColumnKey] Column<C>);
-field_part!(impl[S: SqlType] Expr<Nil, S>);
-field_part!(impl[K, Req, S: SqlType] Keyed<K, Req, S>);
-field_part!(impl[K, Inner] Labeled<K, Inner>);
+/// Everything selectable on its own: as a whole list of one, and as one
+/// part of a longer list. Stated once, since a selectable that is one and
+/// not the other has never been a thing.
+macro_rules! selectable {
+    (impl[$($generics:tt)*] $ty:ty) => {
+        scalar_selection!(impl[$($generics)*] $ty);
+        field_part!(impl[$($generics)*] $ty);
+    };
+}
+selectable!(impl[C: ColumnKey] Column<C>);
+selectable!(impl[S: SqlType] Expr<Nil, S>);
+selectable!(impl[K, Req, S: SqlType] Keyed<K, Req, S>);
+selectable!(impl[K, Inner] Labeled<K, Inner>);
 
 /// Every column of one table, in declaration order — `select(users::All)`.
 /// The table's own `#[derive(Table)]` supplies the chain through

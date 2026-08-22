@@ -4,7 +4,7 @@
 use qbrs_core::dialect::Postgres;
 use qbrs_core::expr::{Bool, ExprMethods, TextExprMethods, any_of};
 use qbrs_core::scope::Table as TableTrait;
-use qbrs_core::select::{OrderExt, select};
+use qbrs_core::select::{OrderExt, grouping, select, sort_key};
 use qbrs_core::sql;
 
 pub struct UsersMarker;
@@ -37,6 +37,7 @@ mod users {
             type Table = UsersMarker;
             type Sql = Integer;
         }
+        impl qbrs_core::row::NamedSealed for id {}
         impl qbrs_core::row::Named for id {
             type Name = qbrs_core::type_name!('i', 'd');
             const NAME: &'static str = "id";
@@ -48,6 +49,7 @@ mod users {
             type Table = UsersMarker;
             type Sql = Text;
         }
+        impl qbrs_core::row::NamedSealed for name {}
         impl qbrs_core::row::Named for name {
             type Name = qbrs_core::type_name!('n', 'a', 'm', 'e');
             const NAME: &'static str = "name";
@@ -59,6 +61,7 @@ mod users {
             type Table = UsersMarker;
             type Sql = Bool;
         }
+        impl qbrs_core::row::NamedSealed for active {}
         impl qbrs_core::row::Named for active {
             type Name = qbrs_core::type_name!('a', 'c', 't', 'i', 'v', 'e');
             const NAME: &'static str = "active";
@@ -70,6 +73,7 @@ mod users {
             type Table = UsersMarker;
             type Sql = Integer;
         }
+        impl qbrs_core::row::NamedSealed for created_at {}
         impl qbrs_core::row::Named for created_at {
             type Name = qbrs_core::type_name!('c', 'r', 'e', 'a', 't', 'e', 'd', '_', 'a', 't');
             const NAME: &'static str = "created_at";
@@ -99,6 +103,7 @@ mod orders {
             type Table = OrdersMarker;
             type Sql = Integer;
         }
+        impl qbrs_core::row::NamedSealed for user_id {}
         impl qbrs_core::row::Named for user_id {
             type Name = qbrs_core::type_name!('u', 's', 'e', 'r', '_', 'i', 'd');
             const NAME: &'static str = "user_id";
@@ -110,6 +115,7 @@ mod orders {
             type Table = OrdersMarker;
             type Sql = Integer;
         }
+        impl qbrs_core::row::NamedSealed for total {}
         impl qbrs_core::row::Named for total {
             type Name = qbrs_core::type_name!('t', 'o', 't', 'a', 'l');
             const NAME: &'static str = "total";
@@ -119,6 +125,45 @@ mod orders {
 
     pub const user_id: Column<columns::user_id> = Column::new();
     pub const total: Column<columns::total> = Column::new();
+}
+
+#[test]
+fn a_runtime_length_sort_and_grouping_go_in_as_discharged_keys() {
+    let keys = vec![sort_key(users::name.asc()), sort_key(orders::total.desc())];
+    let groups = vec![grouping(users::id), grouping(orders::user_id)];
+
+    let (sql, _params) = select((users::id,))
+        .from::<Postgres, _>(users::Table)
+        .inner_join(orders::Table, orders::user_id.eq(users::id))
+        .group_by_all(groups)
+        .order_by_all(keys)
+        .to_sql();
+    assert_eq!(
+        sql,
+        "SELECT \"users\".\"id\" FROM \"users\" \
+         INNER JOIN \"orders\" ON (\"orders\".\"user_id\" = \"users\".\"id\") \
+         GROUP BY \"users\".\"id\", \"orders\".\"user_id\" \
+         ORDER BY \"users\".\"name\" ASC, \"orders\".\"total\" DESC"
+    );
+}
+
+#[test]
+fn a_page_size_can_be_a_placeholder() {
+    let (sql, params) = select((users::id,))
+        .from::<Postgres, _>(users::Table)
+        .limit(qbrs_core::expr::placeholder::<qbrs_core::expr::BigInt>(
+            "per_page",
+        ))
+        .offset(20)
+        .to_sql();
+    assert_eq!(
+        sql,
+        "SELECT \"users\".\"id\" FROM \"users\" LIMIT $1 OFFSET 20"
+    );
+    assert_eq!(
+        params,
+        vec![qbrs_core::expr::Value::Placeholder("per_page")]
+    );
 }
 
 #[test]

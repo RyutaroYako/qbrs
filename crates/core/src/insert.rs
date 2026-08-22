@@ -23,8 +23,10 @@ pub trait IntoNullable<T> {
     fn into_nullable(self) -> Option<T>;
 }
 
-/// The same for a column with a schema default: `None` leaves the default
-/// standing, `Some(v)` sends `v`.
+/// What a defaulted column's setter takes: the value, or the `Option` a
+/// request struct holds. `None` leaves the schema's default standing, in
+/// every setter that takes an `Option` — a column that is also nullable
+/// says explicit NULL with `.<column>_null()` instead.
 pub trait IntoDefaultable<T> {
     fn into_defaultable(self) -> Defaultable<T>;
 }
@@ -60,10 +62,11 @@ impl<T> Defaultable<T> {
     }
 }
 
-/// A request struct's `Option<T>` field maps onto an insert's three-state
-/// column the one way that makes sense — absent means "let the schema
-/// decide" — so a `POST` body reaches an `*Insert` field-for-field, the way
-/// a `PATCH` body already reaches an `*Update`.
+/// A request struct's `Option<T>` field maps onto a defaulted column the one
+/// way that makes sense — absent means "let the schema decide" — so a `POST`
+/// body reaches an `*Insert` field-for-field, the way a `PATCH` body already
+/// reaches an `*Update`. Explicit NULL is a third state, and a builder says
+/// it with `.<column>_null()`.
 impl<T> From<Option<T>> for Defaultable<T> {
     fn from(v: Option<T>) -> Self {
         match v {
@@ -113,30 +116,21 @@ impl<C: ColumnKey> ConflictTarget<C::Table> for Column<C> {
     }
 }
 
-impl<T: Table, A: ConflictTarget<T>> ConflictTarget<T> for (A,) {
-    fn column_names(&self) -> Vec<&'static str> {
-        self.0.column_names()
-    }
+macro_rules! conflict_target_tuple {
+    ($($name:ident),+) => {
+        #[allow(non_snake_case)]
+        impl<T: Table, $($name: ColumnKey<Table = T>,)+> ConflictTarget<T> for ($(Column<$name>,)+) {
+            fn column_names(&self) -> Vec<&'static str> {
+                vec![$(<$name as crate::row::Named>::NAME),+]
+            }
+        }
+    };
 }
-
-impl<T: Table, A: ConflictTarget<T>, B: ConflictTarget<T>> ConflictTarget<T> for (A, B) {
-    fn column_names(&self) -> Vec<&'static str> {
-        let mut v = self.0.column_names();
-        v.extend(self.1.column_names());
-        v
-    }
-}
-
-impl<T: Table, A: ConflictTarget<T>, B: ConflictTarget<T>, C: ConflictTarget<T>> ConflictTarget<T>
-    for (A, B, C)
-{
-    fn column_names(&self) -> Vec<&'static str> {
-        let mut v = self.0.column_names();
-        v.extend(self.1.column_names());
-        v.extend(self.2.column_names());
-        v
-    }
-}
+// Columns, not nested targets: a conflict target is a list of columns, and
+// letting it nest is what made the documented limit of three not one.
+conflict_target_tuple!(A);
+conflict_target_tuple!(A, B);
+conflict_target_tuple!(A, B, C);
 
 enum ConflictAction {
     DoNothing,

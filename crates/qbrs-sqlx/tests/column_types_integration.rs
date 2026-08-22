@@ -75,5 +75,18 @@ async fn timestamp_uuid_and_numeric_columns_survive_a_round_trip() {
         .expect("select by timestamp and amount");
     assert_eq!(found, vec![id]);
 
+    // A money column totals as money and averages as a float, which is what
+    // the row declares in each case.
+    let (total, mean): (Option<rust_decimal::Decimal>, Option<f64>) =
+        select((sum(events::amount), avg(events::amount)))
+            .from::<Postgres, _>(events::Table)
+            .load_one(&pool)
+            .await
+            .expect("aggregate a numeric column")
+            .expect("one row")
+            .into_tuple();
+    assert_eq!(total, Some(amount));
+    assert_eq!(mean, Some(12.34));
+
     common::shutdown(pool, guard).await;
 }

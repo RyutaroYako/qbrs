@@ -20,6 +20,7 @@ pub mod prelude {
     pub use qbrs_core::expr::Numeric;
     #[cfg(feature = "uuid")]
     pub use qbrs_core::expr::Uuid;
+    pub use qbrs_core::expr::{Agg, Avg, Count, CountOf, Max, Min, Sum};
     pub use qbrs_core::expr::{
         BigInt, Bool, Bytes, ExprMethods, HasCount, Integer, LabelExt, Real, SortDir, Text,
         TextExprMethods, Value, all_of, any_of, avg, count, count_of, max, min, sum,
@@ -28,19 +29,21 @@ pub mod prelude {
     pub use qbrs_core::expr::{Date, Timestamptz};
     pub use qbrs_core::expr::{Declared, Expr, IntoExpr, Keyed, Labeled};
     pub use qbrs_core::insert::{Defaultable, Insert, InsertRow, NothingToInsert, insert};
-    pub use qbrs_core::row::{IntoStructs, IntoTuples, Named, Row, RowCons, RowNil};
+    pub use qbrs_core::row::{Anon, IntoStructs, IntoTuples, Named, Row, RowCons, RowNil};
     pub use qbrs_core::scope::{
         Cons, Find, MaybeNull, Nil, NotNull, Nullable, Superset, TableSlot,
     };
+    pub use qbrs_core::select::All;
     pub use qbrs_core::select::{
-        Condition, Correlated, DynSelect, OrderExt, OrderKey, Ordinal, OrdinalKey, Predicate,
-        Prepared, Select, Selection, SetOp, nth, predicate, select,
+        Condition, DynSelect, Grouping, JoinSource, OrderExt, OrderKey, Ordinal, OrdinalKey,
+        Predicate, Prepared, Select, Selection, SetOp, SortKey, grouping, nth, predicate, select,
+        sort_key,
     };
-    pub use qbrs_core::statement::{Returning, ReturningExt, Statement};
+    pub use qbrs_core::statement::{Returning, Statement, WrittenTable};
     pub use qbrs_core::update::{NothingToSet, Update, UpdateRow, update};
     pub use qbrs_core::window::{
-        HasDenseRank, HasRank, HasRowNumber, Window, WindowFunc, dense_rank, rank, row_number,
-        window,
+        DenseRank, HasDenseRank, HasRank, HasRowNumber, Rank, RowNumber, Window, WindowFunc,
+        dense_rank, rank, row_number, window,
     };
     pub use qbrs_core::{prepare, sql};
 }

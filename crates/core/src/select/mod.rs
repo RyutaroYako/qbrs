@@ -53,6 +53,7 @@ struct JoinClause {
 /// An order-by key: a column/expression tagged with a direction. Built via
 /// `.asc()`/`.desc()` on any column or expression (see `OrderExt` below),
 /// so `.order_by(users::created_at.desc())` reads as one argument, not two.
+#[derive(Clone)]
 pub struct OrderKey<Req> {
     kind: ExprKind,
     dir: SortDir,
@@ -127,16 +128,81 @@ impl<D, Marker: crate::cte::CteShape> JoinSource<D> for Cte<D, Marker> {
     }
 }
 
+/// A sort key whose scope requirement has already been discharged, so a
+/// runtime-length collection of them can be built and passed around — the
+/// `?sort=email,-placed_on` case. `select::sort_key` is to `.order_by_all`
+/// what `predicate` is to `.filter_all`.
+pub struct SortKey<Scope> {
+    kind: ExprKind,
+    dir: SortDir,
+    _marker: PhantomData<fn() -> Scope>,
+}
+
+impl<Scope> Clone for SortKey<Scope> {
+    fn clone(&self) -> Self {
+        SortKey {
+            kind: self.kind.clone(),
+            dir: self.dir,
+            _marker: PhantomData,
+        }
+    }
+}
+
+/// Discharges a sort key's scope requirement. `Scope` is inferred from the
+/// query the keys are eventually given to.
+pub fn sort_key<Scope, Req, Idxs>(key: OrderKey<Req>) -> SortKey<Scope>
+where
+    Scope: Superset<Req, Idxs>,
+{
+    SortKey {
+        kind: key.kind,
+        dir: key.dir,
+        _marker: PhantomData,
+    }
+}
+
+/// A grouping key with its scope requirement discharged — `predicate`'s
+/// counterpart for `GROUP BY`.
+pub struct Grouping<Scope> {
+    kind: ExprKind,
+    _marker: PhantomData<fn() -> Scope>,
+}
+
+impl<Scope> Clone for Grouping<Scope> {
+    fn clone(&self) -> Self {
+        Grouping {
+            kind: self.kind.clone(),
+            _marker: PhantomData,
+        }
+    }
+}
+
+/// Discharges a grouping key's scope requirement.
+pub fn grouping<Scope, S: SqlType, Req, Idxs>(key: impl IntoExpr<S, Req = Req>) -> Grouping<Scope>
+where
+    Scope: Superset<Req, Idxs>,
+{
+    Grouping {
+        kind: key.into_expr().kind,
+        _marker: PhantomData,
+    }
+}
+
 /// Something a query can be filtered by: an `Expr` whose tables this scope
 /// contains, or a `Predicate` already discharged against it. One `.filter`
 /// for both, so which one a condition happens to be doesn't change how it is
 /// applied.
+#[diagnostic::on_unimplemented(
+    message = "`{Self}` isn't a condition",
+    label = "a comparison (`.eq(..)`, `.gt(..)`, `.is_null()`), an `any_of`/`all_of` of them, a `sql!` fragment of type `Bool`, or a `predicate(..)`"
+)]
 pub trait Condition<Scope, Idxs> {
     /// Discharged against this scope, which for an `Expr` is where its
     /// `Superset` proof is spent and for a `Predicate` already happened.
     fn into_predicate(self) -> Predicate<Scope>;
 }
 
+#[diagnostic::do_not_recommend]
 impl<Scope: Superset<Req, Idxs>, Req, Idxs> Condition<Scope, Idxs> for Expr<Req, Bool> {
     fn into_predicate(self) -> Predicate<Scope> {
         Predicate {
@@ -160,6 +226,17 @@ impl<Scope> Condition<Scope, ()> for Predicate<Scope> {
 pub struct Predicate<Scope> {
     kind: ExprKind,
     _marker: PhantomData<fn() -> Scope>,
+}
+
+// Hand-written for the reason `Expr`'s is: `#[derive(Clone)]` would ask a
+// phantom `Scope` to be `Clone`.
+impl<Scope> Clone for Predicate<Scope> {
+    fn clone(&self) -> Self {
+        Predicate {
+            kind: self.kind.clone(),
+            _marker: PhantomData,
+        }
+    }
 }
 
 impl<Scope> Predicate<Scope> {
@@ -247,8 +324,8 @@ pub(super) struct SelectBody {
     order_by: Vec<(ExprKind, SortDir)>,
     group_by: Vec<ExprKind>,
     having: Vec<ExprKind>,
-    limit: Option<i64>,
-    offset: Option<i64>,
+    limit: Option<Limit>,
+    offset: Option<Limit>,
 }
 
 impl SelectBody {
@@ -305,14 +382,18 @@ impl SelectBody {
     }
 }
 
-pub struct Select<D, Scope, Sel> {
+/// A `SELECT`. `Outer` is the scope this query was built *against* — `Nil`
+/// for a query of its own, and the outer query's scope for one started by
+/// `.correlated(..)`, which is what lets `EXISTS` report the outer tables it
+/// references. Defaulted, so a query that isn't a subquery never spells it.
+pub struct Select<D, Scope, Sel, Outer = Nil> {
     body: SelectBody,
     selection: Sel,
-    _marker: PhantomData<fn() -> (D, Scope)>,
+    _marker: PhantomData<fn() -> (D, Scope, Outer)>,
 }
 
 // Cloning is what lets one built-up query serve both a count and a page.
-impl<D, Scope, Sel: Clone> Clone for Select<D, Scope, Sel> {
+impl<D, Scope, Sel: Clone, Outer> Clone for Select<D, Scope, Sel, Outer> {
     fn clone(&self) -> Self {
         Select {
             body: self.body.clone(),
@@ -322,8 +403,8 @@ impl<D, Scope, Sel: Clone> Clone for Select<D, Scope, Sel> {
     }
 }
 
-impl<D, Scope, Sel> Select<D, Scope, Sel> {
-    fn retype<NewScope>(self) -> Select<D, NewScope, Sel> {
+impl<D, Scope, Sel, Outer> Select<D, Scope, Sel, Outer> {
+    fn retype<NewScope>(self) -> Select<D, NewScope, Sel, Outer> {
         Select {
             body: self.body,
             selection: self.selection,
@@ -333,7 +414,7 @@ impl<D, Scope, Sel> Select<D, Scope, Sel> {
 
     /// Swaps the selection list, keeping every clause. With `Clone`, this is
     /// how one built-up query serves both a count and a page.
-    pub fn reselect<NewSel>(self, selection: NewSel) -> Select<D, Scope, NewSel> {
+    pub fn reselect<NewSel>(self, selection: NewSel) -> Select<D, Scope, NewSel, Outer> {
         Select {
             body: self.body,
             selection,
@@ -367,6 +448,16 @@ impl<D, Scope, Sel> Select<D, Scope, Sel> {
         self
     }
 
+    /// Appends a runtime-length collection of already-discharged sort keys
+    /// — the shape a `?sort=` parameter has, where the keys name different
+    /// tables and so can't share one `OrderKey` type.
+    pub fn order_by_all(mut self, keys: impl IntoIterator<Item = SortKey<Scope>>) -> Self {
+        self.body
+            .order_by
+            .extend(keys.into_iter().map(|k| (k.kind, k.dir)));
+        self
+    }
+
     /// `SELECT DISTINCT`: one row per distinct selected tuple. The natural
     /// answer to a one-to-many join that repeats its left side, and unlike a
     /// `GROUP BY` of the whole selection it doesn't have to be restated when
@@ -384,6 +475,13 @@ impl<D, Scope, Sel> Select<D, Scope, Sel> {
         Scope: Superset<Req, Idxs>,
     {
         self.body.group_by.push(key.into_expr().kind);
+        self
+    }
+
+    /// The same for a runtime-length collection of discharged grouping
+    /// keys, as `order_by_all` is to `order_by`.
+    pub fn group_by_all(mut self, keys: impl IntoIterator<Item = Grouping<Scope>>) -> Self {
+        self.body.group_by.extend(keys.into_iter().map(|g| g.kind));
         self
     }
 
@@ -411,7 +509,7 @@ impl<D, Scope, Sel> Select<D, Scope, Sel> {
         mut self,
         source: S,
         on: Expr<Req, Bool>,
-    ) -> Select<D, Cons<TableSlot<S::Table, NotNull>, Scope>, Sel>
+    ) -> Select<D, Cons<TableSlot<S::Table, NotNull>, Scope>, Sel, Outer>
     where
         Cons<TableSlot<S::Table, NotNull>, Scope>: Superset<Req, Idxs>,
     {
@@ -428,7 +526,7 @@ impl<D, Scope, Sel> Select<D, Scope, Sel> {
         mut self,
         source: S,
         on: Expr<Req, Bool>,
-    ) -> Select<D, Cons<TableSlot<S::Table, MaybeNull>, Scope>, Sel>
+    ) -> Select<D, Cons<TableSlot<S::Table, MaybeNull>, Scope>, Sel, Outer>
     where
         Cons<TableSlot<S::Table, MaybeNull>, Scope>: Superset<Req, Idxs>,
     {
@@ -448,7 +546,7 @@ impl<D, Scope, Sel> Select<D, Scope, Sel> {
         mut self,
         source: S,
         on: Expr<Req, Bool>,
-    ) -> Select<D, Cons<TableSlot<S::Table, NotNull>, Scope::Output>, Sel>
+    ) -> Select<D, Cons<TableSlot<S::Table, NotNull>, Scope::Output>, Sel, Outer>
     where
         D: SupportsRightJoin,
         Scope: MapNullable,
@@ -467,7 +565,7 @@ impl<D, Scope, Sel> Select<D, Scope, Sel> {
         mut self,
         source: S,
         on: Expr<Req, Bool>,
-    ) -> Select<D, Cons<TableSlot<S::Table, MaybeNull>, Scope::Output>, Sel>
+    ) -> Select<D, Cons<TableSlot<S::Table, MaybeNull>, Scope::Output>, Sel, Outer>
     where
         D: SupportsFullOuterJoin,
         Scope: MapNullable,
@@ -483,7 +581,7 @@ impl<D, Scope, Sel> Select<D, Scope, Sel> {
     }
 }
 
-impl<D: Dialect, Scope, Sel> Select<D, Scope, Sel> {
+impl<D: Dialect, Scope, Sel, Outer> Select<D, Scope, Sel, Outer> {
     /// The terminal step, and the *only* point each selected column's
     /// scope-membership is checked — proven as a side effect of
     /// `Sel: Selection<Scope, Idx>` type-checking at all.
@@ -548,7 +646,7 @@ impl SelectBody {
             limit,
             offset,
         } = self;
-        let (limit, offset) = (*limit, *offset);
+
         if !ctes.is_empty() {
             sink.text("WITH ");
             for (i, cte) in ctes.iter().enumerate() {
@@ -598,20 +696,11 @@ impl SelectBody {
         render_expr_list::<D>(sink, " GROUP BY ", group_by);
         render_and_list::<D>(sink, " HAVING ", having);
         render_order_by::<D>(sink, " ORDER BY ", order_by);
-        render_limit_offset::<D>(sink, limit, offset);
+        render_limit_offset::<D>(sink, limit.as_ref(), offset.as_ref());
     }
 }
 
-/// A subquery built against an outer query's scope. Distinct from `Select`
-/// so `EXISTS` can report the outer tables it references: those are exactly
-/// `Outer`'s, and an `EXISTS` condition is only usable where they are all in
-/// scope.
-pub struct Correlated<D, Outer, Scope, Sel> {
-    inner: Select<D, Scope, Sel>,
-    _marker: PhantomData<fn() -> Outer>,
-}
-
-impl<D, Scope, Sel> Select<D, Scope, Sel> {
+impl<D, Scope, Sel, Outer> Select<D, Scope, Sel, Outer> {
     /// Starts a correlated subquery: a fresh `SELECT` whose scope is
     /// `Cons<TableSlot<T, NotNull>, Scope>` — the new table, prepended onto
     /// *this* (outer) query's entire scope. Because `Find`/`Superset` walk
@@ -620,137 +709,37 @@ impl<D, Scope, Sel> Select<D, Scope, Sel> {
     /// columns and any outer column already in `Scope`, with no special
     /// casing: growing the scope works the same whether the new table came
     /// from a join or from a subquery's `FROM`.
+    ///
+    /// The result is an ordinary `Select` — every clause it takes is the
+    /// one `Select` already has — carrying this query's scope as its
+    /// `Outer`, which is what `exists` reports.
     pub fn correlated<S: JoinSource<D>, InnerSel>(
         &self,
         source: S,
         selection: InnerSel,
-    ) -> Correlated<D, Scope, Cons<TableSlot<S::Table, NotNull>, Scope>, InnerSel> {
+    ) -> Select<D, Cons<TableSlot<S::Table, NotNull>, Scope>, InnerSel, Scope> {
         let mut body = SelectBody::new(<S::Table as Table>::NAME);
         body.bind(source);
-        Correlated {
-            inner: Select {
-                body,
-                selection,
-                _marker: PhantomData,
-            },
+        Select {
+            body,
+            selection,
             _marker: PhantomData,
         }
     }
 }
 
-impl<D, Outer, Scope, Sel> Correlated<D, Outer, Scope, Sel> {
-    /// A subquery is a `Select` with one extra promise — that its scope
-    /// starts where the outer query's left off — so every clause it takes is
-    /// the `Select` method applied to the query inside, and every join is
-    /// that plus a new `Scope`.
-    fn map<NewScope>(
-        self,
-        f: impl FnOnce(Select<D, Scope, Sel>) -> Select<D, NewScope, Sel>,
-    ) -> Correlated<D, Outer, NewScope, Sel> {
-        Correlated {
-            inner: f(self.inner),
-            _marker: PhantomData,
-        }
-    }
-
-    /// Checked against the subquery's own scope, which includes every table
-    /// the outer query had — that is what makes it *correlated*.
-    pub fn filter<C: Condition<Scope, Idxs>, Idxs>(self, cond: C) -> Self {
-        self.map(|q| q.filter(cond))
-    }
-
-    /// AND-folds a runtime-length collection of discharged conditions, the
-    /// same way `Select::filter_all` does.
-    pub fn filter_all(self, conds: impl IntoIterator<Item = Predicate<Scope>>) -> Self {
-        self.map(|q| q.filter_all(conds))
-    }
-
-    pub fn group_by<S: SqlType, Req, Idxs>(self, key: impl IntoExpr<S, Req = Req>) -> Self
-    where
-        Scope: Superset<Req, Idxs>,
-    {
-        self.map(|q| q.group_by(key))
-    }
-
-    pub fn having<C: Condition<Scope, Idxs>, Idxs>(self, cond: C) -> Self {
-        self.map(|q| q.having(cond))
-    }
-
-    pub fn order_by<Req, Idxs>(self, key: OrderKey<Req>) -> Self
-    where
-        Scope: Superset<Req, Idxs>,
-    {
-        self.map(|q| q.order_by(key))
-    }
-
-    pub fn limit(self, n: impl IntoLimit) -> Self {
-        self.map(|q| q.limit(n))
-    }
-
-    pub fn offset(self, n: impl IntoLimit) -> Self {
-        self.map(|q| q.offset(n))
-    }
-
-    pub fn inner_join<S: JoinSource<D>, Req, Idxs>(
-        self,
-        source: S,
-        on: Expr<Req, Bool>,
-    ) -> Correlated<D, Outer, Cons<TableSlot<S::Table, NotNull>, Scope>, Sel>
-    where
-        Cons<TableSlot<S::Table, NotNull>, Scope>: Superset<Req, Idxs>,
-    {
-        self.map(|q| q.inner_join(source, on))
-    }
-
-    pub fn left_join<S: JoinSource<D>, Req, Idxs>(
-        self,
-        source: S,
-        on: Expr<Req, Bool>,
-    ) -> Correlated<D, Outer, Cons<TableSlot<S::Table, MaybeNull>, Scope>, Sel>
-    where
-        Cons<TableSlot<S::Table, MaybeNull>, Scope>: Superset<Req, Idxs>,
-    {
-        self.map(|q| q.left_join(source, on))
-    }
-
-    pub fn right_join<S: JoinSource<D>, Req, Idxs>(
-        self,
-        source: S,
-        on: Expr<Req, Bool>,
-    ) -> Correlated<D, Outer, Cons<TableSlot<S::Table, NotNull>, Scope::Output>, Sel>
-    where
-        D: SupportsRightJoin,
-        Scope: MapNullable,
-        Cons<TableSlot<S::Table, NotNull>, Scope::Output>: Superset<Req, Idxs>,
-    {
-        self.map(|q| q.right_join(source, on))
-    }
-
-    pub fn full_join<S: JoinSource<D>, Req, Idxs>(
-        self,
-        source: S,
-        on: Expr<Req, Bool>,
-    ) -> Correlated<D, Outer, Cons<TableSlot<S::Table, MaybeNull>, Scope::Output>, Sel>
-    where
-        D: SupportsFullOuterJoin,
-        Scope: MapNullable,
-        Cons<TableSlot<S::Table, MaybeNull>, Scope::Output>: Superset<Req, Idxs>,
-    {
-        self.map(|q| q.full_join(source, on))
-    }
-}
-
-impl<D: Dialect, Outer: ScopeTables, Scope, Sel> Correlated<D, Outer, Scope, Sel> {
-    /// `EXISTS (<this subquery>)`, tagged with the outer tables it
-    /// references so it can only be filtered onto a query that has them in
-    /// scope. Its own column references were already checked against
-    /// `Scope` when it was built.
+impl<D: Dialect, Scope, Sel, Outer: ScopeTables> Select<D, Scope, Sel, Outer> {
+    /// `EXISTS (<this query>)`, tagged with the outer tables it references
+    /// so it can only be filtered onto a query that has them in scope. Its
+    /// own column references were already checked against `Scope` when it
+    /// was built. On a query that isn't a subquery, `Outer` is `Nil` and
+    /// this is an uncorrelated `EXISTS`.
     pub fn exists<Idx>(&self) -> Expr<Outer::Tables, Bool>
     where
         Sel: Selection<Scope, Idx>,
     {
         Expr::from_kind(ExprKind::Raw(
-            self.inner.fragment::<Idx>().enclosed_in("EXISTS (", ")"),
+            self.fragment::<Idx>().enclosed_in("EXISTS (", ")"),
         ))
     }
 
@@ -759,32 +748,45 @@ impl<D: Dialect, Outer: ScopeTables, Scope, Sel> Correlated<D, Outer, Scope, Sel
         Sel: Selection<Scope, Idx>,
     {
         Expr::from_kind(ExprKind::Raw(
-            self.inner
-                .fragment::<Idx>()
-                .enclosed_in("NOT EXISTS (", ")"),
+            self.fragment::<Idx>().enclosed_in("NOT EXISTS (", ")"),
         ))
     }
 }
 
-/// A limit or offset. A trait rather than `Into<i64>` so a `usize` page size
-/// — the shape a paginated handler already has — goes in without a cast.
-/// Every impl lands in `0..=i64::MAX`: a negative limit is not a query any
-/// database will run, and a `usize` past `i64::MAX` is not a page anyone is
-/// asking for.
+/// A limit or offset: a number, or a `prepare!{}` placeholder for one, so a
+/// paginated endpoint can prepare its query once and vary the page. A trait
+/// rather than `Into<i64>` so a `usize` page size — the shape a paginated
+/// handler already has — goes in without a cast. Every numeric impl lands in
+/// `0..=i64::MAX`: a negative limit is not a query any database will run,
+/// and a `usize` past `i64::MAX` is not a page anyone is asking for.
 pub trait IntoLimit {
-    fn into_limit(self) -> i64;
+    fn into_limit(self) -> Limit;
+}
+
+/// What a `LIMIT`/`OFFSET` clause holds. Opaque: the `IntoLimit` impls are
+/// the only way to make one.
+#[derive(Clone)]
+pub struct Limit(LimitKind);
+
+#[derive(Clone)]
+enum LimitKind {
+    /// Written into the SQL text: a page size is not a value the plan
+    /// should be reused across.
+    Literal(i64),
+    /// A bound parameter, which is what a `prepare!{}` placeholder is.
+    Bound(ExprKind),
 }
 
 macro_rules! into_limit {
     ($($signed:ty),+ ; $($unsigned:ty),+) => {
         $(impl IntoLimit for $signed {
-            fn into_limit(self) -> i64 {
-                i64::from(self).max(0)
+            fn into_limit(self) -> Limit {
+                Limit(LimitKind::Literal(i64::from(self).max(0)))
             }
         })+
         $(impl IntoLimit for $unsigned {
-            fn into_limit(self) -> i64 {
-                i64::try_from(self).unwrap_or(i64::MAX)
+            fn into_limit(self) -> Limit {
+                Limit(LimitKind::Literal(i64::try_from(self).unwrap_or(i64::MAX)))
             }
         })+
     };
@@ -792,8 +794,16 @@ macro_rules! into_limit {
 into_limit!(i32 ; u8, u16, u32, u64, usize);
 
 impl IntoLimit for i64 {
-    fn into_limit(self) -> i64 {
-        self.max(0)
+    fn into_limit(self) -> Limit {
+        Limit(LimitKind::Literal(self.max(0)))
+    }
+}
+
+/// A `prepare!{}` placeholder, or any other scope-free integer expression:
+/// bound rather than written, so one prepared query serves every page.
+impl<S: SqlType> IntoLimit for Expr<Nil, S> {
+    fn into_limit(self) -> Limit {
+        Limit(LimitKind::Bound(self.kind))
     }
 }
 
@@ -801,13 +811,13 @@ impl IntoLimit for i64 {
 /// and no limit — a bare `OFFSET` is Postgres-only.
 pub(crate) fn render_limit_offset<D: Dialect>(
     sink: &mut dyn Sink,
-    limit: Option<i64>,
-    offset: Option<i64>,
+    limit: Option<&Limit>,
+    offset: Option<&Limit>,
 ) {
     match (limit, offset, D::OFFSET_WITHOUT_LIMIT) {
         (Some(l), _, _) => {
             sink.text(" LIMIT ");
-            sink.text(&l.to_string());
+            render_limit::<D>(sink, l);
         }
         (None, Some(_), Some(filler)) => {
             sink.text(" LIMIT ");
@@ -817,6 +827,13 @@ pub(crate) fn render_limit_offset<D: Dialect>(
     }
     if let Some(o) = offset {
         sink.text(" OFFSET ");
-        sink.text(&o.to_string());
+        render_limit::<D>(sink, o);
+    }
+}
+
+fn render_limit<D: Dialect>(sink: &mut dyn Sink, limit: &Limit) {
+    match &limit.0 {
+        LimitKind::Literal(n) => sink.text(&n.to_string()),
+        LimitKind::Bound(kind) => render_expr::<D>(kind, sink),
     }
 }

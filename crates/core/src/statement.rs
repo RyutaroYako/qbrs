@@ -22,6 +22,23 @@ pub trait Statement: private::Sealed {
     fn to_sql(&self) -> (String, Vec<Value>) {
         self.render().finish()
     }
+
+    /// `RETURNING`, on whichever of the three this is — the clause is the
+    /// same clause. A distinct type rather than `Self` with a flag set: the
+    /// execution layer needs `Sel`'s concrete type to know what to decode a
+    /// returned row into, and an optional field would erase it.
+    fn returning<Sel, Idx>(self, sel: Sel) -> Returning<Self, Sel>
+    where
+        Self: Sized,
+        Self::Dialect: SupportsReturning,
+        Sel: Selection<WrittenTable<Self::Table>, Idx>,
+    {
+        Returning {
+            returning: sel.items(),
+            statement: self,
+            _marker: PhantomData,
+        }
+    }
 }
 
 pub(crate) mod private {
@@ -41,28 +58,6 @@ pub struct Returning<S, Sel> {
     pub(crate) returning: Vec<SelectItem>,
     pub(crate) _marker: PhantomData<fn() -> Sel>,
 }
-
-/// `RETURNING` on any writing statement. One method, since the clause is
-/// the same clause whichever of the three it follows, and gated on the
-/// dialect having the construct at all.
-pub trait ReturningExt: Statement + Sized {
-    /// A distinct type rather than `Self` with a flag set: the execution
-    /// layer needs `Sel`'s concrete type to know what to decode a returned
-    /// row into, and an optional field would erase it.
-    fn returning<Sel, Idx>(self, sel: Sel) -> Returning<Self, Sel>
-    where
-        Self::Dialect: SupportsReturning,
-        Sel: Selection<WrittenTable<Self::Table>, Idx>,
-    {
-        Returning {
-            returning: sel.items(),
-            statement: self,
-            _marker: PhantomData,
-        }
-    }
-}
-
-impl<S: Statement> ReturningExt for S {}
 
 impl<S: Statement, Sel> Returning<S, Sel> {
     pub fn to_sql(&self) -> (String, Vec<Value>) {

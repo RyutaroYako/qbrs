@@ -6,7 +6,7 @@ use qbrs_core::dialect::Postgres;
 use qbrs_core::expr::{ExprMethods, Value};
 use qbrs_core::insert::{Defaultable, InsertRow, InsertValue, insert};
 use qbrs_core::scope::Table as TableTrait;
-use qbrs_core::statement::{ReturningExt, Statement};
+use qbrs_core::statement::Statement;
 use qbrs_core::update::{NothingToSet, UpdateRow, update};
 
 pub struct UsersMarker;
@@ -32,6 +32,7 @@ mod users {
             type Table = UsersMarker;
             type Sql = Integer;
         }
+        impl qbrs_core::row::NamedSealed for id {}
         impl qbrs_core::row::Named for id {
             type Name = qbrs_core::type_name!('i', 'd');
             const NAME: &'static str = "id";
@@ -43,6 +44,7 @@ mod users {
             type Table = UsersMarker;
             type Sql = Text;
         }
+        impl qbrs_core::row::NamedSealed for email {}
         impl qbrs_core::row::Named for email {
             type Name = qbrs_core::type_name!('e', 'm', 'a', 'i', 'l');
             const NAME: &'static str = "email";
@@ -54,6 +56,7 @@ mod users {
             type Table = UsersMarker;
             type Sql = Text;
         }
+        impl qbrs_core::row::NamedSealed for display_name {}
         impl qbrs_core::row::Named for display_name {
             type Name =
                 qbrs_core::type_name!('d', 'i', 's', 'p', 'l', 'a', 'y', '_', 'n', 'a', 'm', 'e');

@@ -84,8 +84,8 @@ pub struct SetOp<D, Output> {
     first: Fragment,
     rest: Vec<(SetOpKind, Fragment)>,
     order_by: Vec<(u32, SortDir)>,
-    limit: Option<i64>,
-    offset: Option<i64>,
+    limit: Option<super::Limit>,
+    offset: Option<super::Limit>,
     _marker: PhantomData<fn() -> (D, Output)>,
 }
 
@@ -223,7 +223,7 @@ impl<D: Dialect, Output> SetOp<D, Output> {
                 sink.text(crate::render::dir_keyword(*dir));
             }
         }
-        crate::select::render_limit_offset::<D>(sink, self.limit, self.offset);
+        crate::select::render_limit_offset::<D>(sink, self.limit.as_ref(), self.offset.as_ref());
     }
 }
 

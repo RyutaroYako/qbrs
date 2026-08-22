@@ -179,8 +179,12 @@ pub(crate) fn render_expr<D: Dialect>(expr: &ExprKind, sink: &mut dyn Sink) {
             sink.text(func);
             sink.text(" OVER (");
             render_expr_list::<D>(sink, "PARTITION BY ", partition_by);
-            let separator = if partition_by.is_empty() { "" } else { " " };
-            render_order_by::<D>(sink, &format!("{separator}ORDER BY "), order_by);
+            let keyword = if partition_by.is_empty() {
+                "ORDER BY "
+            } else {
+                " ORDER BY "
+            };
+            render_order_by::<D>(sink, keyword, order_by);
             sink.ch(')');
         }
     }

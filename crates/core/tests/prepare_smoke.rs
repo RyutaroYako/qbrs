@@ -29,6 +29,7 @@ mod users {
             type Table = UsersMarker;
             type Sql = Text;
         }
+        impl qbrs_core::row::NamedSealed for email {}
         impl qbrs_core::row::Named for email {
             type Name = qbrs_core::type_name!('e', 'm', 'a', 'i', 'l');
             const NAME: &'static str = "email";

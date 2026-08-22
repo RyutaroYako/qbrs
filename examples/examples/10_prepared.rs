@@ -24,6 +24,13 @@ async fn main() {
         .filter(users::email.eq(ByEmail::email()))
         .prepare::<ByEmail, _>();
 
+    // The same query prepared as its own total: one rendering for the page,
+    // one for the count, and the page size bound rather than baked in.
+    let total = select((users::id,))
+        .from::<Postgres, _>(users::Table)
+        .filter(users::email.eq(ByEmail::email()))
+        .prepare_count::<ByEmail, _>();
+
     for email in [
         "ada@example.com",
         "grace@example.com",
@@ -39,6 +46,15 @@ async fn main() {
             .await
             .expect("load prepared query")
             .into_tuples();
-        println!("{email} -> {rows:?}");
+        let matching = total
+            .count(
+                &pool,
+                ByEmail {
+                    email: email.to_string(),
+                },
+            )
+            .await
+            .expect("count prepared query");
+        println!("{email} -> {rows:?} ({matching} row(s))");
     }
 }

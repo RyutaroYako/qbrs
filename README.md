@@ -98,7 +98,10 @@ error[E0277]: `orders::Table` is not available in this query's scope
 ```
 
 (rustc prints the underlying `Find`/`RowField`/`Selection` obligation chain after
-that, as it does for any unsatisfied trait bound.)
+that, as it does for any unsatisfied trait bound. Ending the query with
+`.load(&pool)` instead reports the same unsatisfied `Selection` bound as an
+`E0599` — a message on a trait is only rendered when the obligation is
+reached directly, not through method resolution.)
 
 ## Why qbrs?
 
@@ -245,7 +248,9 @@ A schema is a `#[derive(Table)]` struct, shown in the
   those goes through `predicate(..)` — then `.filter_all(..)` to AND them, or
   `.filter(Predicate::any(..))` to OR them — `Predicate::all` nests a group
   inside one. Every `.filter`/`.having`, on every builder, takes either kind
-  of condition.
+  of condition. `sort_key(..)`/`.order_by_all(..)` and
+  `grouping(..)`/`.group_by_all(..)` are the same pair for a runtime-length
+  `ORDER BY` or `GROUP BY` — the `?sort=email,-created_at` case.
 - **Predicates** — `.eq()`/`.ne()`/`.lt()`/`.gt()`/`.like()`, plus
   `.is_null()`/`.is_not_null()` and `.is_in([..])`. A nullable column and a
   non-nullable one compare freely, so an optional foreign key joins like any
@@ -269,7 +274,9 @@ A schema is a `#[derive(Table)]` struct, shown in the
   [`10_prepared`](examples/examples/10_prepared.rs). Typed, so a
   missing/misspelled bind is a compile error, unlike Drizzle's
   `sql.placeholder()`. `.prepare_count()` prepares the same query's total,
-  so a paginated endpoint renders each of its two statements once.
+  so a paginated endpoint renders each of its two statements once — and
+  `.limit(..)`/`.offset(..)` take a placeholder, so one prepared query serves
+  every page.
 - **Transactions** —
   [`15_transaction`](examples/examples/15_transaction.rs). Every
   `.load()`/`.execute()` method is generic over `sqlx::PgExecutor`, so a
@@ -312,6 +319,10 @@ A schema is a `#[derive(Table)]` struct, shown in the
   It surfaces as `error[E0284]: type annotations needed`, and the fix is to
   `label!` one of them. Reading either by its own column value
   (`row.get(users::id)`) is unaffected.
+- An aggregate is read back by the value that selected it
+  (`row.get(sum(orders::total))`) or by name (`#[derive(FromRow)]`), but not
+  through the column's generated accessor: `sum(orders::total)` is its own
+  key, and `row.total()` looks up the column's.
 - A selection list holds at most 16 elements — `<table>::All` counts as one,
   however many columns the table has. The *positional* view is a separate
   limit: `into_tuple`/`into_tuples` stop at 16 fields however they were

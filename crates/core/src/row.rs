@@ -74,7 +74,7 @@ impl<K, V, Tail> RowCons<K, V, Tail> {
 #[diagnostic::on_unimplemented(
     message = "`{K}` is not in this query's selection",
     label = "a row can only be read by a key the query selected",
-    note = "add `{K}` to the query's selection list, or `.label(label::..)` the expression you meant"
+    note = "add `{K}` to the query's selection list, or `.label(label::..)` the expression you meant — and in a generic helper give each column its own `Idx` parameter, since one shared index matches no row"
 )]
 pub trait Field<K, Idx> {
     type Value;
@@ -134,10 +134,20 @@ macro_rules! type_name {
 /// rather than by which key type produced it, and so a row can print itself
 /// keyed. Implemented by `#[derive(Table)]` for columns, by `label!` for
 /// labels, and by the built-in expression keys.
-pub trait Named {
+pub trait Named: named::Sealed {
     type Name;
     const NAME: &'static str;
 }
+
+pub(crate) mod named {
+    /// Sealed the way `scope::BaseTable` is: a name is written by a macro —
+    /// `#[derive(Table)]`, `with!`, `label!`, or `expr_key!` — so the
+    /// spelling in `Named::NAME` and the one in the SQL cannot disagree.
+    pub trait Sealed {}
+}
+
+#[doc(hidden)]
+pub use named::Sealed as NamedSealed;
 
 /// A key someone wrote down: a column, a `label!`, or one of the built-in
 /// expression keys. `Anon` is deliberately not one, which is what keeps two
@@ -151,6 +161,8 @@ pub trait Spelled: Named {}
 pub struct Anon;
 
 #[doc(hidden)]
+impl NamedSealed for Anon {}
+
 impl Named for Anon {
     type Name = NameEnd;
     const NAME: &'static str = "?";
@@ -313,7 +325,7 @@ pub trait LookupKey: RowKey {}
 
 impl<C: ColumnKey> LookupKey for Column<C> {}
 impl<K: Spelled, Req, S: SqlType> LookupKey for Keyed<K, Req, S> {}
-impl<K, Inner> LookupKey for Labeled<K, Inner> {}
+impl<K: Spelled, Inner> LookupKey for Labeled<K, Inner> {}
 
 /// A decoded row. Its fields are fixed by the query's selection list, and
 /// each is read by the same value that selected it.
@@ -581,6 +593,9 @@ macro_rules! expr_key {
         #[doc = $doc]
         #[derive(Clone, Copy)]
         pub struct $key;
+
+        #[doc(hidden)]
+        impl $crate::row::NamedSealed for $key {}
 
         #[doc(hidden)]
         impl $crate::row::Named for $key {
