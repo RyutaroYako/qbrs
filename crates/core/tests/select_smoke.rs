@@ -2,9 +2,9 @@
 //! validate the `Select` builder end-to-end before wiring up codegen.
 
 use qbrs_core::dialect::Postgres;
-use qbrs_core::expr::{Bool, ExprMethods, TextExprMethods, any_of};
+use qbrs_core::expr::{Bool, ExprMethods, TextExprMethods, all_of, any_of};
 use qbrs_core::scope::Table as TableTrait;
-use qbrs_core::select::{OrderExt, grouping, select, sort_key};
+use qbrs_core::select::{OrderExt, Predicate, grouping, predicate, select, sort_key};
 use qbrs_core::sql;
 
 pub struct UsersMarker;
@@ -125,6 +125,56 @@ mod orders {
 
     pub const user_id: Column<columns::user_id> = Column::new();
     pub const total: Column<columns::total> = Column::new();
+}
+
+#[test]
+fn all_of_and_predicate_all_fold_the_same_way_filter_does() {
+    let (sql, _params) = select((users::id,))
+        .from::<Postgres, _>(users::Table)
+        .filter(all_of([users::id.gt(1), users::id.lt(10)]))
+        .filter(Predicate::all([
+            predicate(users::active.eq(true)),
+            predicate(users::id.lte(9)),
+        ]))
+        .to_sql();
+    assert_eq!(
+        sql,
+        "SELECT \"users\".\"id\" FROM \"users\" \
+         WHERE ((\"users\".\"id\" > $1) AND (\"users\".\"id\" < $2)) \
+         AND ((\"users\".\"active\" = $3) AND (\"users\".\"id\" <= $4))"
+    );
+
+    // Empty: "all of nothing" matches everything, "any of nothing" nothing.
+    let (all_empty, _) = select((users::id,))
+        .from::<Postgres, _>(users::Table)
+        .filter(Predicate::all(Vec::new()))
+        .to_sql();
+    assert_eq!(
+        all_empty,
+        "SELECT \"users\".\"id\" FROM \"users\" WHERE TRUE"
+    );
+}
+
+#[test]
+fn reselect_keeps_every_clause_and_swaps_the_selection() {
+    let page = select((users::id,))
+        .from::<Postgres, _>(users::Table)
+        .filter(users::active.eq(true))
+        .order_by(users::id.desc())
+        .limit(5u32);
+
+    let (ids, _) = page.clone().to_sql();
+    let (names, _) = page.reselect((users::name,)).to_sql();
+    assert_eq!(
+        ids,
+        "SELECT \"users\".\"id\" FROM \"users\" WHERE (\"users\".\"active\" = $1) \
+         ORDER BY \"users\".\"id\" DESC LIMIT 5"
+    );
+    assert_eq!(
+        names,
+        "SELECT \"users\".\"name\" FROM \"users\" WHERE (\"users\".\"active\" = $1) \
+         ORDER BY \"users\".\"id\" DESC LIMIT 5"
+    );
 }
 
 #[test]

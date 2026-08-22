@@ -48,8 +48,10 @@ impl<D, Scope, Sel> Select<D, Scope, Sel> {
 
     /// The same query prepared as its own total — `count_sql` with the
     /// placeholders still unresolved, so a paginated endpoint reuses one
-    /// rendering for the page and one for the count.
-    pub fn prepare_count<Params, Idx>(&self) -> Prepared<Params, i64>
+    /// rendering for the page and one for the count. `Total` rather than
+    /// `i64`: what a statement produces is what decides how it is run, and a
+    /// total is a number, not a row.
+    pub fn prepare_count<Params, Idx>(&self) -> Prepared<Params, Total>
     where
         D: Dialect,
         Sel: Selection<Scope, Idx>,
@@ -62,6 +64,11 @@ impl<D, Scope, Sel> Select<D, Scope, Sel> {
         }
     }
 }
+
+/// The output of a `prepare_count()`-built query: deliberately not a
+/// decodable row, so a total is counted and never loaded, and a prepared
+/// `SELECT` of one `i64` column is never mistaken for one.
+pub struct Total;
 
 /// Returned by `Prepared::resolve` — and so by the `.load()` that calls
 /// it — when a placeholder in the

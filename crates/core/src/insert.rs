@@ -56,26 +56,6 @@ pub enum Defaultable<T> {
     Value(T),
 }
 
-impl<T> Defaultable<T> {
-    pub fn value(v: T) -> Self {
-        Defaultable::Value(v)
-    }
-}
-
-/// A request struct's `Option<T>` field maps onto a defaulted column the one
-/// way that makes sense — absent means "let the schema decide" — so a `POST`
-/// body reaches an `*Insert` field-for-field, the way a `PATCH` body already
-/// reaches an `*Update`. Explicit NULL is a third state, and a builder says
-/// it with `.<column>_null()`.
-impl<T> From<Option<T>> for Defaultable<T> {
-    fn from(v: Option<T>) -> Self {
-        match v {
-            Some(v) => Defaultable::Value(v),
-            None => Defaultable::Default,
-        }
-    }
-}
-
 #[derive(Debug, Clone)]
 pub enum InsertValue {
     Value(Value),

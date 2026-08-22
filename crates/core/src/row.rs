@@ -151,13 +151,12 @@ pub use named::Sealed as NamedSealed;
 
 /// A key someone wrote down: a column, a `label!`, or one of the built-in
 /// expression keys. `Anon` is deliberately not one, which is what keeps two
-/// unnamed columns from standing in for each other and keeps an unnamed
-/// field out of reach of `.get()`.
+/// unnamed columns from standing in for each other, keeps an unnamed field
+/// out of reach of `.get()`, and keeps a by-name lookup from landing on one.
 pub trait Spelled: Named {}
 
 /// The key of a selected item that carries no name of its own — a bare
-/// `sql!{}` fragment. Its `Name` is the empty chain, which no identifier can
-/// spell, so a by-name lookup can never land on it either.
+/// `sql!{}` fragment.
 pub struct Anon;
 
 #[doc(hidden)]
@@ -183,8 +182,8 @@ pub trait TakeNamed<F, Idx> {
 
 impl<F, K, V, Tail> TakeNamed<F, Here> for RowCons<K, V, Tail>
 where
-    K: Named,
-    F: Named<Name = <K as Named>::Name>,
+    K: Spelled,
+    F: Spelled<Name = <K as Named>::Name>,
 {
     type Value = V;
     type Rest = Tail;
@@ -481,11 +480,6 @@ impl<L: PartialEq> PartialEq for Row<L> {
 impl<L: Eq> Eq for Row<L> {}
 
 /// A row's fields as a plain tuple, in selection order.
-#[diagnostic::on_unimplemented(
-    message = "this row has no positional view",
-    label = "`into_tuple`/`into_tuples` stop at 16 fields, however they were selected",
-    note = "read it by key (`row.get(..)`) or fill a struct with `#[derive(FromRow)]`"
-)]
 pub trait RowValues {
     type Values;
     fn into_values(self) -> Self::Values;
@@ -493,6 +487,11 @@ pub trait RowValues {
 
 /// Adds one element to the front of a tuple. The only place `Row`'s
 /// positional view has an arity limit.
+#[diagnostic::on_unimplemented(
+    message = "this row has no positional view",
+    label = "`into_tuple`/`into_tuples` stop at 16 fields, however they were selected",
+    note = "read it by key (`row.get(..)`) or fill a struct with `#[derive(FromRow)]`"
+)]
 pub trait Prepend<H> {
     type Output;
     fn prepend(self, head: H) -> Self::Output;

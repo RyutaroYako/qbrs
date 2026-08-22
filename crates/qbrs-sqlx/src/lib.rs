@@ -6,7 +6,7 @@
 use qbrs_core::dialect::Postgres;
 use qbrs_core::expr::Value;
 use qbrs_core::row::{Row, RowCons, RowNil};
-use qbrs_core::select::{DynSelect, Prepared, PreparedParams, Select, Selection, SetOp};
+use qbrs_core::select::{DynSelect, Prepared, PreparedParams, Select, Selection, SetOp, Total};
 use qbrs_core::statement::{Returning, Statement, WrittenTable};
 use sqlx::Row as _;
 use sqlx::postgres::PgRow;
@@ -26,6 +26,21 @@ pub enum Error {
     /// query was executed directly instead of through `.prepare()`.
     #[error(transparent)]
     UnresolvedPlaceholder(#[from] qbrs_core::select::UnresolvedPlaceholder),
+
+    /// An `*Update` with nothing set, or an insert of no rows, reached a
+    /// statement: the same qbrs-level misuse `UnresolvedPlaceholder` is, so
+    /// a handler returning this crate's `Result` can `?` on either.
+    #[error(transparent)]
+    NothingToSet(#[from] qbrs_core::update::NothingToSet),
+
+    #[error(transparent)]
+    NothingToInsert(#[from] qbrs_core::insert::NothingToInsert),
+
+    /// A column type is enabled on `qbrs` but not on `qbrs-sqlx`, so the
+    /// value renders and has nothing to bind it. The two crates carry the
+    /// same feature names for exactly this reason — turn it on in both.
+    #[error("`{0}` values need the matching feature on `qbrs-sqlx` too")]
+    FeatureNotEnabled(&'static str),
 }
 
 /// This crate's `Result`: the same shape as `sqlx::Result`, with
@@ -89,7 +104,27 @@ fn bind_value<'q>(
         Value::Placeholder(name) => {
             return Err(qbrs_core::select::UnresolvedPlaceholder(name).into());
         }
+        // Reachable only when a column type is on in `qbrs-core` and off
+        // here: the variant exists, the arm that binds it doesn't.
+        #[allow(unreachable_patterns)]
+        other => return Err(Error::FeatureNotEnabled(value_type_name(&other))),
     })
+}
+
+/// Names the column type a `Value` came from, for the one error that has to
+/// name it.
+fn value_type_name(value: &Value) -> &'static str {
+    match value {
+        Value::I32(_) | Value::NullI32 => "Integer",
+        Value::I64(_) | Value::NullI64 => "BigInt",
+        Value::F64(_) | Value::NullF64 => "Real",
+        Value::Text(_) | Value::NullText => "Text",
+        Value::Bool(_) | Value::NullBool => "Bool",
+        Value::Bytes(_) | Value::NullBytes => "Bytes",
+        Value::Placeholder(_) => "placeholder",
+        #[allow(unreachable_patterns)]
+        _ => "this column type",
+    }
 }
 
 fn bind_all<'q>(
@@ -151,9 +186,8 @@ async fn execute_only<'e, E: sqlx::PgExecutor<'e>>(
 /// `Idx` is threaded through the trait's parameter list for the reason
 /// `scope::Superset` explains. Callers never see it; it's inferred.
 #[diagnostic::on_unimplemented(
-    message = "`{Self}` doesn't decode to Postgres values",
-    label = "every selected value has to be one of the types `DecodeRow` covers",
-    note = "an invalid *selection* reports itself separately, as an unsatisfied `Selection` bound"
+    message = "`{Self}` isn't a query this crate can run",
+    label = "a `Select`, a `RETURNING`, a `DynSelect` or a set operation, whose values are all types `DecodeRow` covers"
 )]
 pub trait LoadExt<Idx> {
     type Output: DecodeRow;
@@ -391,7 +425,7 @@ pub trait PreparedCountExt<Params> {
     ) -> impl std::future::Future<Output = Result<i64>>;
 }
 
-impl<Params: PreparedParams> PreparedCountExt<Params> for Prepared<Params, i64> {
+impl<Params: PreparedParams> PreparedCountExt<Params> for Prepared<Params, Total> {
     async fn count<'e, E: sqlx::PgExecutor<'e>>(&self, executor: E, params: Params) -> Result<i64> {
         count_rows(executor, self.resolve(params)?).await
     }

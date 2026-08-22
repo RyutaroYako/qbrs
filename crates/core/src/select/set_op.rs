@@ -84,8 +84,8 @@ pub struct SetOp<D, Output> {
     first: Fragment,
     rest: Vec<(SetOpKind, Fragment)>,
     order_by: Vec<(u32, SortDir)>,
-    limit: Option<super::Limit>,
-    offset: Option<super::Limit>,
+    limit: Option<super::RowCount>,
+    offset: Option<super::RowCount>,
     _marker: PhantomData<fn() -> (D, Output)>,
 }
 
@@ -155,13 +155,13 @@ impl<D: Dialect, Output> SetOp<D, Output> {
         self
     }
 
-    pub fn limit(mut self, n: impl super::IntoLimit) -> Self {
-        self.limit = Some(n.into_limit());
+    pub fn limit(mut self, n: impl super::IntoRowCount) -> Self {
+        self.limit = Some(n.into_row_count());
         self
     }
 
-    pub fn offset(mut self, n: impl super::IntoLimit) -> Self {
-        self.offset = Some(n.into_limit());
+    pub fn offset(mut self, n: impl super::IntoRowCount) -> Self {
+        self.offset = Some(n.into_row_count());
         self
     }
 

@@ -12,6 +12,9 @@ struct Users {
     id: i64,
     email: String,
     display_name: Option<String>,
+    /// Nullable *and* defaulted: the three-state column.
+    #[column(default)]
+    nickname: Option<String>,
     #[column(default)]
     active: bool,
 }
@@ -23,6 +26,49 @@ struct Orders {
     id: i64,
     user_id: i64,
     total: i64,
+}
+
+#[test]
+fn a_nullable_defaulted_column_says_its_three_states_apart() {
+    // Omitted: the schema's default. `None`: the same, since that is what a
+    // request field without a value means. `_null()`: an explicit NULL.
+    let omitted = qbrs::insert::insert::<Postgres, _>(users::Table)
+        .values(UsersInsert::builder().email("a@example.com").build())
+        .to_sql()
+        .0;
+    assert!(
+        omitted.ends_with("VALUES ($1, $2, DEFAULT, DEFAULT)"),
+        "{omitted}"
+    );
+
+    let absent: Option<String> = None;
+    let from_request = qbrs::insert::insert::<Postgres, _>(users::Table)
+        .values(
+            UsersInsert::builder()
+                .email("a@example.com")
+                .nickname(absent)
+                .build(),
+        )
+        .to_sql()
+        .0;
+    assert!(
+        from_request.ends_with("VALUES ($1, $2, DEFAULT, DEFAULT)"),
+        "{from_request}"
+    );
+
+    let (explicit, params) = qbrs::insert::insert::<Postgres, _>(users::Table)
+        .values(
+            UsersInsert::builder()
+                .email("a@example.com")
+                .nickname_null()
+                .build(),
+        )
+        .to_sql();
+    assert!(
+        explicit.ends_with("VALUES ($1, $2, $3, DEFAULT)"),
+        "{explicit}"
+    );
+    assert_eq!(params[2], qbrs::expr::Value::NullText);
 }
 
 #[test]
@@ -58,7 +104,8 @@ fn insert_uses_generated_new_and_setters() {
 
     assert_eq!(
         sql,
-        "INSERT INTO \"users\" (\"email\", \"display_name\", \"active\") VALUES ($1, $2, DEFAULT) RETURNING \"users\".\"id\""
+        "INSERT INTO \"users\" (\"email\", \"display_name\", \"nickname\", \"active\") \
+         VALUES ($1, $2, DEFAULT, DEFAULT) RETURNING \"users\".\"id\""
     );
     assert_eq!(
         params,

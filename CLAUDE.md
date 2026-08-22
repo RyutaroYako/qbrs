@@ -136,10 +136,7 @@ type-compatible splice in transposed, and the result is then read by key. `SameN
 carries `#[diagnostic::do_not_recommend]` so the reported obligation is the two columns,
 not the `NameChar` spelling behind them.
 
-Two consequences to preserve. Shape comparisons between *different* queries (`cte::with`,
-`select::SetOp`) go through `RowValues::Values`, not `Selection::Output`: two branches of a
-`UNION` over different tables never share row keys, and a CTE declares its own column names
-by definition. And `render::SelectItem` carries an optional `AS` label, so a selection list
+One consequence to preserve: `render::SelectItem` carries an optional `AS` label, so a selection list
 is `&[SelectItem]` rather than `&[ExprKind]` — `render::render_select_list` is the single
 place that renders one, shared by `SELECT` and all three `RETURNING` builders.
 
@@ -214,8 +211,9 @@ the 16-element limit count tables rather than columns.
 (a second one collides on `mod label`); declaring it inside the function that runs the
 query is the intended usage and sidesteps that. Nullability comes from `Option<T>` wrapping (no
 separate attribute); attributes are only `#[column(primary_key | generated | default)]`.
-`*Insert` is built through a type-state builder: one generic slot per column without a
-default, `()` until that column is given a value and its own type after, so `build()` exists
+`*Insert` is built through a type-state builder: one generic slot per column that is neither
+nullable nor defaulted, `insert::Missing<C>` until that column is given a value and its own
+type after — named after the column, so the builder's type says which one is still missing — so `build()` exists
 exactly when the row is complete and nothing is unwrapped. Insert fields use `Defaultable<T>`
 (and `Defaultable<Option<T>>` for nullable-with-default) so
 omit / explicit-NULL / explicit-value stay distinguishable; update fields use `Option<T>` /

@@ -78,6 +78,36 @@ fn all_selects_every_column_and_takes_its_nullability_from_the_join() {
 }
 
 #[test]
+fn a_sql_fragment_decodes_as_the_type_it_declares() {
+    // No `.decodes_as(..)` restating it: the author wrote the type in the
+    // `sql!` itself, and a slot holding a column doesn't change that.
+    label!(biggest);
+    let query = select((
+        users::email,
+        sql!(Nullable<BigInt>, "max(?)", orders::total).label(label::biggest),
+    ))
+    .from::<Postgres, _>(users::Table)
+    .inner_join(orders::Table, orders::user_id.eq(users::id))
+    .group_by(users::email);
+
+    let (sql, _params) = query.to_sql();
+    assert_eq!(
+        sql,
+        "SELECT \"users\".\"email\", (max(\"orders\".\"total\")) AS \"biggest\" FROM \"users\" \
+         INNER JOIN \"orders\" ON (\"orders\".\"user_id\" = \"users\".\"id\") \
+         GROUP BY \"users\".\"email\""
+    );
+
+    decodes_to(
+        &query,
+        Row::new(RowCons::<users::columns::email, _, _>::new(
+            "ada@example.com".to_string(),
+            RowCons::<label::biggest, Option<i64>, _>::new(Some(10), RowNil),
+        )),
+    );
+}
+
+#[test]
 fn a_field_is_read_by_the_value_that_selected_it() {
     let row = user_order_row();
     assert_eq!(row.get(users::email), "ada@example.com");

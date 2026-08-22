@@ -137,7 +137,10 @@ sqlx = { version = "0.9", features = ["runtime-tokio", "postgres"] }  # for `PgP
 `qbrs-sqlx`'s methods take any `sqlx::PgExecutor`, so the `sqlx` version has
 to be the same one it is built against (0.9). Column types beyond the six
 built in are features: `qbrs = { .., features = ["chrono", "uuid",
-"decimal"] }`, matched by the same feature on `qbrs-sqlx`.
+"decimal"] }` — and the **same** feature on `qbrs-sqlx`, which is what binds
+and decodes the type. The two crates' features are separate `cfg`s over one
+`Value`, so enabling only one surfaces as a `FeatureNotEnabled` error when a
+value of that type is bound, not as a compile error.
 
 ## Usage
 
@@ -160,7 +163,9 @@ A schema is a `#[derive(Table)]` struct, shown in the
   (`Integer`/`BigInt`/`Real`/`Text`/`Bool`/`Bytes` in SQL-type spelling), and
   `DateTime<Utc>`/`NaiveDate`/`Uuid`/`Decimal` (`Timestamptz`/`Date`/`Uuid`/
   `Numeric`) behind the `chrono`, `uuid` and `decimal` features, which pull
-  in the crate each decodes to. A column
+  in the crate each decodes to. `Uuid` is reachable as `qbrs::expr::Uuid`
+  rather than through the prelude, since a glob-imported `Uuid` would be
+  shadowed by the `uuid` crate's own in exactly the schemas that use it. A column
   type is a `SqlType` leaf: it renders, binds, compares, and decodes like any
   other, so `created_at` doesn't have to be smuggled past the schema as
   `sql!{}`.
@@ -250,7 +255,8 @@ A schema is a `#[derive(Table)]` struct, shown in the
   inside one. Every `.filter`/`.having`, on every builder, takes either kind
   of condition. `sort_key(..)`/`.order_by_all(..)` and
   `grouping(..)`/`.group_by_all(..)` are the same pair for a runtime-length
-  `ORDER BY` or `GROUP BY` — the `?sort=email,-created_at` case.
+  `ORDER BY` or `GROUP BY` — the `?sort=email,-created_at` case, shown in
+  [`19_dynamic_sort`](examples/examples/19_dynamic_sort.rs).
 - **Predicates** — `.eq()`/`.ne()`/`.lt()`/`.gt()`/`.like()`, plus
   `.is_null()`/`.is_not_null()` and `.is_in([..])`. A nullable column and a
   non-nullable one compare freely, so an optional foreign key joins like any
@@ -425,6 +431,9 @@ query-building layer has been stable for a while).
 - [`crates/qbrs-sqlx`](crates/qbrs-sqlx) — execution via `sqlx` (Postgres).
 - [`examples`](examples) (`qbrs-examples`) — runnable examples; see
   [its README](examples/README.md) for how to run them.
+- [`tests/dialect-exec`](tests/dialect-exec) — every rendered statement shape
+  run against an in-memory SQLite, so the `Sqlite` dialect is checked by
+  SQLite rather than by a string assertion.
 - [`tests/compile-bench`](tests/compile-bench) — synthetic-schema compile-time
   regression checks (this is what backs the "linear at 40+ joins" claim above).
 

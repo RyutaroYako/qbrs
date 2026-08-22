@@ -247,7 +247,7 @@ impl<Req, S: SqlType> IntoExpr<S> for Expr<Req, S> {
 /// pseudo-columns), which is what lets a column be a *key* — two columns of
 /// the same table and SQL type are still distinct types here, so a row can
 /// be indexed by column without ambiguity.
-pub trait ColumnKey: crate::row::Named + Copy + 'static {
+pub trait ColumnKey: crate::row::Spelled + Copy + 'static {
     type Table: Table;
     type Sql: SqlType;
 }
@@ -536,18 +536,28 @@ pub trait ExprMethods<S: SqlType>: IntoExpr<S> + Sized {
 /// search box needs doesn't have to be folded by hand — folding one by one
 /// grows `Req` and stops type-checking after the first pair. An empty
 /// collection matches nothing, which is what `is_in([])` says too.
-pub fn any_of<Req>(conds: impl IntoIterator<Item = Expr<Req, Bool>>) -> Expr<Req, Bool> {
+pub fn any_of<Req, C: IntoExpr<Bool, Req = Req>>(
+    conds: impl IntoIterator<Item = C>,
+) -> Expr<Req, Bool> {
     combine(conds, false)
 }
 
 /// True when all of them are. An empty collection matches everything, which
 /// is what a `WHERE` with no conditions does.
-pub fn all_of<Req>(conds: impl IntoIterator<Item = Expr<Req, Bool>>) -> Expr<Req, Bool> {
+pub fn all_of<Req, C: IntoExpr<Bool, Req = Req>>(
+    conds: impl IntoIterator<Item = C>,
+) -> Expr<Req, Bool> {
     combine(conds, true)
 }
 
-fn combine<Req>(conds: impl IntoIterator<Item = Expr<Req, Bool>>, all: bool) -> Expr<Req, Bool> {
-    Expr::from_kind(fold_conditions(conds.into_iter().map(|c| c.kind), all))
+fn combine<Req, C: IntoExpr<Bool, Req = Req>>(
+    conds: impl IntoIterator<Item = C>,
+    all: bool,
+) -> Expr<Req, Bool> {
+    Expr::from_kind(fold_conditions(
+        conds.into_iter().map(|c| c.into_expr().kind),
+        all,
+    ))
 }
 
 /// AND- or OR-folds conditions, answering `TRUE`/`FALSE` for an empty
@@ -811,6 +821,12 @@ impl crate::insert::IntoNullable<String> for &String {
 impl crate::insert::IntoDefaultable<String> for &String {
     fn into_defaultable(self) -> crate::insert::Defaultable<String> {
         crate::insert::Defaultable::Value(self.clone())
+    }
+}
+
+impl crate::insert::IntoDefaultable<Option<String>> for &String {
+    fn into_defaultable(self) -> crate::insert::Defaultable<Option<String>> {
+        crate::insert::Defaultable::Value(Some(self.clone()))
     }
 }
 
@@ -1117,8 +1133,11 @@ pub const fn placeholder_count(sql: &str) -> usize {
 /// scope it hasn't got. Reached through `sql!`, which is what checks that
 /// every `?` has a value.
 #[doc(hidden)]
-pub fn raw_expr<S: SqlType, Args: RawArgs>(sql: &'static str, args: Args) -> Expr<Args::Req, S> {
-    Expr::from_kind(template(sql, args.into_raw_args()))
+pub fn raw_expr<S: SqlType, Args: RawArgs>(
+    sql: &'static str,
+    args: Args,
+) -> Declared<Args::Req, S> {
+    Keyed::from_kind(template(sql, args.into_raw_args()))
 }
 
 /// Splits authored text on its `?` slots and pairs each with its argument.

@@ -22,7 +22,7 @@ mod set_op;
 
 pub use crate::expr::SortDir;
 pub use dyn_select::{CannotFilterAfterErase, DynSelect};
-pub use prepared::{Prepared, PreparedParams, UnresolvedPlaceholder};
+pub use prepared::{Prepared, PreparedParams, Total, UnresolvedPlaceholder};
 pub use selection::{All, AllColumns, RowField, Selection, SelectionPart};
 pub use set_op::{Ordinal, OrdinalKey, SetOp, nth};
 
@@ -128,6 +128,64 @@ impl<D, Marker: crate::cte::CteShape> JoinSource<D> for Cte<D, Marker> {
     }
 }
 
+/// Something a query can be ordered by: an `OrderKey` whose tables this
+/// scope contains, or a `SortKey` already discharged against it — the same
+/// pair `Condition` makes for `.filter`.
+#[diagnostic::on_unimplemented(
+    message = "`{Self}` isn't a sort key",
+    label = "a column or expression with `.asc()`/`.desc()`/`.sort(dir)` on it, or a `sort_key(..)`"
+)]
+pub trait SortBy<Scope, Idxs> {
+    #[doc(hidden)]
+    fn into_sort_key(self) -> SortKey<Scope>;
+}
+
+#[diagnostic::do_not_recommend]
+impl<Scope: Superset<Req, Idxs>, Req, Idxs> SortBy<Scope, Idxs> for OrderKey<Req> {
+    fn into_sort_key(self) -> SortKey<Scope> {
+        SortKey {
+            kind: self.kind,
+            dir: self.dir,
+            _marker: PhantomData,
+        }
+    }
+}
+
+impl<Scope> SortBy<Scope, ()> for SortKey<Scope> {
+    fn into_sort_key(self) -> SortKey<Scope> {
+        self
+    }
+}
+
+/// The same for `GROUP BY`: an expression this scope covers, or a
+/// `grouping(..)` already discharged against it.
+#[diagnostic::on_unimplemented(
+    message = "`{Self}` isn't a grouping key",
+    label = "a column or expression, or a `grouping(..)`"
+)]
+pub trait GroupBy<Scope, Idxs> {
+    #[doc(hidden)]
+    fn into_grouping(self) -> Grouping<Scope>;
+}
+
+#[diagnostic::do_not_recommend]
+impl<Scope: Superset<Req, Idxs>, Req, Idxs, S: SqlType, T: IntoExpr<S, Req = Req>>
+    GroupBy<Scope, (Idxs, S)> for T
+{
+    fn into_grouping(self) -> Grouping<Scope> {
+        Grouping {
+            kind: self.into_expr().kind,
+            _marker: PhantomData,
+        }
+    }
+}
+
+impl<Scope> GroupBy<Scope, ()> for Grouping<Scope> {
+    fn into_grouping(self) -> Grouping<Scope> {
+        self
+    }
+}
+
 /// A sort key whose scope requirement has already been discharged, so a
 /// runtime-length collection of them can be built and passed around — the
 /// `?sort=email,-placed_on` case. `select::sort_key` is to `.order_by_all`
@@ -202,11 +260,12 @@ pub trait Condition<Scope, Idxs> {
     fn into_predicate(self) -> Predicate<Scope>;
 }
 
-#[diagnostic::do_not_recommend]
-impl<Scope: Superset<Req, Idxs>, Req, Idxs> Condition<Scope, Idxs> for Expr<Req, Bool> {
+impl<Scope: Superset<Req, Idxs>, Req, Idxs, T: IntoExpr<Bool, Req = Req>> Condition<Scope, Idxs>
+    for T
+{
     fn into_predicate(self) -> Predicate<Scope> {
         Predicate {
-            kind: self.kind,
+            kind: self.into_expr().kind,
             _marker: PhantomData,
         }
     }
@@ -324,8 +383,8 @@ pub(super) struct SelectBody {
     order_by: Vec<(ExprKind, SortDir)>,
     group_by: Vec<ExprKind>,
     having: Vec<ExprKind>,
-    limit: Option<Limit>,
-    offset: Option<Limit>,
+    limit: Option<RowCount>,
+    offset: Option<RowCount>,
 }
 
 impl SelectBody {
@@ -440,10 +499,8 @@ impl<D, Scope, Sel, Outer> Select<D, Scope, Sel, Outer> {
         self
     }
 
-    pub fn order_by<Req, Idxs>(mut self, key: OrderKey<Req>) -> Self
-    where
-        Scope: Superset<Req, Idxs>,
-    {
+    pub fn order_by<K: SortBy<Scope, Idxs>, Idxs>(mut self, key: K) -> Self {
+        let key = key.into_sort_key();
         self.body.order_by.push((key.kind, key.dir));
         self
     }
@@ -470,11 +527,8 @@ impl<D, Scope, Sel, Outer> Select<D, Scope, Sel, Outer> {
     /// Appends one grouping key; callable multiple times like `.filter()`
     /// (each call adds a column to the `GROUP BY` list, it doesn't replace
     /// it), for the same "dynamic composition without a type change" reason.
-    pub fn group_by<S: SqlType, Req, Idxs>(mut self, key: impl IntoExpr<S, Req = Req>) -> Self
-    where
-        Scope: Superset<Req, Idxs>,
-    {
-        self.body.group_by.push(key.into_expr().kind);
+    pub fn group_by<K: GroupBy<Scope, Idxs>, Idxs>(mut self, key: K) -> Self {
+        self.body.group_by.push(key.into_grouping().kind);
         self
     }
 
@@ -492,13 +546,13 @@ impl<D, Scope, Sel, Outer> Select<D, Scope, Sel, Outer> {
         self
     }
 
-    pub fn limit(mut self, n: impl IntoLimit) -> Self {
-        self.body.limit = Some(n.into_limit());
+    pub fn limit(mut self, n: impl IntoRowCount) -> Self {
+        self.body.limit = Some(n.into_row_count());
         self
     }
 
-    pub fn offset(mut self, n: impl IntoLimit) -> Self {
-        self.body.offset = Some(n.into_limit());
+    pub fn offset(mut self, n: impl IntoRowCount) -> Self {
+        self.body.offset = Some(n.into_row_count());
         self
     }
 
@@ -581,7 +635,11 @@ impl<D, Scope, Sel, Outer> Select<D, Scope, Sel, Outer> {
     }
 }
 
-impl<D: Dialect, Scope, Sel, Outer> Select<D, Scope, Sel, Outer> {
+/// The terminal methods, and so only for a query of its own: a subquery
+/// (`Outer != Nil`) references its outer query's tables, and rendering one
+/// on its own would name tables that aren't in its `FROM`. It reaches SQL
+/// through `exists`/`not_exists` instead.
+impl<D: Dialect, Scope, Sel> Select<D, Scope, Sel> {
     /// The terminal step, and the *only* point each selected column's
     /// scope-membership is checked — proven as a side effect of
     /// `Sel: Selection<Scope, Idx>` type-checking at all.
@@ -606,11 +664,14 @@ impl<D: Dialect, Scope, Sel, Outer> Select<D, Scope, Sel, Outer> {
     {
         self.body.count_sql::<D>(&self.selection.items())
     }
+}
 
+impl<D: Dialect, Scope, Sel, Outer> Select<D, Scope, Sel, Outer> {
     /// This query as an embeddable `Fragment`: an `EXISTS (..)` subquery, a
     /// CTE body, or a set-operation branch. The only way to produce one, so
     /// no caller has to remember that an embedded query renders with `?`
-    /// placeholders rather than `D`'s own style.
+    /// placeholders rather than `D`'s own style. Generic over `Outer`, since
+    /// splicing is exactly what a subquery is for.
     pub(crate) fn fragment<Idx>(&self) -> Fragment
     where
         Sel: Selection<Scope, Idx>,
@@ -753,23 +814,28 @@ impl<D: Dialect, Scope, Sel, Outer: ScopeTables> Select<D, Scope, Sel, Outer> {
     }
 }
 
-/// A limit or offset: a number, or a `prepare!{}` placeholder for one, so a
-/// paginated endpoint can prepare its query once and vary the page. A trait
-/// rather than `Into<i64>` so a `usize` page size — the shape a paginated
-/// handler already has — goes in without a cast. Every numeric impl lands in
-/// `0..=i64::MAX`: a negative limit is not a query any database will run,
+/// A number of rows — what a `LIMIT` and an `OFFSET` each are: an integer,
+/// or a `prepare!{}` placeholder for one, so a paginated endpoint can
+/// prepare its query once and vary the page. A trait rather than
+/// `Into<i64>` so a `usize` page size — the shape a paginated handler
+/// already has — goes in without a cast. Every numeric impl lands in
+/// `0..=i64::MAX`: a negative count is not a query any database will run,
 /// and a `usize` past `i64::MAX` is not a page anyone is asking for.
-pub trait IntoLimit {
-    fn into_limit(self) -> Limit;
+#[diagnostic::on_unimplemented(
+    message = "`{Self}` isn't a number of rows",
+    label = "an integer, or a `prepare!{{}}` placeholder of type `Integer`/`BigInt`"
+)]
+pub trait IntoRowCount {
+    fn into_row_count(self) -> RowCount;
 }
 
-/// What a `LIMIT`/`OFFSET` clause holds. Opaque: the `IntoLimit` impls are
-/// the only way to make one.
+/// What a `LIMIT`/`OFFSET` clause holds. Opaque: the `IntoRowCount` impls
+/// are the only way to make one.
 #[derive(Clone)]
-pub struct Limit(LimitKind);
+pub struct RowCount(RowCountKind);
 
 #[derive(Clone)]
-enum LimitKind {
+enum RowCountKind {
     /// Written into the SQL text: a page size is not a value the plan
     /// should be reused across.
     Literal(i64),
@@ -777,33 +843,34 @@ enum LimitKind {
     Bound(ExprKind),
 }
 
-macro_rules! into_limit {
+macro_rules! into_row_count {
     ($($signed:ty),+ ; $($unsigned:ty),+) => {
-        $(impl IntoLimit for $signed {
-            fn into_limit(self) -> Limit {
-                Limit(LimitKind::Literal(i64::from(self).max(0)))
+        $(impl IntoRowCount for $signed {
+            fn into_row_count(self) -> RowCount {
+                RowCount(RowCountKind::Literal(i64::try_from(self).unwrap_or(i64::MAX).max(0)))
             }
         })+
-        $(impl IntoLimit for $unsigned {
-            fn into_limit(self) -> Limit {
-                Limit(LimitKind::Literal(i64::try_from(self).unwrap_or(i64::MAX)))
+        $(impl IntoRowCount for $unsigned {
+            fn into_row_count(self) -> RowCount {
+                RowCount(RowCountKind::Literal(i64::try_from(self).unwrap_or(i64::MAX)))
             }
         })+
     };
 }
-into_limit!(i32 ; u8, u16, u32, u64, usize);
+into_row_count!(i8, i16, i32, i64, isize ; u8, u16, u32, u64, usize);
 
-impl IntoLimit for i64 {
-    fn into_limit(self) -> Limit {
-        Limit(LimitKind::Literal(self.max(0)))
+/// A `prepare!{}` placeholder, or any other scope-free integer expression:
+/// bound rather than written, so one prepared query serves every page. Only
+/// the two integer types — a page is a number.
+impl IntoRowCount for Expr<Nil, crate::expr::Integer> {
+    fn into_row_count(self) -> RowCount {
+        RowCount(RowCountKind::Bound(self.kind))
     }
 }
 
-/// A `prepare!{}` placeholder, or any other scope-free integer expression:
-/// bound rather than written, so one prepared query serves every page.
-impl<S: SqlType> IntoLimit for Expr<Nil, S> {
-    fn into_limit(self) -> Limit {
-        Limit(LimitKind::Bound(self.kind))
+impl IntoRowCount for Expr<Nil, crate::expr::BigInt> {
+    fn into_row_count(self) -> RowCount {
+        RowCount(RowCountKind::Bound(self.kind))
     }
 }
 
@@ -811,13 +878,13 @@ impl<S: SqlType> IntoLimit for Expr<Nil, S> {
 /// and no limit — a bare `OFFSET` is Postgres-only.
 pub(crate) fn render_limit_offset<D: Dialect>(
     sink: &mut dyn Sink,
-    limit: Option<&Limit>,
-    offset: Option<&Limit>,
+    limit: Option<&RowCount>,
+    offset: Option<&RowCount>,
 ) {
     match (limit, offset, D::OFFSET_WITHOUT_LIMIT) {
         (Some(l), _, _) => {
             sink.text(" LIMIT ");
-            render_limit::<D>(sink, l);
+            render_row_count::<D>(sink, l);
         }
         (None, Some(_), Some(filler)) => {
             sink.text(" LIMIT ");
@@ -827,13 +894,13 @@ pub(crate) fn render_limit_offset<D: Dialect>(
     }
     if let Some(o) = offset {
         sink.text(" OFFSET ");
-        render_limit::<D>(sink, o);
+        render_row_count::<D>(sink, o);
     }
 }
 
-fn render_limit<D: Dialect>(sink: &mut dyn Sink, limit: &Limit) {
-    match &limit.0 {
-        LimitKind::Literal(n) => sink.text(&n.to_string()),
-        LimitKind::Bound(kind) => render_expr::<D>(kind, sink),
+fn render_row_count<D: Dialect>(sink: &mut dyn Sink, count: &RowCount) {
+    match &count.0 {
+        RowCountKind::Literal(n) => sink.text(&n.to_string()),
+        RowCountKind::Bound(kind) => render_expr::<D>(kind, sink),
     }
 }

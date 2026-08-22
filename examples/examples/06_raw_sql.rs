@@ -28,13 +28,13 @@ async fn main() {
 
     // Because the slot carries its table, the fragment is checked against
     // the query's scope like anything else: putting `orders::total` in one
-    // without joining `orders` is a compile error, not a database error.
+    // without joining `orders` is a compile error, not a database error. The
+    // type written in the `sql!` is the type it decodes to — `max` over no
+    // rows is NULL, so this one says so.
     label!(biggest);
     let per_user: Vec<(String, Option<i64>)> = select((
         users::email,
-        sql!(BigInt, "max(?)", orders::total)
-            .decodes_as::<Nullable<BigInt>>()
-            .label(label::biggest),
+        sql!(Nullable<BigInt>, "max(?)", orders::total).label(label::biggest),
     ))
     .from::<Postgres, _>(users::Table)
     .inner_join(orders::Table, orders::user_id.eq(users::id))

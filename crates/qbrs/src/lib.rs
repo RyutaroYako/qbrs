@@ -18,8 +18,6 @@ pub mod prelude {
     pub use qbrs_core::expr::Column;
     #[cfg(feature = "decimal")]
     pub use qbrs_core::expr::Numeric;
-    #[cfg(feature = "uuid")]
-    pub use qbrs_core::expr::Uuid;
     pub use qbrs_core::expr::{Agg, Avg, Count, CountOf, Max, Min, Sum};
     pub use qbrs_core::expr::{
         BigInt, Bool, Bytes, ExprMethods, HasCount, Integer, LabelExt, Real, SortDir, Text,
@@ -28,10 +26,10 @@ pub mod prelude {
     #[cfg(feature = "chrono")]
     pub use qbrs_core::expr::{Date, Timestamptz};
     pub use qbrs_core::expr::{Declared, Expr, IntoExpr, Keyed, Labeled};
-    pub use qbrs_core::insert::{Defaultable, Insert, InsertRow, NothingToInsert, insert};
+    pub use qbrs_core::insert::{Defaultable, Insert, InsertRow, Missing, NothingToInsert, insert};
     pub use qbrs_core::row::{Anon, IntoStructs, IntoTuples, Named, Row, RowCons, RowNil};
     pub use qbrs_core::scope::{
-        Cons, Find, MaybeNull, Nil, NotNull, Nullable, Superset, TableSlot,
+        Cons, Find, Here, MaybeNull, Nil, NotNull, Nullable, Superset, TableSlot, There,
     };
     pub use qbrs_core::select::All;
     pub use qbrs_core::select::{

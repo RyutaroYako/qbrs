@@ -99,7 +99,7 @@ impl InsertRow for UsersInsert {
     type Table = UsersMarker;
     const COLUMNS: &'static [&'static str] = &["email"];
     fn into_values(self) -> Vec<InsertValue> {
-        vec![Defaultable::value(self.email).into()]
+        vec![Defaultable::Value(self.email).into()]
     }
 }
 
