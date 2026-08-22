@@ -28,7 +28,7 @@ fn with_binds_a_named_cte_usable_as_a_real_table() {
         .filter(orders::total.gt(1000i64));
 
     let q = select((big_orders::id, big_orders::total))
-        .from_cte(qbrs::cte::with(big_orders::Table, &inner))
+        .from(qbrs::cte::with(big_orders::Table, &inner))
         .filter(big_orders::id.gt(0));
 
     let (sql, params) = q.to_sql();
@@ -53,8 +53,8 @@ fn multiple_independent_ctes_render_comma_separated() {
         .filter(orders::total.lte(1000i64));
 
     let (sql, _params) = select((big_orders::id, small_orders::id))
-        .from_cte(qbrs::cte::with(big_orders::Table, &big))
-        .inner_join_cte(
+        .from(qbrs::cte::with(big_orders::Table, &big))
+        .inner_join(
             qbrs::cte::with(small_orders::Table, &small),
             small_orders::id.eq(big_orders::id),
         )

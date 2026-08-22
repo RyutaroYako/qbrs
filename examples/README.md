@@ -51,7 +51,7 @@ DATABASE_URL=postgres://postgres:postgres@localhost:5432/qbrs_test \
 | [`11_upsert`](examples/11_upsert.rs) | `ON CONFLICT (..) DO NOTHING` / `DO UPDATE SET ..`, gated to dialects with `SupportsOnConflict` |
 | [`12_union`](examples/12_union.rs) | `UNION ALL`/`INTERSECT` across `SELECT`s with unrelated `Scope`s |
 | [`13_window`](examples/13_window.rs) | `row_number()`/`rank()` `.over(window()..)` |
-| [`14_cte`](examples/14_cte.rs) | `with!{}` + `cte::with(..)` + `.inner_join_cte(..)` — a CTE used as a real table |
+| [`14_cte`](examples/14_cte.rs) | `with!{}` + `cte::with(..)` + `.inner_join(..)` — a CTE used as a real table |
 | [`15_transaction`](examples/15_transaction.rs) | commit/rollback — every `.load()`/`.execute()` is generic over `sqlx::PgExecutor` |
 | [`16_row_access`](examples/16_row_access.rs) | rows keyed by column — adding a column moves nothing, and a helper can require just one |
 | [`17_from_row`](examples/17_from_row.rs) | `#[derive(FromRow)]` — filling a plain domain struct by field name, and `take` when a name doesn't line up |

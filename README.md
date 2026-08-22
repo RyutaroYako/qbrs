@@ -168,9 +168,10 @@ A schema is a `#[derive(Table)]` struct, shown in the
   [`13_window`](examples/examples/13_window.rs). Aggregate-as-window-function
   isn't supported yet.
 - **CTEs** (`with!{}` + `cte::with(..)`) —
-  [`14_cte`](examples/examples/14_cte.rs). `.from_cte(binding)` /
-  `.inner_join_cte(binding, on)` both attach the `WITH` clause and put the
-  pseudo-table in scope, so a CTE can't be selected from unbound.
+  [`14_cte`](examples/examples/14_cte.rs). The binding goes where a table
+  goes — `.from(binding)` / `.inner_join(binding, on)` — attaching the `WITH`
+  clause and putting the pseudo-table in scope in one act, so a CTE can't be
+  selected from unbound.
   Non-recursive, single-level only.
 - **Correlated subqueries** —
   [`18_correlated_exists`](examples/examples/18_correlated_exists.rs).

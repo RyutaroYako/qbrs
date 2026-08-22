@@ -40,10 +40,10 @@ pub trait CteShape: Table {
     const COLUMN_NAMES: &'static [&'static str];
 }
 
-/// A `WITH name AS (..)` binding. Passing it to `.from_cte(..)` or
-/// `.join_cte(..)` is what both attaches the `WITH` clause and puts the
-/// pseudo-table in scope — one act, so a CTE cannot be selected from without
-/// being bound, or bound without being used.
+/// A `WITH name AS (..)` binding. It goes where a table goes — `.from(..)`,
+/// `.inner_join(..)` — and passing it is what both attaches the `WITH`
+/// clause and puts the pseudo-table in scope: one act, so a CTE cannot be
+/// selected from without being bound, or bound without being used.
 pub struct Cte<D, Marker> {
     pub(crate) name: &'static str,
     pub(crate) column_names: &'static [&'static str],

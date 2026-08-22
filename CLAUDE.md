@@ -207,9 +207,10 @@ omit / explicit-NULL / explicit-value stay distinguishable; update fields use `O
 
 `with!{}` generates the same shape for a CTE pseudo-table — markers, consts, and accessor
 traits alike — so a CTE *is* a real table to `Scope`/`Find`/`Superset` with no separate
-virtual-table machinery. It deliberately does *not* emit `scope::BaseTable`, which `.from()`
-and the joins require: a CTE is entered through `.from_cte(binding)`/`.join_cte(binding, on)`,
-so attaching the `WITH` clause and putting the pseudo-table in scope are one act. Selecting
+virtual-table machinery. It deliberately does *not* emit `scope::BaseTable`, so the
+pseudo-table is not itself a `JoinSource`: the `cte::with(..)` binding is, and it is passed
+to `.from(binding)`/`.inner_join(binding, on)` exactly where a table would go, making
+attaching the `WITH` clause and putting the pseudo-table in scope one act. Selecting
 from a CTE nobody bound, binding one and selecting from another, and splicing a body
 rendered for one dialect into another's statement are all unwritable as a result. Its declared columns are checked against the actual body at
 `cte::with()` on both values (`RowValues`) and names (`row::SameNames`), the same pair
@@ -217,9 +218,13 @@ rendered for one dialect into another's statement are all unwritable as a result
 
 ### Execution layer (`crates/qbrs-sqlx`)
 
-Execution is bolted on via extension traits (`LoadExt`, `ExecuteExt`, `LoadReturningExt`,
-`LoadDynExt`, `LoadSetOpExt`, `PreparedExt`) implemented only for `Postgres`-dialect builders,
-plus `PgDecode`/`DecodeRow` tuple impls for row decoding. All methods are generic over
+Execution is bolted on via extension traits implemented only for `Postgres`-dialect
+builders, plus `DecodeRow` impls for row decoding. The traits are cut by what a statement
+*produces*, not by which builder it came from: `LoadExt` (`load`/`load_one`) covers `SELECT`,
+`RETURNING`, `DynSelect` and `SetOp` alike, and supplies only `rendered()` per builder;
+`ExecuteExt` is rows-affected DML; `CountExt` is a total; `PreparedExt` is `LoadExt`'s pair of
+methods with the `Params` that arrive at the call. A new row-producing builder adds a
+`LoadExt` impl, not a trait. All methods are generic over
 `sqlx::PgExecutor`, which is why `&PgPool` and `&mut *tx` both work with no separate
 transactional API. Everything returns `qbrs_sqlx::Result<T>`; keep `UnresolvedPlaceholder`
 (a qbrs-level misuse) distinct from the `Sqlx` variant rather than collapsing them.

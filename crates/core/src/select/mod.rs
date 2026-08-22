@@ -4,13 +4,14 @@
 
 use std::marker::PhantomData;
 
+use crate::cte::Cte;
 use crate::dialect::{Dialect, SupportsFullOuterJoin, SupportsRightJoin};
 use crate::expr::{Bool, Expr, ExprKind, IntoExpr, SqlType, Value};
 use crate::render::{
     Fragment, FragmentSink, QuerySink, SelectItem, Sink, render_expr, render_select_list,
 };
 use crate::scope::{
-    BaseTable, Cons, MapNullable, MaybeNull, Nil, NotNull, ScopeTables, Superset, TableSlot,
+    BaseTable, Cons, MapNullable, MaybeNull, Nil, NotNull, ScopeTables, Superset, Table, TableSlot,
 };
 
 mod dyn_select;
@@ -80,6 +81,41 @@ pub trait OrderExt<S: SqlType>: IntoExpr<S> + Sized {
 }
 impl<S: SqlType, T: IntoExpr<S>> OrderExt<S> for T {}
 
+/// Something a query can select from or join to. A schema table brings
+/// nothing with it; a `Cte` brings its `WITH` binding, so attaching that
+/// binding and putting the pseudo-table in scope stay one act — while every
+/// join kind, and `correlated`, work on both without being written twice.
+pub trait JoinSource<D>: join_source::Sealed {
+    /// The table this source contributes to the scope.
+    type Table: Table;
+    /// The `WITH` binding this source carries into the statement — `None`
+    /// for a schema table, which is already there.
+    #[doc(hidden)]
+    fn binding(self) -> Option<Cte<D, Self::Table>>;
+}
+
+mod join_source {
+    /// Sealed the way `dialect::Dialect` is: what a query can read from is
+    /// a closed set of two, a schema table and a bound CTE.
+    pub trait Sealed {}
+    impl<T: super::BaseTable> Sealed for T {}
+    impl<D, Marker> Sealed for crate::cte::Cte<D, Marker> {}
+}
+
+impl<D, T: BaseTable> JoinSource<D> for T {
+    type Table = T;
+    fn binding(self) -> Option<Cte<D, T>> {
+        None
+    }
+}
+
+impl<D, Marker: crate::cte::CteShape> JoinSource<D> for Cte<D, Marker> {
+    type Table = Marker;
+    fn binding(self) -> Option<Cte<D, Marker>> {
+        Some(self)
+    }
+}
+
 /// A condition whose scope requirement has already been discharged, so a
 /// runtime-length collection of them can be built and passed around. An
 /// `Expr` carries the tables it references in its type, which is what makes
@@ -117,40 +153,15 @@ pub fn select<Sel>(selection: Sel) -> SelectSeed<Sel> {
 }
 
 impl<Sel> SelectSeed<Sel> {
-    /// `table` is a value (the zero-sized token the schema macro generates,
-    /// e.g. `users::Table`), not a turbofish — `D` and `T` are inferred
-    /// from how the resulting `Select` is eventually used (its dialect from
-    /// `.load(&db)`, its table from the argument's own type).
-    pub fn from<D, T: BaseTable>(
+    /// `source` is a value, not a turbofish — a schema table's zero-sized
+    /// token (`users::Table`) or a `cte::with(..)` binding. A CTE brings its
+    /// `WITH` clause along, so it cannot be selected from unbound.
+    pub fn from<D, S: JoinSource<D>>(
         self,
-        _table: T,
-    ) -> Select<D, Cons<TableSlot<T, NotNull>, Nil>, Sel> {
-        Select {
-            body: SelectBody::new(T::NAME, Vec::new()),
-            selection: self.selection,
-            _marker: PhantomData,
-        }
-    }
-
-    /// `FROM` a common table expression. Binding it and putting it in scope
-    /// are the same act, so a `with!{}` pseudo-table cannot be selected from
-    /// unless a `cte::with(..)` for it was passed here — and the query takes
-    /// the binding's dialect, so a body rendered for one dialect cannot be
-    /// spliced into another's statement.
-    ///
-    /// Callable once; `.join_cte(..)` attaches any further ones. **Known
-    /// limitation**: a CTE body can't reference another CTE, so the order
-    /// they're attached in doesn't matter.
-    pub fn from_cte<D, Marker: crate::cte::CteShape>(
-        self,
-        cte: crate::cte::Cte<D, Marker>,
-    ) -> Select<D, Cons<TableSlot<Marker, NotNull>, Nil>, Sel> {
-        let mut body = SelectBody::new(Marker::NAME, Vec::new());
-        body.ctes.push(CteDef {
-            name: cte.name,
-            column_names: cte.column_names,
-            body: cte.body,
-        });
+        source: S,
+    ) -> Select<D, Cons<TableSlot<S::Table, NotNull>, Nil>, Sel> {
+        let mut body = SelectBody::new(<S::Table as Table>::NAME, Vec::new());
+        body.bind(source);
         Select {
             body,
             selection: self.selection,
@@ -188,6 +199,18 @@ impl SelectBody {
             having: Vec::new(),
             limit: None,
             offset: None,
+        }
+    }
+
+    /// Attaches whatever `WITH` binding a join source carries before its
+    /// table is named in a FROM or JOIN clause.
+    fn bind<D, S: JoinSource<D>>(&mut self, source: S) {
+        if let Some(cte) = source.binding() {
+            self.ctes.push(CteDef {
+                name: cte.name,
+                column_names: cte.column_names,
+                body: cte.body,
+            });
         }
     }
 }
@@ -289,78 +312,35 @@ impl<D, Scope, Sel> Select<D, Scope, Sel> {
     /// `New` and `Req` are both inferred from the arguments (the table
     /// token's type, and the `on` expression's own tracked requirement) —
     /// no turbofish, no closure.
-    pub fn inner_join<New: BaseTable, Req, Idxs>(
+    pub fn inner_join<S: JoinSource<D>, Req, Idxs>(
         mut self,
-        _table: New,
+        source: S,
         on: Expr<Req, Bool>,
-    ) -> Select<D, Cons<TableSlot<New, NotNull>, Scope>, Sel>
+    ) -> Select<D, Cons<TableSlot<S::Table, NotNull>, Scope>, Sel>
     where
-        Cons<TableSlot<New, NotNull>, Scope>: Superset<Req, Idxs>,
+        Cons<TableSlot<S::Table, NotNull>, Scope>: Superset<Req, Idxs>,
     {
+        self.body.bind(source);
         self.body.joins.push(JoinClause {
             kind: JoinKind::Inner,
-            table: New::NAME,
+            table: <S::Table as Table>::NAME,
             on: on.kind,
         });
         self.retype()
     }
 
-    pub fn left_join<New: BaseTable, Req, Idxs>(
+    pub fn left_join<S: JoinSource<D>, Req, Idxs>(
         mut self,
-        _table: New,
+        source: S,
         on: Expr<Req, Bool>,
-    ) -> Select<D, Cons<TableSlot<New, MaybeNull>, Scope>, Sel>
+    ) -> Select<D, Cons<TableSlot<S::Table, MaybeNull>, Scope>, Sel>
     where
-        Cons<TableSlot<New, MaybeNull>, Scope>: Superset<Req, Idxs>,
+        Cons<TableSlot<S::Table, MaybeNull>, Scope>: Superset<Req, Idxs>,
     {
+        self.body.bind(source);
         self.body.joins.push(JoinClause {
             kind: JoinKind::Left,
-            table: New::NAME,
-            on: on.kind,
-        });
-        self.retype()
-    }
-
-    /// `INNER JOIN` a common table expression, attaching its `WITH` binding
-    /// at the same time — see `SelectSeed::from_cte` for why the two are one
-    /// act.
-    pub fn inner_join_cte<Marker: crate::cte::CteShape, Req, Idxs>(
-        mut self,
-        cte: crate::cte::Cte<D, Marker>,
-        on: Expr<Req, Bool>,
-    ) -> Select<D, Cons<TableSlot<Marker, NotNull>, Scope>, Sel>
-    where
-        Cons<TableSlot<Marker, NotNull>, Scope>: Superset<Req, Idxs>,
-    {
-        self.body.ctes.push(CteDef {
-            name: cte.name,
-            column_names: cte.column_names,
-            body: cte.body,
-        });
-        self.body.joins.push(JoinClause {
-            kind: JoinKind::Inner,
-            table: Marker::NAME,
-            on: on.kind,
-        });
-        self.retype()
-    }
-
-    pub fn left_join_cte<Marker: crate::cte::CteShape, Req, Idxs>(
-        mut self,
-        cte: crate::cte::Cte<D, Marker>,
-        on: Expr<Req, Bool>,
-    ) -> Select<D, Cons<TableSlot<Marker, MaybeNull>, Scope>, Sel>
-    where
-        Cons<TableSlot<Marker, MaybeNull>, Scope>: Superset<Req, Idxs>,
-    {
-        self.body.ctes.push(CteDef {
-            name: cte.name,
-            column_names: cte.column_names,
-            body: cte.body,
-        });
-        self.body.joins.push(JoinClause {
-            kind: JoinKind::Left,
-            table: Marker::NAME,
+            table: <S::Table as Table>::NAME,
             on: on.kind,
         });
         self.retype()
@@ -369,37 +349,39 @@ impl<D, Scope, Sel> Select<D, Scope, Sel> {
     /// RIGHT JOIN retroactively flips every already-joined table to
     /// nullable (`MapNullable`) before adding the new, guaranteed-present
     /// table, mirroring Drizzle's `AppendToNullabilityMap` rule.
-    pub fn right_join<New: BaseTable, Req, Idxs>(
+    pub fn right_join<S: JoinSource<D>, Req, Idxs>(
         mut self,
-        _table: New,
+        source: S,
         on: Expr<Req, Bool>,
-    ) -> Select<D, Cons<TableSlot<New, NotNull>, Scope::Output>, Sel>
+    ) -> Select<D, Cons<TableSlot<S::Table, NotNull>, Scope::Output>, Sel>
     where
         D: SupportsRightJoin,
         Scope: MapNullable,
-        Cons<TableSlot<New, NotNull>, Scope::Output>: Superset<Req, Idxs>,
+        Cons<TableSlot<S::Table, NotNull>, Scope::Output>: Superset<Req, Idxs>,
     {
+        self.body.bind(source);
         self.body.joins.push(JoinClause {
             kind: JoinKind::Right,
-            table: New::NAME,
+            table: <S::Table as Table>::NAME,
             on: on.kind,
         });
         self.retype()
     }
 
-    pub fn full_join<New: BaseTable, Req, Idxs>(
+    pub fn full_join<S: JoinSource<D>, Req, Idxs>(
         mut self,
-        _table: New,
+        source: S,
         on: Expr<Req, Bool>,
-    ) -> Select<D, Cons<TableSlot<New, MaybeNull>, Scope::Output>, Sel>
+    ) -> Select<D, Cons<TableSlot<S::Table, MaybeNull>, Scope::Output>, Sel>
     where
         D: SupportsFullOuterJoin,
         Scope: MapNullable,
-        Cons<TableSlot<New, MaybeNull>, Scope::Output>: Superset<Req, Idxs>,
+        Cons<TableSlot<S::Table, MaybeNull>, Scope::Output>: Superset<Req, Idxs>,
     {
+        self.body.bind(source);
         self.body.joins.push(JoinClause {
             kind: JoinKind::Full,
-            table: New::NAME,
+            table: <S::Table as Table>::NAME,
             on: on.kind,
         });
         self.retype()
@@ -582,14 +564,16 @@ impl<D, Scope, Sel> Select<D, Scope, Sel> {
     /// columns and any outer column already in `Scope`, with no special
     /// casing: growing the scope works the same whether the new table came
     /// from a join or from a subquery's `FROM`.
-    pub fn correlated<T: BaseTable, InnerSel>(
+    pub fn correlated<S: JoinSource<D>, InnerSel>(
         &self,
-        _table: T,
+        source: S,
         selection: InnerSel,
-    ) -> Correlated<D, Scope, Cons<TableSlot<T, NotNull>, Scope>, InnerSel> {
+    ) -> Correlated<D, Scope, Cons<TableSlot<S::Table, NotNull>, Scope>, InnerSel> {
+        let mut body = SelectBody::new(<S::Table as Table>::NAME, Vec::new());
+        body.bind(source);
         Correlated {
             inner: Select {
-                body: SelectBody::new(T::NAME, Vec::new()),
+                body,
                 selection,
                 _marker: PhantomData,
             },
@@ -642,30 +626,30 @@ impl<D, Outer, Scope, Sel> Correlated<D, Outer, Scope, Sel> {
         self
     }
 
-    pub fn inner_join<New: BaseTable, Req, Idxs>(
+    pub fn inner_join<S: JoinSource<D>, Req, Idxs>(
         self,
-        table: New,
+        source: S,
         on: Expr<Req, Bool>,
-    ) -> Correlated<D, Outer, Cons<TableSlot<New, NotNull>, Scope>, Sel>
+    ) -> Correlated<D, Outer, Cons<TableSlot<S::Table, NotNull>, Scope>, Sel>
     where
-        Cons<TableSlot<New, NotNull>, Scope>: Superset<Req, Idxs>,
+        Cons<TableSlot<S::Table, NotNull>, Scope>: Superset<Req, Idxs>,
     {
         Correlated {
-            inner: self.inner.inner_join(table, on),
+            inner: self.inner.inner_join(source, on),
             _marker: PhantomData,
         }
     }
 
-    pub fn left_join<New: BaseTable, Req, Idxs>(
+    pub fn left_join<S: JoinSource<D>, Req, Idxs>(
         self,
-        table: New,
+        source: S,
         on: Expr<Req, Bool>,
-    ) -> Correlated<D, Outer, Cons<TableSlot<New, MaybeNull>, Scope>, Sel>
+    ) -> Correlated<D, Outer, Cons<TableSlot<S::Table, MaybeNull>, Scope>, Sel>
     where
-        Cons<TableSlot<New, MaybeNull>, Scope>: Superset<Req, Idxs>,
+        Cons<TableSlot<S::Table, MaybeNull>, Scope>: Superset<Req, Idxs>,
     {
         Correlated {
-            inner: self.inner.left_join(table, on),
+            inner: self.inner.left_join(source, on),
             _marker: PhantomData,
         }
     }
