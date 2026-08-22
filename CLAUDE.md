@@ -29,6 +29,7 @@ cargo run -p qbrs-examples --example 02_select_join          # one runnable exam
 cargo build -p compile-bench --bin joins_40                  # scope-resolution depth
 cargo build -p compile-bench --bin join_chain_20             # ...through a real builder chain
 cargo build -p compile-bench --bin cols_16                   # ...and selection width
+cargo test -p dialect-exec                                   # rendered SQL, run by a real SQLite
 ```
 
 **No database setup is needed anywhere.** Tests and examples that need Postgres start their
@@ -58,6 +59,9 @@ the child process outlives the test binary.
   and `setup_db()` from `examples/src/lib.rs`.
 - `tests/compile-bench` — synthetic 100-table schema and escalating join-count binaries; this
   is what backs the "linear at 40+ joins" claim in the README.
+- `tests/dialect-exec` — every rendered statement shape run against an in-memory SQLite, so
+  the `Sqlite` dialect's SQL is checked by SQLite rather than by a string assertion. Add a
+  shape here whenever one is added to the renderer.
 
 ## Architecture
 

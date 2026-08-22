@@ -288,9 +288,11 @@ A schema is a `#[derive(Table)]` struct, shown in the
 - `sql!{}` treats `?` as a bind slot; write `??` for a literal one. Its text
   must be a constant — a literal, a `const`, `concat!`, `include_str!` — so
   runtime-assembled text can never become SQL shape.
-- Only Postgres is executed in CI. SQL rendered for MySQL and SQLite is
-  asserted as strings, not run, so dialect differences are caught only where
-  someone thought to look: `DEFAULT` in an `INSERT ... VALUES` is Postgres
+- Postgres and SQLite are executed in CI — SQLite against an in-memory
+  database in `tests/dialect-exec`, which runs every rendered statement shape
+  rather than asserting its text. MySQL is rendered and asserted as strings
+  only, so its dialect differences are caught only where someone thought to
+  look. One known difference: `DEFAULT` in an `INSERT ... VALUES` is Postgres
   and MySQL only, and SQLite rejects it, which makes `Defaultable::Default`
   unusable there.
 - A computed expression over a column has to say what it decodes to —
@@ -302,6 +304,7 @@ A schema is a `#[derive(Table)]` struct, shown in the
 |                                                                             | Postgres |  MySQL  | SQLite  |
 | --------------------------------------------------------------------------- | :------: | :-----: | :-----: |
 | Query building & SQL rendering                                              |    ✅    |   ✅    |   ✅    |
+| Rendered SQL executed in CI                                                 |    ✅    | not yet |   ✅    |
 | Dialect capability gating (`RETURNING`, `ON CONFLICT`, `RIGHT`/`FULL JOIN`) |    ✅    |   ✅    |   ✅    |
 | Execution (via `qbrs-sqlx`)                                                 |    ✅    | not yet | not yet |
 | Transactions (via `qbrs-sqlx`)                                              |    ✅    | not yet | not yet |
