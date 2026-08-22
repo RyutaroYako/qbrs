@@ -68,6 +68,11 @@ async fn run(
             Value::NullBool => q.bind(None::<bool>),
             Value::NullBytes => q.bind(None::<Vec<u8>>),
             Value::Placeholder(name) => panic!("unresolved placeholder {name}"),
+            // The feature-gated column types decode through their own
+            // crates, which this SQLite battery doesn't pull in — and which
+            // aren't there at all unless those features are on.
+            #[allow(unreachable_patterns)]
+            other => panic!("no SQLite binding for {other:?}"),
         };
     }
     q.fetch_all(pool)

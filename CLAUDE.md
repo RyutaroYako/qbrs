@@ -13,8 +13,8 @@ first — it states the design goals and the current dialect/feature status matr
 ## Commands
 
 ```sh
-cargo test --workspace                 # everything, including real-Postgres tests
-cargo clippy --workspace --all-targets -- -D warnings   # CI gate
+cargo test --workspace --all-features   # everything, including real-Postgres tests
+cargo clippy --workspace --all-targets --all-features -- -D warnings   # CI gate
 cargo fmt --all -- --check                              # CI gate
 ```
 

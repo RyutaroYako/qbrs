@@ -2,7 +2,7 @@
 //! validate the `Select` builder end-to-end before wiring up codegen.
 
 use qbrs_core::dialect::Postgres;
-use qbrs_core::expr::{Bool, ExprMethods};
+use qbrs_core::expr::{Bool, ExprMethods, TextExprMethods, any_of};
 use qbrs_core::scope::Table as TableTrait;
 use qbrs_core::select::{OrderExt, select};
 
@@ -112,6 +112,29 @@ mod orders {
 
     pub const user_id: Column<columns::user_id> = Column::new();
     pub const total: Column<columns::total> = Column::new();
+}
+
+#[test]
+fn any_of_folds_a_runtime_length_or_and_matches_nothing_when_empty() {
+    let terms = ["ada", "grace"];
+    let (sql, params) = select((users::id,))
+        .from::<Postgres, _>(users::Table)
+        .filter(any_of(terms.iter().map(|t| users::name.like(*t))))
+        .to_sql();
+    assert_eq!(
+        sql,
+        "SELECT \"users\".\"id\" FROM \"users\" \
+         WHERE ((\"users\".\"name\" LIKE $1) OR (\"users\".\"name\" LIKE $2))"
+    );
+    assert_eq!(params.len(), 2);
+
+    let (empty, _) = select((users::id,))
+        .from::<Postgres, _>(users::Table)
+        .filter(any_of(Vec::<
+            qbrs_core::expr::Expr<qbrs_core::scope::Nil, Bool>,
+        >::new()))
+        .to_sql();
+    assert_eq!(empty, "SELECT \"users\".\"id\" FROM \"users\" WHERE FALSE");
 }
 
 #[test]

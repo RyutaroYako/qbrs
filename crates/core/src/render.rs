@@ -136,6 +136,7 @@ pub(crate) fn render_expr<D: Dialect>(expr: &ExprKind, sink: &mut dyn Sink) {
                 " IS NULL)"
             });
         }
+        ExprKind::Always(yes) => sink.text(if *yes { "TRUE" } else { "FALSE" }),
         ExprKind::InList { expr, values } => {
             if values.is_empty() {
                 sink.text("FALSE");

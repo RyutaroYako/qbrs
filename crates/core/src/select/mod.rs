@@ -129,6 +129,35 @@ pub struct Predicate<Scope> {
 }
 
 impl<Scope> Predicate<Scope> {
+    /// True when any of them is. `expr::any_of` combines conditions that
+    /// reference the same tables; this one combines conditions whose scope
+    /// requirement is already discharged, which is what lets a search form
+    /// OR together conditions from different tables.
+    pub fn any(preds: impl IntoIterator<Item = Predicate<Scope>>) -> Self {
+        Predicate::combine(preds, false)
+    }
+
+    /// True when all of them are.
+    pub fn all(preds: impl IntoIterator<Item = Predicate<Scope>>) -> Self {
+        Predicate::combine(preds, true)
+    }
+
+    fn combine(preds: impl IntoIterator<Item = Predicate<Scope>>, all: bool) -> Self {
+        let kinds = preds.into_iter().map(Predicate::into_kind);
+        let mut folded: Option<ExprKind> = None;
+        for kind in kinds {
+            folded = Some(match folded {
+                None => kind,
+                Some(acc) if all => ExprKind::And(Box::new(acc), Box::new(kind)),
+                Some(acc) => ExprKind::Or(Box::new(acc), Box::new(kind)),
+            });
+        }
+        Predicate {
+            kind: folded.unwrap_or(ExprKind::Always(all)),
+            _marker: PhantomData,
+        }
+    }
+
     pub(crate) fn into_kind(self) -> ExprKind {
         self.kind
     }

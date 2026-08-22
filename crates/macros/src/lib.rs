@@ -168,11 +168,20 @@ fn sql_type_for(ty: &Type) -> syn::Result<TokenStream2> {
             "String" => quote! { ::qbrs::expr::Text },
             "bool" => quote! { ::qbrs::expr::Bool },
             "Vec" => quote! { ::qbrs::expr::Bytes },
+            // Behind a feature in `qbrs-core`; naming one here without that
+            // feature is an unresolved-path error at the marker, which says
+            // which feature is missing better than this match could.
+            "DateTime" => quote! { ::qbrs::expr::Timestamptz },
+            "NaiveDate" => quote! { ::qbrs::expr::Date },
+            "Uuid" => quote! { ::qbrs::expr::Uuid },
+            "Decimal" => quote! { ::qbrs::expr::Numeric },
             other => {
                 return Err(syn::Error::new_spanned(
                     ty,
                     format!(
-                        "unsupported column type `{other}` — supported: i32, i64, f64, String, bool, Vec<u8>, or Option<..> of one of those"
+                        "unsupported column type `{other}` — supported: i32, i64, f64, String, bool, Vec<u8>, \
+                         DateTime<Utc>, NaiveDate, Uuid, Decimal (the last four behind a `qbrs` feature), \
+                         or Option<..> of one of those"
                     ),
                 ));
             }

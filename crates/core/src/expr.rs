@@ -34,6 +34,9 @@ pub(crate) enum ExprKind {
     },
     And(Box<ExprKind>, Box<ExprKind>),
     Or(Box<ExprKind>, Box<ExprKind>),
+    /// A condition with no operands left to check: what an empty `any_of`,
+    /// `all_of` or `is_in` means.
+    Always(bool),
     Not(Box<ExprKind>),
     /// `x IS NULL` / `x IS NOT NULL`. A separate node because `x = NULL` is
     /// never true in SQL, so equality can't stand in for it.
@@ -130,6 +133,22 @@ pub enum Value {
     NullText,
     NullBool,
     NullBytes,
+    #[cfg(feature = "chrono")]
+    Timestamptz(chrono::DateTime<chrono::Utc>),
+    #[cfg(feature = "chrono")]
+    NullTimestamptz,
+    #[cfg(feature = "chrono")]
+    Date(chrono::NaiveDate),
+    #[cfg(feature = "chrono")]
+    NullDate,
+    #[cfg(feature = "uuid")]
+    Uuid(uuid::Uuid),
+    #[cfg(feature = "uuid")]
+    NullUuid,
+    #[cfg(feature = "decimal")]
+    Numeric(rust_decimal::Decimal),
+    #[cfg(feature = "decimal")]
+    NullNumeric,
     /// A named placeholder in a `prepare!{}`-built query, not yet resolved
     /// to a concrete value. It rides the existing `Vec<Value>` parameter
     /// pipeline: rendering doesn't care what's *inside* a `Value`, only that
@@ -153,6 +172,14 @@ value_from!(f64, F64);
 value_from!(String, Text);
 value_from!(bool, Bool);
 value_from!(Vec<u8>, Bytes);
+#[cfg(feature = "chrono")]
+value_from!(chrono::DateTime<chrono::Utc>, Timestamptz);
+#[cfg(feature = "chrono")]
+value_from!(chrono::NaiveDate, Date);
+#[cfg(feature = "uuid")]
+value_from!(uuid::Uuid, Uuid);
+#[cfg(feature = "decimal")]
+value_from!(rust_decimal::Decimal, Numeric);
 
 impl From<&str> for Value {
     fn from(v: &str) -> Self {
@@ -492,6 +519,33 @@ pub trait ExprMethods<S: SqlType>: IntoExpr<S> + Sized {
     }
 }
 
+/// True when any of the conditions is. Takes a runtime-length collection,
+/// the way `is_in` takes a runtime-length list of values, so the `OR` a
+/// search box needs doesn't have to be folded by hand — folding one by one
+/// grows `Req` and stops type-checking after the first pair. An empty
+/// collection matches nothing, which is what `is_in([])` says too.
+pub fn any_of<Req>(conds: impl IntoIterator<Item = Expr<Req, Bool>>) -> Expr<Req, Bool> {
+    combine(conds, false)
+}
+
+/// True when all of them are. An empty collection matches everything, which
+/// is what a `WHERE` with no conditions does.
+pub fn all_of<Req>(conds: impl IntoIterator<Item = Expr<Req, Bool>>) -> Expr<Req, Bool> {
+    combine(conds, true)
+}
+
+fn combine<Req>(conds: impl IntoIterator<Item = Expr<Req, Bool>>, all: bool) -> Expr<Req, Bool> {
+    let mut folded: Option<ExprKind> = None;
+    for cond in conds {
+        folded = Some(match folded {
+            None => cond.kind,
+            Some(acc) if all => ExprKind::And(Box::new(acc), Box::new(cond.kind)),
+            Some(acc) => ExprKind::Or(Box::new(acc), Box::new(cond.kind)),
+        });
+    }
+    Expr::from_kind(folded.unwrap_or(ExprKind::Always(all)))
+}
+
 impl<S: SqlType, T: IntoExpr<S>> ExprMethods<S> for T {}
 
 fn bin_op<Lhs, Rhs, S: SqlType, S2: SqlType>(
@@ -617,6 +671,18 @@ sql_leaf_type!(Real, f64, NullF64);
 sql_leaf_type!(Text, String, NullText);
 sql_leaf_type!(Bool, bool, NullBool);
 sql_leaf_type!(Bytes, Vec<u8>, NullBytes);
+
+// Types a database has and Rust doesn't: each decodes to the crate its
+// feature names, so a schema that has no `timestamptz` column pays for none
+// of it.
+#[cfg(feature = "chrono")]
+sql_leaf_type!(Timestamptz, chrono::DateTime<chrono::Utc>, NullTimestamptz);
+#[cfg(feature = "chrono")]
+sql_leaf_type!(Date, chrono::NaiveDate, NullDate);
+#[cfg(feature = "uuid")]
+sql_leaf_type!(Uuid, uuid::Uuid, NullUuid);
+#[cfg(feature = "decimal")]
+sql_leaf_type!(Numeric, rust_decimal::Decimal, NullNumeric);
 
 // Ergonomic extra: allow `&str` literals directly, without forcing
 // `.to_string()` at every call site.

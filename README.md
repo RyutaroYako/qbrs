@@ -147,6 +147,12 @@ A schema is a `#[derive(Table)]` struct, shown in the
   expression is keyed by the function that produced it (`row.count()`,
   `row.row_number()`); `label!(name, ..)` renames one when the same
   function is selected twice, and emits the name as the column's `AS`.
+- **Column types** — `i32`/`i64`/`f64`/`String`/`bool`/`Vec<u8>` always, and
+  `DateTime<Utc>`/`NaiveDate`/`Uuid`/`Decimal` behind the `chrono`, `uuid`
+  and `decimal` features, which pull in the crate each decodes to. A column
+  type is a `SqlType` leaf: it renders, binds, compares, and decodes like any
+  other, so `created_at` doesn't have to be smuggled past the schema as
+  `sql!{}`.
 - **Whole-table selection** (`users::All`) —
   [`17_from_row`](examples/examples/17_from_row.rs). The derive already knows
   the table's columns, so `select(users::All)` doesn't restate them and a new
@@ -218,9 +224,13 @@ A schema is a `#[derive(Table)]` struct, shown in the
 - **Dynamic composition, no escape hatch** —
   [`07_dynamic_filters`](examples/examples/07_dynamic_filters.rs).
   `.filter()` doesn't change `Select`'s type, so it can be called
-  conditionally or in a loop. Conditions from *different* tables don't share
-  an `Expr` type, so a collection of them goes through `predicate(..)` and
-  `.filter_all(..)`, which discharges the scope requirement up front.
+  conditionally or in a loop — that loop ANDs. For a runtime-length `OR`,
+  `any_of(iter)` (and `all_of(iter)`) folds a collection of conditions over
+  the same tables; folding one by one with `.or()` doesn't type-check, since
+  each pair widens the tables the expression claims. Conditions from
+  *different* tables don't share an `Expr` type at all, so a collection of
+  those goes through `predicate(..)` — then `.filter_all(..)` to AND them, or
+  `Predicate::any(..)` to OR them.
 - **Predicates** — `.eq()`/`.ne()`/`.lt()`/`.gt()`/`.like()`, plus
   `.is_null()`/`.is_not_null()` and `.is_in([..])`. A nullable column and a
   non-nullable one compare freely, so an optional foreign key joins like any

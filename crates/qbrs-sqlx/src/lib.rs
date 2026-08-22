@@ -69,6 +69,22 @@ fn bind_value<'q>(
         Value::NullText => query.bind(None::<String>),
         Value::NullBool => query.bind(None::<bool>),
         Value::NullBytes => query.bind(None::<Vec<u8>>),
+        #[cfg(feature = "chrono")]
+        Value::Timestamptz(x) => query.bind(x),
+        #[cfg(feature = "chrono")]
+        Value::NullTimestamptz => query.bind(None::<chrono::DateTime<chrono::Utc>>),
+        #[cfg(feature = "chrono")]
+        Value::Date(x) => query.bind(x),
+        #[cfg(feature = "chrono")]
+        Value::NullDate => query.bind(None::<chrono::NaiveDate>),
+        #[cfg(feature = "uuid")]
+        Value::Uuid(x) => query.bind(x),
+        #[cfg(feature = "uuid")]
+        Value::NullUuid => query.bind(None::<uuid::Uuid>),
+        #[cfg(feature = "decimal")]
+        Value::Numeric(x) => query.bind(x),
+        #[cfg(feature = "decimal")]
+        Value::NullNumeric => query.bind(None::<rust_decimal::Decimal>),
         Value::Placeholder(name) => {
             return Err(qbrs_core::select::UnresolvedPlaceholder(name).into());
         }
@@ -277,6 +293,14 @@ decode_row_leaf!(f64);
 decode_row_leaf!(String);
 decode_row_leaf!(bool);
 decode_row_leaf!(Vec<u8>);
+#[cfg(feature = "chrono")]
+decode_row_leaf!(chrono::DateTime<chrono::Utc>);
+#[cfg(feature = "chrono")]
+decode_row_leaf!(chrono::NaiveDate);
+#[cfg(feature = "uuid")]
+decode_row_leaf!(uuid::Uuid);
+#[cfg(feature = "decimal")]
+decode_row_leaf!(rust_decimal::Decimal);
 
 impl DecodeRow for RowNil {
     fn decode_at(_row: &PgRow, _idx: &mut usize) -> sqlx::Result<Self> {
