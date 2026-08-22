@@ -153,9 +153,11 @@ A schema is a `#[derive(Table)]` struct, shown in the
   expression is keyed by the function that produced it (`row.count()`,
   `row.row_number()`); `label!(name, ..)` renames one when the same
   function is selected twice, and emits the name as the column's `AS`.
-- **Column types** — `i32`/`i64`/`f64`/`String`/`bool`/`Vec<u8>` always, and
-  `DateTime<Utc>`/`NaiveDate`/`Uuid`/`Decimal` behind the `chrono`, `uuid`
-  and `decimal` features, which pull in the crate each decodes to. A column
+- **Column types** — `i32`/`i64`/`f64`/`String`/`bool`/`Vec<u8>` always
+  (`Integer`/`BigInt`/`Real`/`Text`/`Bool`/`Bytes` in SQL-type spelling), and
+  `DateTime<Utc>`/`NaiveDate`/`Uuid`/`Decimal` (`Timestamptz`/`Date`/`Uuid`/
+  `Numeric`) behind the `chrono`, `uuid` and `decimal` features, which pull
+  in the crate each decodes to. A column
   type is a `SqlType` leaf: it renders, binds, compares, and decodes like any
   other, so `created_at` doesn't have to be smuggled past the schema as
   `sql!{}`.
@@ -193,8 +195,9 @@ A schema is a `#[derive(Table)]` struct, shown in the
   `Option<Option<T>>` (untouched / `NULL` / value), and a request struct's
   `Option<T>` converts into either. An `*Insert` is built by naming its
   columns — `UsersInsert::builder().email(..).build()` — and `build()` is
-  reachable only once every column without a default has a value, so no
-  column can be dropped and no two of the same type swapped. Rows arrive one at a time with
+  reachable only once every column that is neither nullable nor defaulted
+  has a value, so no column can be dropped and no two of the same type
+  swapped. Rows arrive one at a time with
   `.values(row)` or all at once with `.values_all(rows)`; a statement with
   nothing in it — an `*Update` whose every field is untouched, an insert of
   zero rows — has no SQL form, so those hand back
@@ -238,7 +241,8 @@ A schema is a `#[derive(Table)]` struct, shown in the
   each pair widens the tables the expression claims. Conditions from
   *different* tables don't share an `Expr` type at all, so a collection of
   those goes through `predicate(..)` — then `.filter_all(..)` to AND them, or
-  `Predicate::any(..)` to OR them.
+  `.filter(Predicate::any(..))` to OR them. `.filter` takes either kind of
+  condition.
 - **Predicates** — `.eq()`/`.ne()`/`.lt()`/`.gt()`/`.like()`, plus
   `.is_null()`/`.is_not_null()` and `.is_in([..])`. A nullable column and a
   non-nullable one compare freely, so an optional foreign key joins like any
@@ -252,8 +256,12 @@ A schema is a `#[derive(Table)]` struct, shown in the
   `total`. All are nullable except the two counts: an aggregate over zero
   rows is NULL, but a count of them is `0`.
 - **Raw SQL escape hatch** (`sql!{}`) —
-  [`06_raw_sql`](examples/examples/06_raw_sql.rs). Values still bind as real
-  parameters, never spliced as text.
+  [`06_raw_sql`](examples/examples/06_raw_sql.rs). A `?` slot takes a value,
+  which binds as a parameter, or an expression — a column, an aggregate,
+  another fragment — which the renderer writes out itself. So
+  `sql!(Numeric, "sum(? * ?)", items::price, items::qty)` quotes both columns
+  and is scope-checked like any other expression: only the text between the
+  slots is unchecked. Values are never spliced as text.
 - **Prepared statements** (`prepare!{}`) —
   [`10_prepared`](examples/examples/10_prepared.rs). Typed, so a
   missing/misspelled bind is a compile error, unlike Drizzle's
@@ -296,13 +304,14 @@ A schema is a `#[derive(Table)]` struct, shown in the
   a compile error, not a lookup of some other unnamed field. The same applies wherever two
   selections are compared by name — a CTE body and a `UNION` branch.
 - Selecting the same name twice is ambiguous at the point it's read by name
-  — `#[derive(FromRow)]`, `take_named` — rather than resolving to the first.
+  — `#[derive(FromRow)]` — rather than resolving to the first.
   It surfaces as `error[E0284]: type annotations needed`, and the fix is to
   `label!` one of them. Reading either by its own column value
   (`row.get(users::id)`) is unaffected.
-- A selection list holds at most 16 elements. `<table>::All` counts as one
-  however many columns the table has, so the limit bites only on 17 separate
-  expressions.
+- A selection list holds at most 16 elements — `<table>::All` counts as one,
+  however many columns the table has. The *positional* view is a separate
+  limit: `into_tuple`/`into_tuples` stop at 16 fields however they were
+  selected, so a wider row is read by key or through `#[derive(FromRow)]`.
 - Naming a row type in a signature takes a type alias, and one long enough
   to trip `clippy::type_complexity`; inference covers every use that stays
   inside a function.

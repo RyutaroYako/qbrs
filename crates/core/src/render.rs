@@ -138,10 +138,6 @@ pub(crate) fn render_expr<D: Dialect>(expr: &ExprKind, sink: &mut dyn Sink) {
         }
         ExprKind::Always(yes) => sink.text(if *yes { "TRUE" } else { "FALSE" }),
         ExprKind::InList { expr, values } => {
-            if values.is_empty() {
-                sink.text("FALSE");
-                return;
-            }
             sink.ch('(');
             render_expr::<D>(expr, sink);
             sink.text(" IN (");
@@ -159,6 +155,17 @@ pub(crate) fn render_expr<D: Dialect>(expr: &ExprKind, sink: &mut dyn Sink) {
             // into a larger AND/OR chain.
             sink.ch('(');
             fragment.splice_into(sink);
+            sink.ch(')');
+        }
+        ExprKind::Template { head, rest } => {
+            // Same defensive parentheses as an embedded fragment: authored
+            // text has no precedence the renderer knows about.
+            sink.ch('(');
+            sink.text(head);
+            for (arg, text) in rest {
+                render_expr::<D>(arg, sink);
+                sink.text(text);
+            }
             sink.ch(')');
         }
         ExprKind::Window {
@@ -217,7 +224,7 @@ pub(crate) fn render_select_list<D: Dialect>(items: &[SelectItem], sink: &mut dy
 }
 
 /// A piece of SQL destined to be embedded in a larger query: a subquery, a
-/// CTE body, a set-operation branch, or a `sql!{}` escape hatch. Held as the
+/// CTE body, a set-operation branch. Held as the
 /// text *between* its bind parameters — `head`, then one `(param, text)`
 /// pair per parameter — so a parameter is a position rather than a
 /// character: nothing has to be escaped, re-splicing an already-spliced
@@ -244,36 +251,6 @@ impl Fragment {
             Some((_, text)) => text,
             None => &mut self.head,
         }
-    }
-
-    /// Splits `sql!{}`'s authored text on its `?` placeholders, pairing each
-    /// with its value. `??` is a literal `?`. `sql!` checks the two counts
-    /// against each other at compile time; this is the one entry point that
-    /// can be reached around it.
-    pub(crate) fn from_authored(sql: &'static str, params: Vec<Value>) -> Self {
-        let mut fragment = Fragment::empty();
-        let mut params = params.into_iter();
-        let mut chars = sql.chars().peekable();
-        while let Some(c) = chars.next() {
-            match c {
-                '?' if chars.peek() == Some(&'?') => {
-                    chars.next();
-                    fragment.tail().push('?');
-                }
-                '?' => {
-                    let value = params
-                        .next()
-                        .expect("`sql!` checks that every `?` has a value");
-                    fragment.rest.push((value, String::new()));
-                }
-                c => fragment.tail().push(c),
-            }
-        }
-        assert!(
-            params.next().is_none(),
-            "more values than `?` placeholders (write `??` for a literal `?`)"
-        );
-        fragment
     }
 
     /// Wraps the fragment in surrounding SQL, e.g. `EXISTS (`..`)`.
@@ -319,6 +296,16 @@ fn render_bool_pair<D: Dialect>(lhs: &ExprKind, joiner: &str, rhs: &ExprKind, si
     sink.ch(')');
 }
 
+/// How a sort direction is spelled. Shared by a statement's `ORDER BY`, a
+/// window's, and a set operation's — which orders by ordinal position and so
+/// can't go through `render_order_by`.
+pub(crate) fn dir_keyword(dir: SortDir) -> &'static str {
+    match dir {
+        SortDir::Asc => " ASC",
+        SortDir::Desc => " DESC",
+    }
+}
+
 /// A comma-separated expression list behind a keyword — `GROUP BY`,
 /// `PARTITION BY` — or nothing at all when there are none.
 pub(crate) fn render_expr_list<D: Dialect>(sink: &mut dyn Sink, keyword: &str, list: &[ExprKind]) {
@@ -350,10 +337,7 @@ pub(crate) fn render_order_by<D: Dialect>(
             sink.text(", ");
         }
         render_expr::<D>(e, sink);
-        sink.text(match dir {
-            SortDir::Asc => " ASC",
-            SortDir::Desc => " DESC",
-        });
+        sink.text(dir_keyword(*dir));
     }
 }
 

@@ -6,7 +6,7 @@ use qbrs_core::dialect::Postgres;
 use qbrs_core::expr::{ExprMethods, Value};
 use qbrs_core::insert::{Defaultable, InsertRow, InsertValue, insert};
 use qbrs_core::scope::Table as TableTrait;
-use qbrs_core::statement::Statement;
+use qbrs_core::statement::{ReturningExt, Statement};
 use qbrs_core::update::{NothingToSet, UpdateRow, update};
 
 pub struct UsersMarker;
@@ -101,6 +101,8 @@ impl UsersInsert {
     }
 }
 
+impl qbrs_core::insert::InsertRowSealed for UsersInsert {}
+
 impl InsertRow for UsersInsert {
     type Table = UsersMarker;
     const COLUMNS: &'static [&'static str] = &["email", "display_name", "created_at"];
@@ -121,6 +123,8 @@ struct UsersUpdate {
     email: Option<String>,
     display_name: Option<Option<String>>,
 }
+
+impl qbrs_core::update::UpdateRowSealed for UsersUpdate {}
 
 impl UpdateRow for UsersUpdate {
     type Table = UsersMarker;

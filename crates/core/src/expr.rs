@@ -50,9 +50,17 @@ pub(crate) enum ExprKind {
         expr: Box<ExprKind>,
         values: Vec<ExprKind>,
     },
-    /// An embedded piece of SQL: the `sql!{}` escape hatch, or a subquery
-    /// rendered by `select::Select::fragment`.
+    /// An already-rendered piece of SQL embedded in this one: a subquery,
+    /// a CTE body, a set-operation branch.
     Raw(Fragment),
+    /// `sql!{}`: authored text with a hole at each `?`, each hole holding an
+    /// expression the renderer recurses into — so a column in a hole is
+    /// quoted by the same code that quotes it anywhere else, and counts
+    /// toward the fragment's `Req`.
+    Template {
+        head: String,
+        rest: Vec<(ExprKind, String)>,
+    },
     /// `CAST(expr AS type)`. The target is a kind rather than a string
     /// because each dialect spells the type differently and the dialect
     /// isn't known until the query renders.
@@ -512,9 +520,14 @@ pub trait ExprMethods<S: SqlType>: IntoExpr<S> + Sized {
         I::Item: IntoExpr<S2, Req = Nil>,
         S: Comparable<S2>,
     {
+        let values: Vec<ExprKind> = values.into_iter().map(|v| v.into_expr().kind).collect();
+        // `IN ()` is not SQL, and matching nothing is what it would mean.
+        if values.is_empty() {
+            return Expr::from_kind(ExprKind::Always(false));
+        }
         Expr::from_kind(ExprKind::InList {
             expr: Box::new(self.into_expr().kind),
-            values: values.into_iter().map(|v| v.into_expr().kind).collect(),
+            values,
         })
     }
 }
@@ -535,15 +548,23 @@ pub fn all_of<Req>(conds: impl IntoIterator<Item = Expr<Req, Bool>>) -> Expr<Req
 }
 
 fn combine<Req>(conds: impl IntoIterator<Item = Expr<Req, Bool>>, all: bool) -> Expr<Req, Bool> {
+    Expr::from_kind(fold_conditions(conds.into_iter().map(|c| c.kind), all))
+}
+
+/// AND- or OR-folds conditions, answering `TRUE`/`FALSE` for an empty
+/// collection — "all of nothing" matches everything, "any of nothing"
+/// matches nothing. Shared with `select::Predicate`, which folds the same
+/// way once the scope requirement is discharged.
+pub(crate) fn fold_conditions(kinds: impl IntoIterator<Item = ExprKind>, all: bool) -> ExprKind {
     let mut folded: Option<ExprKind> = None;
-    for cond in conds {
+    for kind in kinds {
         folded = Some(match folded {
-            None => cond.kind,
-            Some(acc) if all => ExprKind::And(Box::new(acc), Box::new(cond.kind)),
-            Some(acc) => ExprKind::Or(Box::new(acc), Box::new(cond.kind)),
+            None => kind,
+            Some(acc) if all => ExprKind::And(Box::new(acc), Box::new(kind)),
+            Some(acc) => ExprKind::Or(Box::new(acc), Box::new(kind)),
         });
     }
-    Expr::from_kind(folded.unwrap_or(ExprKind::Always(all)))
+    folded.unwrap_or(ExprKind::Always(all))
 }
 
 impl<S: SqlType, T: IntoExpr<S>> ExprMethods<S> for T {}
@@ -612,6 +633,10 @@ impl<Req> std::ops::Not for Expr<Req, Bool> {
     }
 }
 
+pub trait NullValue: SqlType {
+    const NULL_VALUE: Value;
+}
+
 /// Declares a leaf (base) SQL type: the marker struct, its `SqlType` impl,
 /// its `WrapNullable<MaybeNull>` impl, and `IntoExpr` from its native Rust
 /// type. One concrete, non-generic impl per type — a blanket
@@ -619,10 +644,6 @@ impl<Req> std::ops::Not for Expr<Req, Bool> {
 /// `Nullable<T>`'s own impl (see `scope::WrapNullable`).
 /// A base SQL type's typed NULL — see `Value::NullI32` etc. for why this
 /// can't just be a single untyped `Value::Null`.
-pub trait NullValue: SqlType {
-    const NULL_VALUE: Value;
-}
-
 macro_rules! sql_leaf_type {
     ($name:ident, $native:ty, $null_variant:ident) => {
         pub struct $name;
@@ -644,6 +665,20 @@ macro_rules! sql_leaf_type {
 
         impl NullValue for $name {
             const NULL_VALUE: Value = Value::$null_variant;
+        }
+
+        impl RawArg for $native {
+            type Req = Nil;
+            fn into_raw_arg(self) -> RawSlot {
+                RawSlot(ExprKind::Value(Value::from(self)))
+            }
+        }
+
+        impl RawArg for ::std::option::Option<$native> {
+            type Req = Nil;
+            fn into_raw_arg(self) -> RawSlot {
+                RawSlot(ExprKind::Value(Value::from(self)))
+            }
         }
 
         impl crate::row::SameShape<$native> for $native {}
@@ -697,6 +732,13 @@ impl IntoExpr<Text> for &str {
     type Req = Nil;
     fn into_expr(self) -> Expr<Nil, Text> {
         Expr::from_kind(ExprKind::Value(Value::Text(self.to_string())))
+    }
+}
+
+impl RawArg for &str {
+    type Req = Nil;
+    fn into_raw_arg(self) -> RawSlot {
+        RawSlot(ExprKind::Value(Value::Text(self.to_string())))
     }
 }
 
@@ -754,6 +796,14 @@ impl Summable for BigInt {
 }
 impl Summable for Real {
     type Sum = crate::scope::Nullable<Real>;
+    const SUM_CAST: Option<CastTarget> = None;
+    const AVG_CAST: Option<CastTarget> = None;
+}
+// Postgres and SQLite both keep `sum`/`avg` of a numeric in numeric, so
+// there is nothing to cast back from.
+#[cfg(feature = "decimal")]
+impl Summable for Numeric {
+    type Sum = crate::scope::Nullable<Numeric>;
     const SUM_CAST: Option<CastTarget> = None;
     const AVG_CAST: Option<CastTarget> = None;
 }
@@ -862,6 +912,100 @@ aggregate!(
     "`count(column)` — non-NULL values, unlike `count()`'s `count(*)` rows."
 );
 
+/// One `?` slot of a `sql!{}` fragment: a bound value, or an expression the
+/// renderer writes out — a column, an aggregate, another fragment. The
+/// tables an expression names travel with it in `Req`, which is what keeps
+/// the escape hatch inside the scope check rather than beside it.
+pub trait RawArg {
+    type Req;
+    #[doc(hidden)]
+    fn into_raw_arg(self) -> RawSlot;
+}
+
+/// What a slot holds, opaque outside this crate: the `RawArg` impls are the
+/// only way to make one, so a slot always holds something the renderer can
+/// write.
+pub struct RawSlot(ExprKind);
+
+impl RawSlot {
+    fn into_kind(self) -> ExprKind {
+        self.0
+    }
+}
+
+impl<C: ColumnKey> RawArg for Column<C> {
+    type Req = Cons<C::Table, Nil>;
+    fn into_raw_arg(self) -> RawSlot {
+        RawSlot(ExprKind::Column {
+            table: <C::Table as Table>::NAME,
+            name: <C as crate::row::Named>::NAME,
+        })
+    }
+}
+
+impl<Req, S: SqlType> RawArg for Expr<Req, S> {
+    type Req = Req;
+    fn into_raw_arg(self) -> RawSlot {
+        RawSlot(self.kind)
+    }
+}
+
+impl<K, Req, S: SqlType> RawArg for Keyed<K, Req, S> {
+    type Req = Req;
+    fn into_raw_arg(self) -> RawSlot {
+        RawSlot(self.kind)
+    }
+}
+
+impl<Req, S: SqlType> RawArg for Declared<Req, S> {
+    type Req = Req;
+    fn into_raw_arg(self) -> RawSlot {
+        RawSlot(self.kind)
+    }
+}
+
+/// The whole slot list of one `sql!{}`, whose `Req` is every table its
+/// slots name.
+pub trait RawArgs {
+    type Req;
+    #[doc(hidden)]
+    fn into_raw_args(self) -> Vec<RawSlot>;
+}
+
+impl RawArgs for () {
+    type Req = Nil;
+    fn into_raw_args(self) -> Vec<RawSlot> {
+        Vec::new()
+    }
+}
+
+macro_rules! raw_args_tuple {
+    ($head:ident $(, $rest:ident)*) => {
+        #[allow(non_snake_case)]
+        impl<$head: RawArg $(, $rest: RawArg)*> RawArgs for ($head, $($rest,)*)
+        where
+            ($($rest,)*): RawArgs,
+            $head::Req: Concat<<($($rest,)*) as RawArgs>::Req>,
+        {
+            type Req = <$head::Req as Concat<<($($rest,)*) as RawArgs>::Req>>::Output;
+            fn into_raw_args(self) -> Vec<RawSlot> {
+                let ($head, $($rest,)*) = self;
+                let mut kinds = ::std::vec![RawArg::into_raw_arg($head)];
+                kinds.extend(RawArgs::into_raw_args(($($rest,)*)));
+                kinds
+            }
+        }
+    };
+}
+raw_args_tuple!(A);
+raw_args_tuple!(A, B);
+raw_args_tuple!(A, B, C);
+raw_args_tuple!(A, B, C, D);
+raw_args_tuple!(A, B, C, D, E);
+raw_args_tuple!(A, B, C, D, E, F);
+raw_args_tuple!(A, B, C, D, E, F, G);
+raw_args_tuple!(A, B, C, D, E, F, G, H);
+
 /// Counts the `?` placeholders in a `sql!` text, so the macro can compare
 /// that count with the number of values it was handed while both are still
 /// constants. `??` is a literal `?` and counts for nothing.
@@ -889,8 +1033,36 @@ pub const fn placeholder_count(sql: &str) -> usize {
 /// scope it hasn't got. Reached through `sql!`, which is what checks that
 /// every `?` has a value.
 #[doc(hidden)]
-pub fn raw_expr<S: SqlType>(sql: &'static str, params: Vec<Value>) -> Expr<Nil, S> {
-    Expr::from_kind(ExprKind::Raw(Fragment::from_authored(sql, params)))
+pub fn raw_expr<S: SqlType, Args: RawArgs>(sql: &'static str, args: Args) -> Expr<Args::Req, S> {
+    Expr::from_kind(template(sql, args.into_raw_args()))
+}
+
+/// Splits authored text on its `?` slots and pairs each with its argument.
+/// `??` is a literal `?`; `sql!` checks the two counts against each other
+/// while both are still constants, which is why the leftovers here can't
+/// happen through it.
+fn template(sql: &'static str, args: Vec<RawSlot>) -> ExprKind {
+    let mut pieces: Vec<String> = vec![String::new()];
+    let mut chars = sql.chars().peekable();
+    while let Some(c) = chars.next() {
+        match c {
+            '?' if chars.peek() == Some(&'?') => {
+                chars.next();
+                pieces.last_mut().expect("one piece to start").push('?');
+            }
+            '?' => pieces.push(String::new()),
+            c => pieces.last_mut().expect("one piece to start").push(c),
+        }
+    }
+
+    let mut pieces = pieces.into_iter();
+    let head = pieces.next().unwrap_or_default();
+    let rest = args
+        .into_iter()
+        .map(RawSlot::into_kind)
+        .zip(pieces)
+        .collect();
+    ExprKind::Template { head, rest }
 }
 
 /// A named, typed placeholder: usable anywhere a value of type `S` is

@@ -14,6 +14,7 @@ use qbrs::dialect::Postgres;
 use qbrs::expr::ExprMethods;
 use qbrs::row::{IntoStructs, IntoTuples};
 use qbrs::select::{OrderExt, select};
+use qbrs::statement::ReturningExt;
 use qbrs_sqlx::{ExecuteExt, LoadExt};
 
 #[derive(Table)]

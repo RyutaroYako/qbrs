@@ -2,12 +2,12 @@
 
 use std::marker::PhantomData;
 
-use crate::dialect::{Dialect, SupportsReturning};
+use crate::dialect::Dialect;
 use crate::expr::{Bool, Expr, ExprKind};
 use crate::render::{QuerySink, Sink, render_and_list, render_ident};
-use crate::scope::{BaseTable, Cons, Nil, NotNull, Superset, Table, TableSlot};
-use crate::select::{Predicate, Selection};
-use crate::statement::{Returning, Statement, WrittenTable};
+use crate::scope::{BaseTable, Superset, Table};
+use crate::select::Predicate;
+use crate::statement::{Statement, WrittenTable};
 
 pub fn delete<D, T: BaseTable>(_table: T) -> Delete<D, T> {
     Delete {
@@ -34,7 +34,7 @@ pub struct Delete<D, T: Table> {
 impl<D, T: Table> Delete<D, T> {
     pub fn filter<Req, Idxs>(mut self, cond: Expr<Req, Bool>) -> Self
     where
-        Cons<TableSlot<T, NotNull>, Nil>: Superset<Req, Idxs>,
+        WrittenTable<T>: Superset<Req, Idxs>,
     {
         self.wheres.push(cond.kind);
         self
@@ -44,7 +44,7 @@ impl<D, T: Table> Delete<D, T> {
     /// same way `Select::filter_all` does.
     pub fn filter_all(
         mut self,
-        conds: impl IntoIterator<Item = Predicate<Cons<TableSlot<T, NotNull>, Nil>>>,
+        conds: impl IntoIterator<Item = Predicate<WrittenTable<T>>>,
     ) -> Self {
         self.wheres
             .extend(conds.into_iter().map(Predicate::into_kind));
@@ -52,28 +52,12 @@ impl<D, T: Table> Delete<D, T> {
     }
 }
 
-impl<D: Dialect, T: Table> crate::statement::StatementSealed for Delete<D, T> {}
+impl<D: Dialect, T: Table> crate::statement::private::Sealed for Delete<D, T> {}
 
 impl<D: Dialect, T: Table> Statement for Delete<D, T> {
     type Dialect = D;
     type Table = T;
     fn render(&self) -> QuerySink<D> {
         render_delete::<D, T>(&self.wheres)
-    }
-}
-
-impl<D: SupportsReturning, T: Table> Delete<D, T> {
-    /// A distinct type rather than `Self` with a flag set: the execution
-    /// layer needs `Sel`'s concrete type to know what to decode a returned
-    /// row into, and an optional field would erase it.
-    pub fn returning<Sel, Idx>(self, sel: Sel) -> Returning<Self, Sel>
-    where
-        Sel: Selection<WrittenTable<T>, Idx>,
-    {
-        Returning {
-            returning: sel.items(),
-            statement: self,
-            _marker: PhantomData,
-        }
     }
 }

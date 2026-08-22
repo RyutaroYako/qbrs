@@ -80,47 +80,14 @@ where
     }
 }
 
-/// A scope-free expression — what `sql!{}` produces — needs only a name.
-impl<K: LabelKey, S: SqlType, Scope, Idx> RowField<Scope, Idx> for Labeled<K, Expr<Nil, S>>
-where
-    Scope: Superset<Nil, Idx>,
+/// A label renames whatever it wraps and changes nothing else, so this is
+/// one impl rather than one per selectable: the inner value decides the
+/// scope check and the decoded type, the label decides the `AS` and the row
+/// key.
+impl<K: LabelKey, Inner: RowField<Scope, Idx>, Scope, Idx> RowField<Scope, Idx>
+    for Labeled<K, Inner>
 {
-    type Value = S::Native;
-    fn item(&self) -> SelectItem {
-        SelectItem::labeled(self.inner.kind.clone(), <K as Named>::NAME)
-    }
-}
-
-/// One that names tables needs a name *and* a stated type: `S` on an `Expr`
-/// was inferred from whatever built it, and that inference can contradict
-/// the join — `orders::total` is `i64` on its own and `Option<i64>` through
-/// a LEFT JOIN. `decodes_as` is where the caller settles it.
-impl<K: LabelKey, Req, S: SqlType, Scope, Idx> RowField<Scope, Idx> for Labeled<K, Declared<Req, S>>
-where
-    Scope: Superset<Req, Idx>,
-{
-    type Value = S::Native;
-    fn item(&self) -> SelectItem {
-        SelectItem::labeled(self.inner.kind.clone(), <K as Named>::NAME)
-    }
-}
-
-impl<K: LabelKey, C: ColumnKey, Scope, Idx> RowField<Scope, Idx> for Labeled<K, Column<C>>
-where
-    Column<C>: RowField<Scope, Idx>,
-{
-    type Value = <Column<C> as RowField<Scope, Idx>>::Value;
-    fn item(&self) -> SelectItem {
-        SelectItem::labeled(self.inner.item().kind, <K as Named>::NAME)
-    }
-}
-
-impl<K: LabelKey, K0, Req, S: SqlType, Scope, Idx> RowField<Scope, Idx>
-    for Labeled<K, Keyed<K0, Req, S>>
-where
-    Keyed<K0, Req, S>: RowField<Scope, Idx>,
-{
-    type Value = <Keyed<K0, Req, S> as RowField<Scope, Idx>>::Value;
+    type Value = Inner::Value;
     fn item(&self) -> SelectItem {
         SelectItem::labeled(self.inner.item().kind, <K as Named>::NAME)
     }

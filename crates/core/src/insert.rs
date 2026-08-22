@@ -9,12 +9,11 @@
 
 use std::marker::PhantomData;
 
-use crate::dialect::{Dialect, SupportsOnConflict, SupportsReturning};
+use crate::dialect::{Dialect, SupportsOnConflict};
 use crate::expr::{Column, ColumnKey, Value};
 use crate::render::{QuerySink, Sink, render_ident};
 use crate::scope::{BaseTable, Table};
-use crate::select::Selection;
-use crate::statement::{Returning, Statement, WrittenTable};
+use crate::statement::Statement;
 use crate::update::{Assignments, NothingToSet, UpdateRow};
 
 /// A column an `*Insert` builder hasn't been given a value for yet. Named
@@ -81,7 +80,7 @@ impl<T: Into<Value>> From<Defaultable<T>> for InsertValue {
 /// table, which is what pairs `COLUMNS` with a matching `into_values()`
 /// order and length; a hand-written impl has to keep the two in step
 /// itself.
-pub trait InsertRow {
+pub trait InsertRow: private::Sealed {
     type Table: Table;
     const COLUMNS: &'static [&'static str];
     fn into_values(self) -> Vec<InsertValue>;
@@ -159,6 +158,16 @@ fn render_conflict_clause<D: Dialect>(clause: &ConflictClause, sink: &mut dyn Si
         }
     }
 }
+
+mod private {
+    /// `COLUMNS` and `into_values()` have to line up position for position;
+    /// `#[derive(Table)]` is what guarantees that, so it is the only thing
+    /// that can produce an `InsertRow`.
+    pub trait Sealed {}
+}
+
+#[doc(hidden)]
+pub use private::Sealed as InsertRowSealed;
 
 pub struct InsertSeed<D, T> {
     _marker: PhantomData<fn() -> (D, T)>,
@@ -292,27 +301,12 @@ impl<D: SupportsOnConflict, R: InsertRow> Insert<D, R> {
     }
 }
 
-impl<D: Dialect, R: InsertRow> crate::statement::StatementSealed for Insert<D, R> {}
+impl<D: Dialect, R: InsertRow> crate::statement::private::Sealed for Insert<D, R> {}
 
 impl<D: Dialect, R: InsertRow> Statement for Insert<D, R> {
     type Dialect = D;
     type Table = R::Table;
     fn render(&self) -> QuerySink<D> {
         render_values_clause::<D, R>(&self.rows, &self.on_conflict)
-    }
-}
-
-impl<D: SupportsReturning, R: InsertRow> Insert<D, R> {
-    /// A distinct type rather than `Self` with a flag set, for the reason
-    /// `delete::Delete::returning` gives.
-    pub fn returning<Sel, Idx>(self, sel: Sel) -> Returning<Self, Sel>
-    where
-        Sel: Selection<WrittenTable<R::Table>, Idx>,
-    {
-        Returning {
-            returning: sel.items(),
-            statement: self,
-            _marker: PhantomData,
-        }
     }
 }

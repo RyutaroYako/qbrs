@@ -1,17 +1,22 @@
 //! The `sql!{}` escape hatch: a pressure valve for SQL constructs the typed
-//! builder doesn't cover yet. `Req` is always `Nil`, so a raw fragment is
-//! exempt from scope checking and the caller is trusted to reference real,
-//! in-scope columns by name.
+//! builder doesn't cover yet.
 //!
-//! The text is a *constant*, so a fragment's SQL shape is always a
+//! A `?` slot takes a value, which binds as a parameter, or an expression —
+//! a column, an aggregate, another fragment — which the renderer writes out
+//! itself. A column slot is quoted by the same code that quotes it anywhere
+//! else and carries its table into the fragment's `Req`, so
+//! `sql!(Numeric, "sum(?)", invoices::amount)` is checked against the
+//! query's scope like any other expression. Only the text between the slots
+//! is unchecked.
+//!
+//! That text is a *constant*, so a fragment's SQL shape is always a
 //! compile-time constant of the calling crate — runtime-assembled text
-//! cannot become SQL here. Values are bound as real parameters, never
-//! spliced as text. Only the shape is unchecked, and only the author writes
-//! it.
+//! cannot become SQL here.
 
-/// `sql!(SqlType, "lower(name) = ?", "dan")` -> `Expr<Nil, SqlType>`.
-/// `?` placeholders are bound positionally, left to right; `??` is a literal
-/// `?`, which is how Postgres's `jsonb` operators are reached.
+/// `sql!(Bool, "lower(?) = ?", users::email, "dan")` -> an `Expr` over
+/// whatever tables its slots name. Slots are filled positionally, left to
+/// right; `??` is a literal `?`, which is how Postgres's `jsonb` operators
+/// are reached.
 #[macro_export]
 macro_rules! sql {
     ($sql_type:ty, $text:expr $(, $arg:expr)* $(,)?) => {{
@@ -24,11 +29,8 @@ macro_rules! sql {
         const _: () = ::std::assert!(
             $crate::expr::placeholder_count(__QBRS_SQL)
                 == <[&'static str]>::len(&[$(::std::stringify!($arg)),*]),
-            "`sql!` needs one value per `?` placeholder (write `??` for a literal `?`)",
+            "`sql!` needs one argument per `?` slot (write `??` for a literal `?`)",
         );
-        $crate::expr::raw_expr::<$sql_type>(
-            __QBRS_SQL,
-            ::std::vec![$(::std::convert::Into::<$crate::expr::Value>::into($arg)),*],
-        )
+        $crate::expr::raw_expr::<$sql_type, _>(__QBRS_SQL, ($($arg,)*))
     }};
 }

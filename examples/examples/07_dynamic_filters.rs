@@ -93,6 +93,36 @@ async fn main() {
         .expect("collected predicates");
     println!("active users with a big order: {big:?}");
 
+    // A loop ANDs. For a runtime-length OR — a search box with N terms —
+    // `any_of` folds the collection instead; folding `.or()` by hand can't
+    // type-check, since each pair widens the tables the expression claims.
+    let terms = ["ada", "grace"];
+    let searched: Vec<String> = select(users::email)
+        .from::<Postgres, _>(users::Table)
+        .filter(any_of(
+            terms
+                .iter()
+                .map(|t| sql!(Bool, "? LIKE ?", users::email, format!("{t}%"))),
+        ))
+        .load(&pool)
+        .await
+        .expect("searched");
+    println!("search hits: {searched:?}");
+
+    // Across tables, the same shape goes through `Predicate`, which `.filter`
+    // takes as readily as an `Expr`.
+    let any_signal: Vec<String> = select(users::email)
+        .from::<Postgres, _>(users::Table)
+        .inner_join(orders::Table, orders::user_id.eq(users::id))
+        .filter(Predicate::any([
+            predicate(users::active.eq(false)),
+            predicate(orders::total.gt(2000i64)),
+        ]))
+        .load(&pool)
+        .await
+        .expect("either signal");
+    println!("inactive or big-spending: {any_signal:?}");
+
     // `.count()` answers "how many rows would this return" — the same
     // FROM/JOIN/WHERE, with any ORDER BY/LIMIT/OFFSET ignored, so a
     // paginated endpoint can report a total without cloning the query.

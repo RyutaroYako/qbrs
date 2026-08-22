@@ -182,6 +182,20 @@ async fn sqlite_executes_every_rendered_statement_shape() {
     .await;
     assert_eq!(offset_only.len(), 1);
 
+    // A branch that pages: SQLite reads a bare `LIMIT` as the whole
+    // operation's, so this one has to be written as a derived table.
+    let paged_union = run(
+        &pool,
+        select((users::email,))
+            .from::<Sqlite, _>(users::Table)
+            .order_by(users::id.asc())
+            .limit(1)
+            .union(&select((users::email,)).from::<Sqlite, _>(users::Table))
+            .to_sql(),
+    )
+    .await;
+    assert_eq!(paged_union.len(), 2);
+
     let union = run(
         &pool,
         select((users::email,))

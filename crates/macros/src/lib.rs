@@ -638,6 +638,10 @@ pub fn label(input: TokenStream) -> TokenStream {
         });
         uses.push(accessor);
     }
+    // The accessor traits sit beside the module rather than inside it with
+    // an anonymous re-export, as a schema's do: `label!` is meant to be
+    // invoked inside the function that runs the query, and a `use` in a
+    // function body cannot name a module declared in that same body.
     quote! {
         pub mod label {
             #(#decls)*
@@ -902,6 +906,8 @@ fn gen_insert_struct(
             }
         }
 
+        impl ::qbrs::insert::InsertRowSealed for #insert_ident {}
+
         impl ::qbrs::insert::InsertRow for #insert_ident {
             type Table = #mod_ident::Table;
             const COLUMNS: &'static [&'static str] = &[#(#columns_arr),*];
@@ -965,6 +971,8 @@ fn gen_update_struct(
         pub struct #update_ident {
             #(#fields,)*
         }
+
+        impl ::qbrs::update::UpdateRowSealed for #update_ident {}
 
         impl ::qbrs::update::UpdateRow for #update_ident {
             type Table = #mod_ident::Table;

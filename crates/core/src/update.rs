@@ -2,21 +2,31 @@
 
 use std::marker::PhantomData;
 
-use crate::dialect::{Dialect, SupportsReturning};
+use crate::dialect::Dialect;
 use crate::expr::{Bool, Expr, ExprKind, Value};
 use crate::render::{QuerySink, Sink, render_and_list, render_ident};
-use crate::scope::{BaseTable, Cons, Nil, NotNull, Superset, Table, TableSlot};
-use crate::select::{Predicate, Selection};
-use crate::statement::{Returning, Statement, WrittenTable};
+use crate::scope::{BaseTable, Superset, Table};
+use crate::select::Predicate;
+use crate::statement::{Statement, WrittenTable};
 
 /// Implemented by the `#[derive(Table)]`-generated `*Update` struct: every
 /// field is optional (untouched vs. touched), and doubly-optional for
 /// nullable columns (untouched vs. explicit NULL vs. explicit value).
 /// `sets()` returns only the touched `(column, value)` pairs.
-pub trait UpdateRow {
+pub trait UpdateRow: private::Sealed {
     type Table: Table;
     fn sets(self) -> Vec<(&'static str, Value)>;
 }
+
+mod private {
+    /// `sets()` names columns of `Table` by string; `#[derive(Table)]` is
+    /// what guarantees they exist, so it is the only thing that can produce
+    /// an `UpdateRow`.
+    pub trait Sealed {}
+}
+
+#[doc(hidden)]
+pub use private::Sealed as UpdateRowSealed;
 
 /// A `SET` list that is known non-empty, which is the only kind that has a
 /// SQL form. Every `*Update` derives `Default`, and that value — what a
@@ -110,7 +120,7 @@ impl<D, T: Table> Update<D, T> {
     /// single-table scope rather than a full query `Scope`.
     pub fn filter<Req, Idxs>(mut self, cond: Expr<Req, Bool>) -> Self
     where
-        Cons<TableSlot<T, NotNull>, Nil>: Superset<Req, Idxs>,
+        WrittenTable<T>: Superset<Req, Idxs>,
     {
         self.wheres.push(cond.kind);
         self
@@ -121,7 +131,7 @@ impl<D, T: Table> Update<D, T> {
     /// however many criteria the request carried.
     pub fn filter_all(
         mut self,
-        conds: impl IntoIterator<Item = Predicate<Cons<TableSlot<T, NotNull>, Nil>>>,
+        conds: impl IntoIterator<Item = Predicate<WrittenTable<T>>>,
     ) -> Self {
         self.wheres
             .extend(conds.into_iter().map(Predicate::into_kind));
@@ -129,27 +139,12 @@ impl<D, T: Table> Update<D, T> {
     }
 }
 
-impl<D: Dialect, T: Table> crate::statement::StatementSealed for Update<D, T> {}
+impl<D: Dialect, T: Table> crate::statement::private::Sealed for Update<D, T> {}
 
 impl<D: Dialect, T: Table> Statement for Update<D, T> {
     type Dialect = D;
     type Table = T;
     fn render(&self) -> QuerySink<D> {
         render_set_clause::<D, T>(&self.sets, &self.wheres)
-    }
-}
-
-impl<D: SupportsReturning, T: Table> Update<D, T> {
-    /// A distinct type rather than `Self` with a flag set, for the reason
-    /// `delete::Delete::returning` gives.
-    pub fn returning<Sel, Idx>(self, sel: Sel) -> Returning<Self, Sel>
-    where
-        Sel: Selection<WrittenTable<T>, Idx>,
-    {
-        Returning {
-            returning: sel.items(),
-            statement: self,
-            _marker: PhantomData,
-        }
     }
 }

@@ -210,7 +210,7 @@ impl<L: RowKeys> RowKeys for Row<L> {
 #[diagnostic::on_unimplemented(
     message = "column `{Self}` can't stand in for `{Declared}`",
     label = "these two columns must have the same name",
-    note = "`.label(label::{Declared})` the selected expression if that is what it should be called"
+    note = "the two sides are matched by name: `.label(label::..)` whichever one is spelled wrong"
 )]
 pub trait SameNameAs<Declared> {}
 
@@ -467,6 +467,11 @@ impl<L: PartialEq> PartialEq for Row<L> {
 impl<L: Eq> Eq for Row<L> {}
 
 /// A row's fields as a plain tuple, in selection order.
+#[diagnostic::on_unimplemented(
+    message = "this row has no positional view",
+    label = "`into_tuple`/`into_tuples` stop at 16 fields, however they were selected",
+    note = "read it by key (`row.get(..)`) or fill a struct with `#[derive(FromRow)]`"
+)]
 pub trait RowValues {
     type Values;
     fn into_values(self) -> Self::Values;

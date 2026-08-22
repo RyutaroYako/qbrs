@@ -5,6 +5,7 @@ use qbrs_core::dialect::Postgres;
 use qbrs_core::expr::{Bool, ExprMethods, TextExprMethods, any_of};
 use qbrs_core::scope::Table as TableTrait;
 use qbrs_core::select::{OrderExt, select};
+use qbrs_core::sql;
 
 pub struct UsersMarker;
 impl TableTrait for UsersMarker {
@@ -112,6 +113,22 @@ mod orders {
 
     pub const user_id: Column<columns::user_id> = Column::new();
     pub const total: Column<columns::total> = Column::new();
+}
+
+#[test]
+fn a_sql_slot_takes_a_column_and_quotes_it_like_any_other() {
+    let (sql, params) = select((users::id,))
+        .from::<Postgres, _>(users::Table)
+        .inner_join(orders::Table, orders::user_id.eq(users::id))
+        .filter(sql!(Bool, "coalesce(?, 0) > ?", orders::total, 100i64))
+        .to_sql();
+    assert_eq!(
+        sql,
+        "SELECT \"users\".\"id\" FROM \"users\" \
+         INNER JOIN \"orders\" ON (\"orders\".\"user_id\" = \"users\".\"id\") \
+         WHERE (coalesce(\"orders\".\"total\", 0) > $1)"
+    );
+    assert_eq!(params, vec![qbrs_core::expr::Value::I64(100)]);
 }
 
 #[test]

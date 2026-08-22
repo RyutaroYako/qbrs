@@ -3,10 +3,11 @@
 
 use std::marker::PhantomData;
 
-use crate::dialect::Dialect;
+use crate::dialect::{Dialect, SupportsReturning};
 use crate::expr::Value;
 use crate::render::{QuerySink, SelectItem, Sink, render_select_list};
 use crate::scope::{Cons, Nil, NotNull, Table, TableSlot};
+use crate::select::Selection;
 
 /// A statement that writes to a single table. Sealed: the three writing
 /// statements are the whole set, and `Returning` is defined against this
@@ -23,12 +24,9 @@ pub trait Statement: private::Sealed {
     }
 }
 
-mod private {
+pub(crate) mod private {
     pub trait Sealed {}
 }
-
-#[doc(hidden)]
-pub use private::Sealed as StatementSealed;
 
 /// The scope a `RETURNING` clause is checked against: the table being
 /// written to, and nothing else.
@@ -43,6 +41,28 @@ pub struct Returning<S, Sel> {
     pub(crate) returning: Vec<SelectItem>,
     pub(crate) _marker: PhantomData<fn() -> Sel>,
 }
+
+/// `RETURNING` on any writing statement. One method, since the clause is
+/// the same clause whichever of the three it follows, and gated on the
+/// dialect having the construct at all.
+pub trait ReturningExt: Statement + Sized {
+    /// A distinct type rather than `Self` with a flag set: the execution
+    /// layer needs `Sel`'s concrete type to know what to decode a returned
+    /// row into, and an optional field would erase it.
+    fn returning<Sel, Idx>(self, sel: Sel) -> Returning<Self, Sel>
+    where
+        Self::Dialect: SupportsReturning,
+        Sel: Selection<WrittenTable<Self::Table>, Idx>,
+    {
+        Returning {
+            returning: sel.items(),
+            statement: self,
+            _marker: PhantomData,
+        }
+    }
+}
+
+impl<S: Statement> ReturningExt for S {}
 
 impl<S: Statement, Sel> Returning<S, Sel> {
     pub fn to_sql(&self) -> (String, Vec<Value>) {

@@ -13,15 +13,21 @@ pub use qbrs_macros::{FromRow, Table, label, with};
 pub mod prelude {
     pub use crate::{FromRow, Table, label, with};
     pub use qbrs_core::cte;
-    pub use qbrs_core::delete::delete;
+    pub use qbrs_core::delete::{Delete, delete};
     pub use qbrs_core::dialect::{MySql, Postgres, Sqlite};
     pub use qbrs_core::expr::Column;
+    #[cfg(feature = "decimal")]
+    pub use qbrs_core::expr::Numeric;
+    #[cfg(feature = "uuid")]
+    pub use qbrs_core::expr::Uuid;
     pub use qbrs_core::expr::{
         BigInt, Bool, Bytes, ExprMethods, HasCount, Integer, LabelExt, Real, SortDir, Text,
-        TextExprMethods, avg, count, count_of, max, min, sum,
+        TextExprMethods, Value, all_of, any_of, avg, count, count_of, max, min, sum,
     };
+    #[cfg(feature = "chrono")]
+    pub use qbrs_core::expr::{Date, Timestamptz};
     pub use qbrs_core::expr::{Declared, Expr, IntoExpr, Keyed, Labeled};
-    pub use qbrs_core::insert::{Defaultable, NothingToInsert, insert};
+    pub use qbrs_core::insert::{Defaultable, Insert, InsertRow, NothingToInsert, insert};
     pub use qbrs_core::row::{IntoStructs, IntoTuples, Named, Row, RowCons, RowNil};
     pub use qbrs_core::scope::{
         Cons, Find, MaybeNull, Nil, NotNull, Nullable, Superset, TableSlot,
@@ -30,8 +36,8 @@ pub mod prelude {
         Correlated, DynSelect, OrderExt, Predicate, Prepared, Select, Selection, SetOp, nth,
         predicate, select,
     };
-    pub use qbrs_core::statement::Statement;
-    pub use qbrs_core::update::{NothingToSet, update};
+    pub use qbrs_core::statement::{Returning, ReturningExt, Statement};
+    pub use qbrs_core::update::{NothingToSet, Update, UpdateRow, update};
     pub use qbrs_core::window::{
         HasDenseRank, HasRank, HasRowNumber, dense_rank, rank, row_number, window,
     };

@@ -127,6 +127,31 @@ impl<D, Marker: crate::cte::CteShape> JoinSource<D> for Cte<D, Marker> {
     }
 }
 
+/// Something a query can be filtered by: an `Expr` whose tables this scope
+/// contains, or a `Predicate` already discharged against it. One `.filter`
+/// for both, so which one a condition happens to be doesn't change how it is
+/// applied.
+pub trait Condition<Scope, Idxs> {
+    /// Discharged against this scope, which for an `Expr` is where its
+    /// `Superset` proof is spent and for a `Predicate` already happened.
+    fn into_predicate(self) -> Predicate<Scope>;
+}
+
+impl<Scope: Superset<Req, Idxs>, Req, Idxs> Condition<Scope, Idxs> for Expr<Req, Bool> {
+    fn into_predicate(self) -> Predicate<Scope> {
+        Predicate {
+            kind: self.kind,
+            _marker: PhantomData,
+        }
+    }
+}
+
+impl<Scope> Condition<Scope, ()> for Predicate<Scope> {
+    fn into_predicate(self) -> Predicate<Scope> {
+        self
+    }
+}
+
 /// A condition whose scope requirement has already been discharged, so a
 /// runtime-length collection of them can be built and passed around. An
 /// `Expr` carries the tables it references in its type, which is what makes
@@ -146,23 +171,9 @@ impl<Scope> Predicate<Scope> {
         Predicate::combine(preds, false)
     }
 
-    /// True when all of them are.
-    pub fn all(preds: impl IntoIterator<Item = Predicate<Scope>>) -> Self {
-        Predicate::combine(preds, true)
-    }
-
     fn combine(preds: impl IntoIterator<Item = Predicate<Scope>>, all: bool) -> Self {
-        let kinds = preds.into_iter().map(Predicate::into_kind);
-        let mut folded: Option<ExprKind> = None;
-        for kind in kinds {
-            folded = Some(match folded {
-                None => kind,
-                Some(acc) if all => ExprKind::And(Box::new(acc), Box::new(kind)),
-                Some(acc) => ExprKind::Or(Box::new(acc), Box::new(kind)),
-            });
-        }
         Predicate {
-            kind: folded.unwrap_or(ExprKind::Always(all)),
+            kind: crate::expr::fold_conditions(preds.into_iter().map(Predicate::into_kind), all),
             _marker: PhantomData,
         }
     }
@@ -327,11 +338,8 @@ impl<D, Scope, Sel> Select<D, Scope, Sel> {
     /// AND-folded, and callable any number of times — conditionally, in a
     /// loop, from a helper — without changing `Self`'s type, so the most
     /// common kind of dynamic query needs no escape hatch.
-    pub fn filter<Req, Idxs>(mut self, cond: Expr<Req, Bool>) -> Self
-    where
-        Scope: Superset<Req, Idxs>,
-    {
-        self.body.wheres.push(cond.kind);
+    pub fn filter<C: Condition<Scope, Idxs>, Idxs>(mut self, cond: C) -> Self {
+        self.body.wheres.push(cond.into_predicate().into_kind());
         self
     }
 
@@ -498,6 +506,20 @@ impl<D: Dialect, Scope, Sel> Select<D, Scope, Sel> {
         self.body.count_sql::<D>(&self.selection.items())
     }
 
+    /// This query as a set-operation branch: its SQL, plus whether it pages
+    /// — which decides how a dialect that can't parenthesise branches has to
+    /// write it.
+    pub(crate) fn branch<Idx>(&self) -> set_op::Branch
+    where
+        D: Dialect,
+        Sel: Selection<Scope, Idx>,
+    {
+        set_op::Branch {
+            sql: self.fragment::<Idx>(),
+            paged: self.body.limit.is_some() || self.body.offset.is_some(),
+        }
+    }
+
     /// This query as an embeddable `Fragment`: an `EXISTS (..)` subquery, a
     /// CTE body, or a set-operation branch. The only way to produce one, so
     /// no caller has to remember that an embedded query renders with `?`
@@ -524,7 +546,7 @@ impl<D: Dialect, Scope, Sel> Select<D, Scope, Sel> {
 }
 
 impl SelectBody {
-    pub(super) fn render_into<RD: Dialect>(&self, selection: &[SelectItem], sink: &mut dyn Sink) {
+    pub(super) fn render_into<D: Dialect>(&self, selection: &[SelectItem], sink: &mut dyn Sink) {
         let SelectBody {
             ctes,
             distinct,
@@ -544,13 +566,13 @@ impl SelectBody {
                 if i > 0 {
                     sink.text(", ");
                 }
-                crate::render::render_ident::<RD>(sink, cte.name);
+                crate::render::render_ident::<D>(sink, cte.name);
                 sink.text(" (");
                 for (i, col) in cte.column_names.iter().enumerate() {
                     if i > 0 {
                         sink.text(", ");
                     }
-                    crate::render::render_ident::<RD>(sink, col);
+                    crate::render::render_ident::<D>(sink, col);
                 }
                 sink.text(") AS (");
                 cte.body.splice_into(sink);
@@ -563,10 +585,10 @@ impl SelectBody {
             sink.text("DISTINCT ");
         }
 
-        render_select_list::<RD>(selection, sink);
+        render_select_list::<D>(selection, sink);
 
         sink.text(" FROM ");
-        crate::render::render_ident::<RD>(sink, from_table);
+        crate::render::render_ident::<D>(sink, from_table);
 
         for j in joins {
             sink.ch(' ');
@@ -577,17 +599,17 @@ impl SelectBody {
                 JoinKind::Full => "FULL JOIN",
             });
             sink.ch(' ');
-            crate::render::render_ident::<RD>(sink, j.table);
+            crate::render::render_ident::<D>(sink, j.table);
             sink.text(" ON ");
-            render_expr::<RD>(&j.on, sink);
+            render_expr::<D>(&j.on, sink);
         }
 
-        render_and_list::<RD>(sink, " WHERE ", wheres);
+        render_and_list::<D>(sink, " WHERE ", wheres);
 
-        render_expr_list::<RD>(sink, " GROUP BY ", group_by);
-        render_and_list::<RD>(sink, " HAVING ", having);
-        render_order_by::<RD>(sink, " ORDER BY ", order_by);
-        render_limit_offset::<RD>(sink, limit, offset);
+        render_expr_list::<D>(sink, " GROUP BY ", group_by);
+        render_and_list::<D>(sink, " HAVING ", having);
+        render_order_by::<D>(sink, " ORDER BY ", order_by);
+        render_limit_offset::<D>(sink, limit, offset);
     }
 }
 
@@ -644,10 +666,7 @@ impl<D, Outer, Scope, Sel> Correlated<D, Outer, Scope, Sel> {
 
     /// Checked against the subquery's own scope, which includes every table
     /// the outer query had — that is what makes it *correlated*.
-    pub fn filter<Req, Idxs>(self, cond: Expr<Req, Bool>) -> Self
-    where
-        Scope: Superset<Req, Idxs>,
-    {
+    pub fn filter<C: Condition<Scope, Idxs>, Idxs>(self, cond: C) -> Self {
         self.map(|q| q.filter(cond))
     }
 
@@ -763,14 +782,34 @@ impl<D: Dialect, Outer: ScopeTables, Scope, Sel> Correlated<D, Outer, Scope, Sel
 
 /// A limit or offset. A trait rather than `Into<i64>` so a `usize` page size
 /// — the shape a paginated handler already has — goes in without a cast.
+/// Every impl lands in `0..=i64::MAX`: a negative limit is not a query any
+/// database will run, and a `usize` past `i64::MAX` is not a page anyone is
+/// asking for.
 pub trait IntoLimit {
     fn into_limit(self) -> i64;
 }
 
 macro_rules! into_limit {
-    ($($ty:ty),+) => { $( impl IntoLimit for $ty { fn into_limit(self) -> i64 { self as i64 } } )+ };
+    ($($signed:ty),+ ; $($unsigned:ty),+) => {
+        $(impl IntoLimit for $signed {
+            fn into_limit(self) -> i64 {
+                i64::from(self).max(0)
+            }
+        })+
+        $(impl IntoLimit for $unsigned {
+            fn into_limit(self) -> i64 {
+                i64::try_from(self).unwrap_or(i64::MAX)
+            }
+        })+
+    };
 }
-into_limit!(i32, i64, u8, u16, u32, usize);
+into_limit!(i32 ; u8, u16, u32, u64, usize);
+
+impl IntoLimit for i64 {
+    fn into_limit(self) -> i64 {
+        self.max(0)
+    }
+}
 
 /// `LIMIT`/`OFFSET`, with the filler a dialect needs when there's an offset
 /// and no limit — a bare `OFFSET` is Postgres-only.

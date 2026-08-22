@@ -7,7 +7,7 @@ use qbrs_core::expr::ExprMethods;
 use qbrs_core::insert::{Defaultable, InsertRow, InsertValue, insert};
 use qbrs_core::scope::Table as TableTrait;
 use qbrs_core::select::select;
-use qbrs_core::statement::Statement;
+use qbrs_core::statement::{ReturningExt, Statement};
 
 pub struct UsersMarker;
 impl TableTrait for UsersMarker {
@@ -87,6 +87,8 @@ mod users {
 struct UsersInsert {
     email: String,
 }
+impl qbrs_core::insert::InsertRowSealed for UsersInsert {}
+
 impl InsertRow for UsersInsert {
     type Table = UsersMarker;
     const COLUMNS: &'static [&'static str] = &["email"];

@@ -152,9 +152,12 @@ add generics to `ExprKind`/`Value`, and don't make the renderer generic over que
 `ExprKind` is `pub(crate)` and `Expr::from_kind` is too, so the typed wrapper is the only way
 to build one — that is what makes the `Req`/`S` tags mean anything rather than merely exist.
 `expr::raw_expr` is the single `#[doc(hidden)]` door, needed because `sql!` expands in the
-caller's crate, and it pins `Req = Nil` so a raw fragment can't claim a scope. For the same
-reason only `Expr<Nil, S>` is selectable: an expression naming a table has a per-query
-nullability that `S` doesn't carry.
+caller's crate. A `sql!` slot takes an `expr::RawArg` — a value, or an expression the renderer
+writes out — so a column in a slot is quoted by the same code that quotes it anywhere else and
+carries its table into the fragment's `Req` (`expr::RawArgs` unions the slots' `Req`s). Only
+the text *between* slots is unchecked. Selecting still needs `Expr<Nil, S>` or a
+`decodes_as::<S>()`: an expression naming a table has a per-query nullability that `S` doesn't
+carry.
 
 ### Dialects and capability gating
 
@@ -165,9 +168,10 @@ fine-grained: they were split precisely because MySQL has `RIGHT JOIN` but not `
 
 ### Embedded SQL goes through `Fragment`
 
-A subquery, a CTE body, a `UNION` branch, and a `sql!{}` escape hatch are all the same thing:
-SQL whose placeholders are `?` because their final numbering depends on how much of the host
-query has been rendered. That's `render::Fragment` — carrying the text and its bind values
+A subquery, a CTE body and a `UNION` branch are all the same thing: SQL rendered before its
+final placeholder numbering is known, because that depends on how much of the host query has
+been rendered. (`sql!{}` is *not* one of these — it stays an `ExprKind::Template`, so its
+slots render with everything else.) That's `render::Fragment` — carrying the text and its bind values
 together, spliced with `Fragment::splice_into`, which assigns the numbering.
 
 `Select::fragment` is the only way to make one from a query, so no call site has to remember

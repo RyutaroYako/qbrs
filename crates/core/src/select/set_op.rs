@@ -80,9 +80,17 @@ pub struct OrdinalKey {
 /// have entirely different `Scope`s, so there is no single scope left to
 /// check a column reference against once they're combined; ordinal position
 /// is the only reference SQL itself allows in this position.
+/// One branch: its rendered SQL, and whether it pages. A dialect that
+/// can't parenthesise a branch reads the branch's `LIMIT` as the whole
+/// operation's, so a paged branch has to become a derived table there.
+pub(crate) struct Branch {
+    pub(crate) sql: Fragment,
+    pub(crate) paged: bool,
+}
+
 pub struct SetOp<D, Output> {
-    first: Fragment,
-    rest: Vec<(SetOpKind, Fragment)>,
+    first: Branch,
+    rest: Vec<(SetOpKind, Branch)>,
     order_by: Vec<(u32, SortDir)>,
     limit: Option<i64>,
     offset: Option<i64>,
@@ -90,7 +98,7 @@ pub struct SetOp<D, Output> {
 }
 
 impl<D: Dialect, Output> SetOp<D, Output> {
-    fn new(first: Fragment) -> Self {
+    fn new(first: Branch) -> Self {
         SetOp {
             first,
             rest: Vec::new(),
@@ -101,7 +109,7 @@ impl<D: Dialect, Output> SetOp<D, Output> {
         }
     }
 
-    fn push(mut self, kind: SetOpKind, branch: Fragment) -> Self {
+    fn push(mut self, kind: SetOpKind, branch: Branch) -> Self {
         self.rest.push((kind, branch));
         self
     }
@@ -113,7 +121,7 @@ impl<D: Dialect, Output> SetOp<D, Output> {
         SelB: Selection<ScopeB, IdxB>,
         SelB::Output: SameShape<Output>,
     {
-        self.push(SetOpKind::Union, other.fragment::<IdxB>())
+        self.push(SetOpKind::Union, other.branch::<IdxB>())
     }
 
     /// Appends another branch via `UNION ALL` (no deduplication — cheaper
@@ -124,7 +132,7 @@ impl<D: Dialect, Output> SetOp<D, Output> {
         SelB: Selection<ScopeB, IdxB>,
         SelB::Output: SameShape<Output>,
     {
-        self.push(SetOpKind::UnionAll, other.fragment::<IdxB>())
+        self.push(SetOpKind::UnionAll, other.branch::<IdxB>())
     }
 
     /// Appends another branch via `INTERSECT` (rows present in both).
@@ -133,7 +141,7 @@ impl<D: Dialect, Output> SetOp<D, Output> {
         SelB: Selection<ScopeB, IdxB>,
         SelB::Output: SameShape<Output>,
     {
-        self.push(SetOpKind::Intersect, other.fragment::<IdxB>())
+        self.push(SetOpKind::Intersect, other.branch::<IdxB>())
     }
 
     /// Appends another branch via `EXCEPT` (rows in the accumulated result
@@ -143,7 +151,7 @@ impl<D: Dialect, Output> SetOp<D, Output> {
         SelB: Selection<ScopeB, IdxB>,
         SelB::Output: SameShape<Output>,
     {
-        self.push(SetOpKind::Except, other.fragment::<IdxB>())
+        self.push(SetOpKind::Except, other.branch::<IdxB>())
     }
 
     /// Orders the combined result by a selected column's ordinal position —
@@ -187,20 +195,28 @@ impl<D: Dialect, Output> SetOp<D, Output> {
     /// The set operation itself, without the ordering and paging applied to
     /// its result — which is what a count of it must leave out.
     fn render_branches(&self, sink: &mut QuerySink<D>) {
-        let branch = |sink: &mut QuerySink<D>, fragment: &Fragment| {
+        let branch = |sink: &mut QuerySink<D>, branch: &Branch| {
             if D::PARENTHESIZED_SET_OP_BRANCHES {
                 sink.ch('(');
-                fragment.splice_into(sink);
+                branch.sql.splice_into(sink);
+                sink.ch(')');
+            } else if branch.paged {
+                // SQLite has no place for a parenthesised `SELECT` beside a
+                // set operator, and reads a bare branch's `LIMIT` as the
+                // whole operation's — so a paged branch becomes a derived
+                // table, which is the same set and does parse.
+                sink.text("SELECT * FROM (");
+                branch.sql.splice_into(sink);
                 sink.ch(')');
             } else {
-                fragment.splice_into(sink);
+                branch.sql.splice_into(sink);
             }
         };
 
         branch(sink, &self.first);
-        for (kind, fragment) in &self.rest {
+        for (kind, part) in &self.rest {
             sink.text(kind.keyword());
-            branch(sink, fragment);
+            branch(sink, part);
         }
     }
 
@@ -212,10 +228,7 @@ impl<D: Dialect, Output> SetOp<D, Output> {
                     sink.text(", ");
                 }
                 sink.text(&position.to_string());
-                sink.text(match dir {
-                    SortDir::Asc => " ASC",
-                    SortDir::Desc => " DESC",
-                });
+                sink.text(crate::render::dir_keyword(*dir));
             }
         }
         crate::select::render_limit_offset::<D>(sink, self.limit, self.offset);
@@ -235,7 +248,7 @@ impl<D: Dialect, Scope, Sel> Select<D, Scope, Sel> {
         SelB: Selection<ScopeB, IdxB>,
         SelB::Output: SameShape<Sel::Output>,
     {
-        SetOp::new(self.fragment::<IdxA>()).union(other)
+        SetOp::new(self.branch::<IdxA>()).union(other)
     }
 
     pub fn union_all<ScopeB, SelB, IdxA, IdxB>(
@@ -247,7 +260,7 @@ impl<D: Dialect, Scope, Sel> Select<D, Scope, Sel> {
         SelB: Selection<ScopeB, IdxB>,
         SelB::Output: SameShape<Sel::Output>,
     {
-        SetOp::new(self.fragment::<IdxA>()).union_all(other)
+        SetOp::new(self.branch::<IdxA>()).union_all(other)
     }
 
     pub fn intersect<ScopeB, SelB, IdxA, IdxB>(
@@ -259,7 +272,7 @@ impl<D: Dialect, Scope, Sel> Select<D, Scope, Sel> {
         SelB: Selection<ScopeB, IdxB>,
         SelB::Output: SameShape<Sel::Output>,
     {
-        SetOp::new(self.fragment::<IdxA>()).intersect(other)
+        SetOp::new(self.branch::<IdxA>()).intersect(other)
     }
 
     pub fn except<ScopeB, SelB, IdxA, IdxB>(
@@ -271,6 +284,6 @@ impl<D: Dialect, Scope, Sel> Select<D, Scope, Sel> {
         SelB: Selection<ScopeB, IdxB>,
         SelB::Output: SameShape<Sel::Output>,
     {
-        SetOp::new(self.fragment::<IdxA>()).except(other)
+        SetOp::new(self.branch::<IdxA>()).except(other)
     }
 }
