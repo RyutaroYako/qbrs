@@ -121,6 +121,20 @@ fn union_combines_two_different_scopes_and_renumbers_params() {
 }
 
 #[test]
+fn one_column_branches_match_on_their_value_type_alone() {
+    let live = select(users::email).from::<Postgres, _>(users::Table);
+    let archived = select(archived_users::email).from::<Postgres, _>(archived_users::Table);
+
+    let (sql, _params) = live.union(&archived).to_sql();
+    assert_eq!(
+        sql,
+        "(SELECT \"users\".\"email\" FROM \"users\") \
+         UNION \
+         (SELECT \"archived_users\".\"email\" FROM \"archived_users\")"
+    );
+}
+
+#[test]
 fn union_all_intersect_except_use_their_own_keywords() {
     let a = select((users::id,)).from::<Postgres, _>(users::Table);
     let b = select((archived_users::id,)).from::<Postgres, _>(archived_users::Table);

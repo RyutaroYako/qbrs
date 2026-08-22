@@ -591,6 +591,12 @@ macro_rules! sql_leaf_type {
             const NULL_VALUE: Value = Value::$null_variant;
         }
 
+        impl crate::row::SameShape<$native> for $native {}
+        impl crate::row::SameShape<::std::option::Option<$native>>
+            for ::std::option::Option<$native>
+        {
+        }
+
         // A nullable `prepare!{}` parameter binds through here, which is what
         // the typed `NullX` variants exist for.
         impl From<::std::option::Option<$native>> for Value {

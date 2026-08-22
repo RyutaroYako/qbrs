@@ -251,7 +251,9 @@ macro_rules! key_list {
 }
 
 /// Two selections produce the same row: the same column names, in the same
-/// order, decoding to the same types. Names as well as types, because a
+/// order, decoding to the same types. A one-column selection decodes to a
+/// bare value rather than a `Row`, and two of those match when the value
+/// types do — there is no name to disagree about. Names as well as types, because a
 /// `UNION` branch or a CTE body whose columns merely happen to be
 /// type-compatible would otherwise splice in transposed.
 #[diagnostic::on_unimplemented(
@@ -260,11 +262,11 @@ macro_rules! key_list {
 )]
 pub trait SameShape<Other> {}
 
-impl<A, B> SameShape<B> for A
+impl<A, B> SameShape<Row<B>> for Row<A>
 where
-    A: RowValues + RowKeys,
-    B: RowValues<Values = <A as RowValues>::Values> + RowKeys,
-    <A as RowKeys>::Keys: SameNames<<B as RowKeys>::Keys>,
+    Row<A>: RowValues + RowKeys,
+    Row<B>: RowValues<Values = <Row<A> as RowValues>::Values> + RowKeys,
+    <Row<A> as RowKeys>::Keys: SameNames<<Row<B> as RowKeys>::Keys>,
 {
 }
 
