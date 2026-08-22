@@ -12,7 +12,7 @@ use std::marker::PhantomData;
 use crate::dialect::{Dialect, SupportsOnConflict, SupportsReturning};
 use crate::expr::{Column, ColumnKey, Value};
 use crate::render::{SelectItem, render_ident, render_select_list};
-use crate::scope::{Cons, Nil, NotNull, Table, TableSlot};
+use crate::scope::{BaseTable, Cons, Nil, NotNull, Table, TableSlot};
 use crate::select::Selection;
 use crate::update::UpdateRow;
 
@@ -126,6 +126,13 @@ fn render_conflict_clause<D: Dialect>(
     match &clause.action {
         ConflictAction::DoNothing => sql.push_str(" DO NOTHING"),
         ConflictAction::DoUpdate(sets) => {
+            // Same reason `update` refuses one: `DO UPDATE SET` with nothing
+            // after it is not a statement, and `*Update`'s derived `Default`
+            // is exactly that shape.
+            assert!(
+                !sets.is_empty(),
+                "ON CONFLICT DO UPDATE must set at least one column; every field of this `*Update` is untouched"
+            );
             sql.push_str(" DO UPDATE SET ");
             for (i, (col, val)) in sets.iter().enumerate() {
                 if i > 0 {
@@ -144,7 +151,7 @@ pub struct InsertSeed<D, T> {
     _marker: PhantomData<fn() -> (D, T)>,
 }
 
-pub fn insert<D, T: Table>(_table: T) -> InsertSeed<D, T> {
+pub fn insert<D, T: BaseTable>(_table: T) -> InsertSeed<D, T> {
     InsertSeed {
         _marker: PhantomData,
     }

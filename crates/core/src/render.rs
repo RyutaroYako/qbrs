@@ -170,81 +170,90 @@ pub(crate) fn render_select_list<D: Dialect>(
     }
 }
 
-/// The byte a not-yet-numbered bind parameter occupies inside a `Fragment`.
-/// Not `?`, because `sql!{}` text may contain a literal one and a fragment
-/// is spliced more than once on its way into a query — a subquery inside a
-/// `UNION` branch renders twice — so the marker has to be something the
-/// authored text cannot hold.
+/// The character `RawEmbed` emits where a bind parameter will go, used only
+/// between rendering a nested query and splitting it into segments. A
+/// `sql!{}` literal may not contain one, which `from_authored` checks.
 pub(crate) const BIND_MARKER: char = '\u{1}';
 
 /// A piece of SQL destined to be embedded in a larger query: a subquery, a
-/// CTE body, a set-operation branch, or a `sql!{}` escape hatch. Its bind
-/// parameters are always written as `?`, never in a dialect's own style,
-/// because their final numbering depends on how much of the host query has
-/// already been rendered — `splice_into` assigns it.
+/// CTE body, a set-operation branch, or a `sql!{}` escape hatch. Held as the
+/// text *between* its bind parameters, so a parameter is a position rather
+/// than a character — nothing has to be escaped, and re-splicing an already
+/// spliced fragment can't confuse the two.
 #[derive(Debug, Clone)]
 pub struct Fragment {
-    sql: String,
+    /// One more segment than there are params: `s0 ? s1 ? s2`.
+    segments: Vec<String>,
     params: Vec<Value>,
 }
 
 impl Fragment {
-    /// `sql` must use `BIND_MARKER` for every bind parameter, with one entry
-    /// in `params` per marker, in order.
-    pub(crate) fn new(sql: String, params: Vec<Value>) -> Self {
-        Fragment { sql, params }
+    /// One segment per gap, one param per boundary.
+    pub(crate) fn new(segments: Vec<String>, params: Vec<Value>) -> Self {
+        debug_assert_eq!(segments.len(), params.len() + 1);
+        Fragment { segments, params }
     }
 
-    /// Builds a fragment from `sql!{}`'s authored text, where a bind slot is
-    /// `?` and `??` is a literal one. Doing the substitution once, here,
-    /// is what keeps the two from ever being the same character again.
-    pub(crate) fn from_authored(sql: &str, params: Vec<Value>) -> Self {
-        let mut out = String::with_capacity(sql.len());
-        let mut slots = 0usize;
+    /// Splits a nested query's rendered text on the markers `RawEmbed` left
+    /// where its parameters go.
+    pub(crate) fn from_rendered(sql: &str, params: Vec<Value>) -> Self {
+        let segments: Vec<String> = sql.split(BIND_MARKER).map(str::to_string).collect();
+        Fragment::new(segments, params)
+    }
+
+    /// Splits `sql!{}`'s authored text on its `?` placeholders. `??` is a
+    /// literal `?`.
+    pub(crate) fn from_authored(sql: &'static str, params: Vec<Value>) -> Self {
+        assert!(
+            !sql.contains(BIND_MARKER),
+            "`sql!` text may not contain U+0001"
+        );
+        let mut segments = vec![String::new()];
         let mut chars = sql.chars().peekable();
         while let Some(c) = chars.next() {
             if c != '?' {
-                out.push(c);
+                segments.last_mut().expect("one segment to start").push(c);
                 continue;
             }
             if chars.peek() == Some(&'?') {
                 chars.next();
-                out.push('?');
+                segments.last_mut().expect("one segment to start").push('?');
             } else {
-                out.push(BIND_MARKER);
-                slots += 1;
+                segments.push(String::new());
             }
         }
         assert_eq!(
-            slots,
+            segments.len() - 1,
             params.len(),
             "`sql!` has {} `?` placeholders but was given {} values (write `??` for a literal `?`)",
-            slots,
+            segments.len() - 1,
             params.len()
         );
-        Fragment { sql: out, params }
+        Fragment { segments, params }
     }
 
     /// Wraps the fragment in surrounding SQL, e.g. `EXISTS (`..`)`.
-    pub(crate) fn enclosed_in(self, before: &str, after: &str) -> Self {
-        Fragment {
-            sql: format!("{before}{}{after}", self.sql),
-            params: self.params,
-        }
+    pub(crate) fn enclosed_in(mut self, before: &str, after: &str) -> Self {
+        self.segments
+            .first_mut()
+            .expect("at least one segment")
+            .insert_str(0, before);
+        self.segments
+            .last_mut()
+            .expect("at least one segment")
+            .push_str(after);
+        self
     }
 
-    /// Appends this fragment to a query being rendered, renumbering its bind
-    /// markers to continue `params`' sequence.
+    /// Appends this fragment to a query being rendered, numbering its
+    /// parameters into `params`' sequence.
     pub(crate) fn splice_into<D: Dialect>(&self, out: &mut String, params: &mut Vec<Value>) {
-        let mut next = self.params.iter();
-        for c in self.sql.chars() {
-            if c != BIND_MARKER {
-                out.push(c);
-                continue;
+        for (i, segment) in self.segments.iter().enumerate() {
+            out.push_str(segment);
+            if let Some(value) = self.params.get(i) {
+                params.push(value.clone());
+                out.push_str(&D::placeholder(params.len()));
             }
-            let value = next.next().expect("one value per bind marker");
-            params.push(value.clone());
-            out.push_str(&D::placeholder(params.len()));
         }
     }
 }

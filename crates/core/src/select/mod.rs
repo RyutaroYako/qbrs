@@ -415,6 +415,18 @@ impl<D: Dialect, Scope, Sel> Select<D, Scope, Sel> {
         self.render_as::<D, Idx>()
     }
 
+    /// `SELECT count(*)` over this query's `FROM`/`JOIN`/`WHERE`/`GROUP BY`,
+    /// dropping its `ORDER BY`/`LIMIT`/`OFFSET` — a total is about the rows
+    /// that match, not the page being shown. `reselect(count())` keeps them,
+    /// which is what makes it the wrong tool for a paginated total.
+    pub fn count_sql(&self) -> (String, Vec<Value>) {
+        let mut body = self.body.clone();
+        body.order_by.clear();
+        body.limit = None;
+        body.offset = None;
+        body.render::<D>(&[crate::expr::count_item()])
+    }
+
     /// This query as an embeddable `Fragment`: an `EXISTS (..)` subquery, a
     /// CTE body, or a set-operation branch. The only way to produce one, so
     /// no caller has to remember that an embedded query renders with `?`
@@ -424,7 +436,7 @@ impl<D: Dialect, Scope, Sel> Select<D, Scope, Sel> {
         Sel: Selection<Scope, Idx>,
     {
         let (sql, params) = self.render_as::<RawEmbed<D>, Idx>();
-        Fragment::new(sql, params)
+        Fragment::from_rendered(&sql, params)
     }
 
     fn render_as<RD: Dialect, Idx>(&self) -> (String, Vec<Value>)

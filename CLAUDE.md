@@ -26,7 +26,8 @@ cargo test -p qbrs-core --test select_smoke                 # one test binary
 cargo test -p qbrs-core --test select_smoke left_join_renders_and_typechecks   # one test
 cargo test -p qbrs-sqlx                                     # real-Postgres integration tests
 cargo run -p qbrs-examples --example 02_select_join          # one runnable example
-cargo build -p compile-bench --bin joins_40                  # compile-time regression check (join depth)
+cargo build -p compile-bench --bin joins_40                  # scope-resolution depth
+cargo build -p compile-bench --bin join_chain_20             # ...through a real builder chain
 cargo build -p compile-bench --bin cols_16                   # ...and selection width
 ```
 

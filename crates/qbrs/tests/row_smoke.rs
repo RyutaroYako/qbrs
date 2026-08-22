@@ -228,3 +228,28 @@ fn a_row_can_be_walked_by_a_downstream_trait() {
         ]
     );
 }
+
+#[test]
+fn a_count_drops_the_paging_the_page_needed() {
+    let base = select((users::email,))
+        .from::<Postgres, _>(users::Table)
+        .filter(users::active.eq(true));
+    let page = base
+        .clone()
+        .order_by(users::id.asc())
+        .limit(20u32)
+        .offset(40u32);
+    assert_eq!(
+        page.count_sql().0,
+        "SELECT (count(*)) FROM \"users\" WHERE (\"users\".\"active\" = $1)"
+    );
+}
+
+#[test]
+fn a_named_expression_over_a_column_is_selectable() {
+    qbrs::label!(flagged);
+    let (sql, _) = select((users::id, users::active.eq(true).alias(label::flagged)))
+        .from::<Postgres, _>(users::Table)
+        .to_sql();
+    assert!(sql.contains("AS \"flagged\""), "{sql}");
+}

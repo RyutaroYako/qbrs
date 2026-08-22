@@ -264,7 +264,11 @@ A schema is a `#[derive(Table)]` struct, shown in the
   columns are named differently, or a CTE body with a computed column, needs
   a `label!` alias on one side. A `UNION` also needs both branches to be
   tuple selections, and to agree on nullability.
-- No table aliasing, so a table can't be joined to itself.
+- No table aliasing. A self-join is rejected, but by an inference ambiguity
+  rather than by one of this crate's own diagnostics — and declaring the same
+  SQL table twice as two Rust types, the workaround that suggests itself,
+  compiles and then renders `FROM "t" JOIN "t"`, which the database refuses.
+  Two `#[derive(Table)]` structs must not share a `#[table(name = "..")]`.
 - A correlated `EXISTS` is tagged with the outer query's tables, so it can
   only be filtered onto that query — but `prepare!{}` doesn't tie its
   `Params` struct to the query it was built from, and a mismatch surfaces at

@@ -24,7 +24,7 @@ pub trait Table: 'static {
 #[diagnostic::on_unimplemented(
     message = "`{Self}` isn't a schema table",
     label = "a `with!{{}}` pseudo-table is entered through its `cte::with(..)` binding",
-    note = "use `.from_cte(binding)` / `.join_cte(binding, on)` — binding a CTE is what puts it in scope"
+    note = "use `.from_cte(binding)` or `.inner_join_cte(binding, on)` — binding a CTE is what puts it in scope"
 )]
 pub trait BaseTable: Table {}
 

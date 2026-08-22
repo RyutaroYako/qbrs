@@ -63,11 +63,36 @@ where
     }
 }
 
-impl<K: AliasKey, Inner, Scope, Idx> RowField<Scope, Idx> for Aliased<K, Inner>
+/// An expression that names tables is selectable once it's been given a
+/// name: the alias is where the caller says what the column is called, and
+/// declaring `S` is where they say what it decodes to — the two things a
+/// bare `Expr` leaves unanswered.
+impl<K: AliasKey, Req, S: SqlType, Scope, Idx> RowField<Scope, Idx> for Aliased<K, Expr<Req, S>>
 where
-    Inner: RowField<Scope, Idx>,
+    Scope: Superset<Req, Idx>,
 {
-    type Value = <Inner as RowField<Scope, Idx>>::Value;
+    type Value = S::Native;
+    fn item(&self) -> SelectItem {
+        SelectItem::labeled(self.inner.kind.clone(), <K as Named>::NAME)
+    }
+}
+
+impl<K: AliasKey, C: ColumnKey, Scope, Idx> RowField<Scope, Idx> for Aliased<K, Column<C>>
+where
+    Column<C>: RowField<Scope, Idx>,
+{
+    type Value = <Column<C> as RowField<Scope, Idx>>::Value;
+    fn item(&self) -> SelectItem {
+        SelectItem::labeled(self.inner.item().kind, <K as Named>::NAME)
+    }
+}
+
+impl<K: AliasKey, K0, Req, S: SqlType, Scope, Idx> RowField<Scope, Idx>
+    for Aliased<K, Keyed<K0, Req, S>>
+where
+    Keyed<K0, Req, S>: RowField<Scope, Idx>,
+{
+    type Value = <Keyed<K0, Req, S> as RowField<Scope, Idx>>::Value;
     fn item(&self) -> SelectItem {
         SelectItem::labeled(self.inner.item().kind, <K as Named>::NAME)
     }

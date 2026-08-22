@@ -5,7 +5,7 @@ use std::marker::PhantomData;
 use crate::dialect::{Dialect, SupportsReturning};
 use crate::expr::{Bool, Expr, ExprKind, Value};
 use crate::render::{SelectItem, render_expr, render_ident, render_select_list};
-use crate::scope::{Cons, Nil, NotNull, Superset, Table, TableSlot};
+use crate::scope::{BaseTable, Cons, Nil, NotNull, Superset, Table, TableSlot};
 use crate::select::Selection;
 
 /// Implemented by the `#[derive(Table)]`-generated `*Update` struct: every
@@ -21,7 +21,7 @@ pub struct UpdateSeed<D, T> {
     _marker: PhantomData<fn() -> (D, T)>,
 }
 
-pub fn update<D, T: Table>(_table: T) -> UpdateSeed<D, T> {
+pub fn update<D, T: BaseTable>(_table: T) -> UpdateSeed<D, T> {
     UpdateSeed {
         _marker: PhantomData,
     }
@@ -41,6 +41,14 @@ fn render_set_clause<D: Dialect, T: Table>(
     sets: &[(&'static str, Value)],
     wheres: &[ExprKind],
 ) -> (String, Vec<Value>) {
+    // An `UPDATE` with nothing set has no SQL form, and `*Update`'s derived
+    // `Default` is exactly that shape — the state a PATCH handler holds when
+    // the request changed nothing.
+    assert!(
+        !sets.is_empty(),
+        "an UPDATE must set at least one column; every field of this `*Update` is untouched"
+    );
+
     let mut sql = String::from("UPDATE ");
     render_ident::<D>(&mut sql, T::NAME);
     sql.push_str(" SET ");

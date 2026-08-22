@@ -192,7 +192,7 @@ impl<Req, S: SqlType> Clone for Expr<Req, S> {
 /// bare column, or whatever `Req` an already-built `Expr` carries).
 #[diagnostic::on_unimplemented(
     message = "`{Self}` can't be used as a SQL expression of type `{S}`",
-    note = "to test for NULL use `.is_null()` / `.is_not_null()`; `= NULL` is never true, so an `Option` is not an expression"
+    note = "an `Option` is never one: `= NULL` is never true in SQL, so the question is `.is_null()`"
 )]
 pub trait IntoExpr<S: SqlType> {
     type Req;
@@ -478,11 +478,6 @@ where
     })
 }
 
-/// The SQL types `LIKE` accepts: whatever compares with `Text`, which is
-/// `Text` and its nullable form.
-pub trait TextLike: Comparable<Text> {}
-impl<T: Comparable<Text>> TextLike for T {}
-
 /// `.like()` is text-only, so it's a separate trait rather than part of the
 /// generic `ExprMethods` — still blanket-implemented, so it works directly
 /// on a text column just like `.eq()` does.
@@ -490,8 +485,8 @@ impl<T: Comparable<Text>> TextLike for T {}
     message = "`LIKE` needs a text expression, and `{Self}` isn't one",
     label = "only `Text` and `Nullable<Text>` columns and expressions accept `.like(..)`"
 )]
-pub trait TextExprMethods<S: TextLike>: IntoExpr<S> + Sized {
-    fn like<Rhs, S2: TextLike>(
+pub trait TextExprMethods<S: Comparable<Text>>: IntoExpr<S> + Sized {
+    fn like<Rhs, S2: Comparable<Text>>(
         self,
         rhs: Rhs,
     ) -> Expr<<Self::Req as Concat<Rhs::Req>>::Output, Bool>
@@ -503,7 +498,7 @@ pub trait TextExprMethods<S: TextLike>: IntoExpr<S> + Sized {
         bin_op(BinOp::Like, self, rhs)
     }
 }
-impl<S: TextLike, T: IntoExpr<S>> TextExprMethods<S> for T {}
+impl<S: Comparable<Text>, T: IntoExpr<S>> TextExprMethods<S> for T {}
 
 impl<Req> Expr<Req, Bool> {
     pub fn and<Req2>(self, rhs: Expr<Req2, Bool>) -> Expr<<Req as Concat<Req2>>::Output, Bool>
@@ -563,6 +558,17 @@ macro_rules! sql_leaf_type {
         impl NullValue for $name {
             const NULL_VALUE: Value = Value::$null_variant;
         }
+
+        // A nullable `prepare!{}` parameter binds through here, which is what
+        // the typed `NullX` variants exist for.
+        impl From<::std::option::Option<$native>> for Value {
+            fn from(v: ::std::option::Option<$native>) -> Self {
+                match v {
+                    ::std::option::Option::Some(x) => Value::from(x),
+                    ::std::option::Option::None => Value::$null_variant,
+                }
+            }
+        }
     };
 }
 
@@ -575,6 +581,13 @@ sql_leaf_type!(Bytes, Vec<u8>, NullBytes);
 
 // Ergonomic extra: allow `&str` literals directly, without forcing
 // `.to_string()` at every call site.
+impl IntoExpr<Text> for &String {
+    type Req = Nil;
+    fn into_expr(self) -> Expr<Nil, Text> {
+        Expr::from_kind(ExprKind::Value(Value::Text(self.clone())))
+    }
+}
+
 impl IntoExpr<Text> for &str {
     type Req = Nil;
     fn into_expr(self) -> Expr<Nil, Text> {
@@ -602,9 +615,17 @@ crate::row::expr_key!(
 ///
 /// Counts rows. `count_of(column)` counts that column's non-NULL values,
 /// which is the different question a `LEFT JOIN` makes visible.
+/// `count(*)` as a rendered selection item, for `Select::count_sql`.
+pub(crate) fn count_item() -> crate::render::SelectItem {
+    crate::render::SelectItem::bare(ExprKind::Raw(Fragment::from_authored(
+        "count(*)",
+        Vec::new(),
+    )))
+}
+
 pub fn count() -> Keyed<Count, Nil, BigInt> {
-    Keyed::from_kind(ExprKind::Raw(Fragment::new(
-        "count(*)".to_string(),
+    Keyed::from_kind(ExprKind::Raw(Fragment::from_authored(
+        "count(*)",
         Vec::new(),
     )))
 }
@@ -742,8 +763,8 @@ aggregate!(
 /// `Nil` rather than being a parameter, so a raw fragment can't claim a
 /// scope it hasn't got.
 #[doc(hidden)]
-pub fn raw_expr<S: SqlType>(sql: String, params: Vec<Value>) -> Expr<Nil, S> {
-    Expr::from_kind(ExprKind::Raw(Fragment::from_authored(&sql, params)))
+pub fn raw_expr<S: SqlType>(sql: &'static str, params: Vec<Value>) -> Expr<Nil, S> {
+    Expr::from_kind(ExprKind::Raw(Fragment::from_authored(sql, params)))
 }
 
 /// A named, typed placeholder: usable anywhere a value of type `S` is

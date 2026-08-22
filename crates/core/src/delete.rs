@@ -5,10 +5,10 @@ use std::marker::PhantomData;
 use crate::dialect::{Dialect, SupportsReturning};
 use crate::expr::{Bool, Expr, ExprKind, Value};
 use crate::render::{SelectItem, render_expr, render_ident, render_select_list};
-use crate::scope::{Cons, Nil, NotNull, Superset, Table, TableSlot};
+use crate::scope::{BaseTable, Cons, Nil, NotNull, Superset, Table, TableSlot};
 use crate::select::Selection;
 
-pub fn delete<D, T: Table>(_table: T) -> Delete<D, T> {
+pub fn delete<D, T: BaseTable>(_table: T) -> Delete<D, T> {
     Delete {
         wheres: Vec::new(),
         _marker: PhantomData,

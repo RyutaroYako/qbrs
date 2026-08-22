@@ -156,6 +156,27 @@ where
     }
 }
 
+/// `SELECT count(*)` over a query's `FROM`/`JOIN`/`WHERE`/`GROUP BY`, with
+/// its `ORDER BY`/`LIMIT`/`OFFSET` dropped — a total counts the rows that
+/// match, not the page being shown. Returns a number rather than an
+/// `Option`, since a count query always produces exactly one row.
+pub trait CountExt {
+    fn count<'e, E: sqlx::PgExecutor<'e>>(
+        &self,
+        executor: E,
+    ) -> impl std::future::Future<Output = Result<i64>>;
+}
+
+impl<Scope, Sel> CountExt for Select<Postgres, Scope, Sel> {
+    async fn count<'e, E: sqlx::PgExecutor<'e>>(&self, executor: E) -> Result<i64> {
+        let (sql, params) = self.count_sql();
+        let row = bind_all(sqlx::query(sqlx::AssertSqlSafe(sql.as_str())), params)?
+            .fetch_one(executor)
+            .await?;
+        Ok(row.try_get::<i64, _>(0)?)
+    }
+}
+
 pub trait ExecuteExt {
     fn execute<'e, E: sqlx::PgExecutor<'e>>(
         &self,
