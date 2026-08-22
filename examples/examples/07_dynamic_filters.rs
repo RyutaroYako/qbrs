@@ -56,10 +56,10 @@ async fn main() {
         },
     ] {
         let query = apply_search(
-            select((users::email,)).from::<Postgres, _>(users::Table),
+            select(users::email).from::<Postgres, _>(users::Table),
             &search,
         );
-        let rows: Vec<(String,)> = query.load(&pool).await.expect("search users");
+        let rows: Vec<String> = query.load(&pool).await.expect("search users");
         println!(
             "email_contains={:?} active_only={} -> {rows:?}",
             search.email_contains, search.active_only
@@ -71,10 +71,10 @@ async fn main() {
     // the builder's type never changes, so an arbitrary (including zero)
     // number of iterations is fine.
     let candidate_filters = vec![Some(users::active.eq(true)), None];
-    let mut query = select((users::email,)).from::<Postgres, _>(users::Table);
+    let mut query = select(users::email).from::<Postgres, _>(users::Table);
     for cond in candidate_filters.into_iter().flatten() {
         query = query.filter(cond);
     }
-    let rows: Vec<(String,)> = query.load(&pool).await.expect("looped filters");
+    let rows: Vec<String> = query.load(&pool).await.expect("looped filters");
     println!("looped-filter result: {rows:?}");
 }

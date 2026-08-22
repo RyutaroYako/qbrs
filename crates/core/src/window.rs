@@ -1,35 +1,23 @@
 //! Window functions: `row_number()`/`rank()`/`dense_rank()` `.over(window()
 //! .partition_by(..).order_by(..))`.
 //!
-//! `WindowFunc<S>` (not `Expr<Req, S>`) is what `row_number()`/`rank()`/
-//! `dense_rank()` return — a deliberately narrow type whose *only* method is
-//! `.over()`. This is what keeps `.over()` from being callable on an
-//! arbitrary `Expr` (e.g. `users::id.over(..)`, which would type-check but
-//! render nonsense SQL, or worse, need a runtime check/panic to reject) —
-//! the "no compromise between type safety and flexibility" principle this
-//! whole crate is built on ruled out a design where `.over()` is generic
-//! over any `Expr<Req, S>` and just hopes its `ExprKind` happens to be a
-//! bare function call.
+//! `row_number()`/`rank()`/`dense_rank()` return `WindowFunc<S>`, whose only
+//! method is `.over()`, so `.over()` can't be reached from an arbitrary
+//! expression that would render nonsense SQL.
 //!
-//! **Known limitation**: only niladic ranking functions are supported —
-//! `sum(col).over(..)`/`avg(col).over(..)` (aggregate functions used as
-//! window functions) need the same real function-call design already
-//! deferred for `expr::count()` (see its doc comment), since those need to
-//! recursively render an inner column reference, not just a literal
-//! function-name string. Deferred rather than half-supported by silently
-//! falling back to `sql!{}` for that one case.
+//! **Known limitation**: only niladic ranking functions. `sum(col).over(..)`
+//! and friends need the real function-call design already deferred for
+//! `expr::count()`, since they recurse into an inner column reference.
 
 use std::marker::PhantomData;
 
-use crate::expr::{BigInt, Expr, ExprKind, IntoExpr, SortDir, SqlType};
+use crate::expr::{BigInt, ExprKind, IntoExpr, Keyed, SortDir, SqlType};
 use crate::scope::{Concat, Nil};
 use crate::select::OrderKey;
 
-/// Accumulates a window's `PARTITION BY`/`ORDER BY` lists, tracking `Req`
-/// (the tables referenced) via `Concat` across calls exactly the way
-/// `Expr::and`/`Expr::or` do — so partitioning or ordering by a column that
-/// isn't actually in the query's scope is a `Superset` failure at
-/// `.select()`/`.filter()`/etc. time, the same as any other expression.
+/// Accumulates a window's `PARTITION BY`/`ORDER BY` lists, growing `Req`
+/// via `Concat` as `Expr::and`/`or` do — so partitioning by an out-of-scope
+/// column fails the same `Superset` check any other expression would.
 pub struct Window<Req> {
     partition_by: Vec<ExprKind>,
     order_by: Vec<(ExprKind, SortDir)>,
@@ -78,18 +66,21 @@ impl<Req> Window<Req> {
 }
 
 /// A bare, argument-free window function reference (`row_number()`,
-/// `rank()`, `dense_rank()`) — not yet a usable `Expr`, since a window
+/// `rank()`, `dense_rank()`) — not yet a usable expression, since a window
 /// function has no meaning without an `OVER (..)` clause. See this module's
 /// doc comment for why this is a separate type from `Expr` rather than
 /// `Expr` itself.
-pub struct WindowFunc<S: SqlType> {
+///
+/// `K` is the row key `.over(..)` stamps onto the result, so a selected
+/// `row_number()` is readable as `row.row_number()` with nothing declared.
+pub struct WindowFunc<K, S: SqlType> {
     sql: &'static str,
-    _marker: PhantomData<S>,
+    _marker: PhantomData<fn() -> (K, S)>,
 }
 
-impl<S: SqlType> WindowFunc<S> {
-    pub fn over<WindowReq>(self, window: Window<WindowReq>) -> Expr<WindowReq, S> {
-        Expr::from_kind(ExprKind::Window {
+impl<K, S: SqlType> WindowFunc<K, S> {
+    pub fn over<WindowReq>(self, window: Window<WindowReq>) -> Keyed<K, WindowReq, S> {
+        Keyed::from_kind(ExprKind::Window {
             func: self.sql.to_string(),
             partition_by: window.partition_by,
             order_by: window.order_by,
@@ -97,27 +88,46 @@ impl<S: SqlType> WindowFunc<S> {
     }
 }
 
-fn window_func<S: SqlType>(sql: &'static str) -> WindowFunc<S> {
+fn window_func<K, S: SqlType>(sql: &'static str) -> WindowFunc<K, S> {
     WindowFunc {
         sql,
         _marker: PhantomData,
     }
 }
 
+crate::row::expr_key!(
+    RowNumber,
+    HasRowNumber,
+    row_number,
+    "The identity a selected `row_number() OVER (..)` is filed under in a row."
+);
+crate::row::expr_key!(
+    Rank,
+    HasRank,
+    rank,
+    "The identity a selected `rank() OVER (..)` is filed under in a row."
+);
+crate::row::expr_key!(
+    DenseRank,
+    HasDenseRank,
+    dense_rank,
+    "The identity a selected `dense_rank() OVER (..)` is filed under in a row."
+);
+
 /// `ROW_NUMBER() OVER (..)` — a unique, sequential number per row within its
 /// partition, ordered by the window's `ORDER BY`.
-pub fn row_number() -> WindowFunc<BigInt> {
+pub fn row_number() -> WindowFunc<RowNumber, BigInt> {
     window_func("row_number()")
 }
 
 /// `RANK() OVER (..)` — like `row_number()`, but rows tied on the `ORDER BY`
 /// key share the same rank, leaving a gap in the sequence afterward.
-pub fn rank() -> WindowFunc<BigInt> {
+pub fn rank() -> WindowFunc<Rank, BigInt> {
     window_func("rank()")
 }
 
 /// `DENSE_RANK() OVER (..)` — like `rank()`, but without the gap after a
 /// tie.
-pub fn dense_rank() -> WindowFunc<BigInt> {
+pub fn dense_rank() -> WindowFunc<DenseRank, BigInt> {
     window_func("dense_rank()")
 }

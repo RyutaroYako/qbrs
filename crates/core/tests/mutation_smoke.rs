@@ -19,9 +19,36 @@ mod users {
     use qbrs_core::expr::{Column, Integer, Text};
 
     pub const Table: UsersMarker = UsersMarker;
-    pub const id: Column<UsersMarker, Integer> = Column::new("id");
-    pub const email: Column<UsersMarker, Text> = Column::new("email");
-    pub const display_name: Column<UsersMarker, Text> = Column::new("display_name");
+    #[allow(non_camel_case_types)]
+    pub mod columns {
+        use super::*;
+        use qbrs_core::expr::ColumnKey;
+        #[derive(Clone, Copy)]
+        pub struct id;
+        impl ColumnKey for id {
+            type Table = UsersMarker;
+            type Sql = Integer;
+            const NAME: &'static str = "id";
+        }
+        #[derive(Clone, Copy)]
+        pub struct email;
+        impl ColumnKey for email {
+            type Table = UsersMarker;
+            type Sql = Text;
+            const NAME: &'static str = "email";
+        }
+        #[derive(Clone, Copy)]
+        pub struct display_name;
+        impl ColumnKey for display_name {
+            type Table = UsersMarker;
+            type Sql = Text;
+            const NAME: &'static str = "display_name";
+        }
+    }
+
+    pub const id: Column<columns::id> = Column::new();
+    pub const email: Column<columns::email> = Column::new();
+    pub const display_name: Column<columns::display_name> = Column::new();
 }
 
 // What #[derive(Table)] will generate for:

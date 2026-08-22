@@ -1,9 +1,6 @@
-//! Validates the Phase 2 question the design plan explicitly flagged:
-//! does the capability-gating abstraction actually work for a second,
-//! meaningfully-different dialect, not just Postgres? Checked at the SQL-
-//! rendering level (no live MySQL/SQLite server involved — `qbrs-sqlx`
-//! only wires up Postgres execution so far; that's separately-scoped
-//! future work, not part of "does the type-level gating work").
+//! Does capability gating hold up for a second, meaningfully-different
+//! dialect, not just Postgres? Checked at the SQL-rendering level; execution
+//! is Postgres-only so far.
 
 use qbrs_core::dialect::{MySql, Sqlite};
 use qbrs_core::expr::ExprMethods;
@@ -22,8 +19,28 @@ mod users {
     use qbrs_core::expr::{Column, Integer, Text};
 
     pub const Table: UsersMarker = UsersMarker;
-    pub const id: Column<UsersMarker, Integer> = Column::new("id");
-    pub const email: Column<UsersMarker, Text> = Column::new("email");
+    #[allow(non_camel_case_types)]
+    pub mod columns {
+        use super::*;
+        use qbrs_core::expr::ColumnKey;
+        #[derive(Clone, Copy)]
+        pub struct id;
+        impl ColumnKey for id {
+            type Table = UsersMarker;
+            type Sql = Integer;
+            const NAME: &'static str = "id";
+        }
+        #[derive(Clone, Copy)]
+        pub struct email;
+        impl ColumnKey for email {
+            type Table = UsersMarker;
+            type Sql = Text;
+            const NAME: &'static str = "email";
+        }
+    }
+
+    pub const id: Column<columns::id> = Column::new();
+    pub const email: Column<columns::email> = Column::new();
 }
 
 struct UsersInsert {

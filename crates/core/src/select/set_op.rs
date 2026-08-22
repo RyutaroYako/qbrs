@@ -1,26 +1,19 @@
 //! `UNION`/`UNION ALL`/`INTERSECT`/`EXCEPT` between two `SELECT`s that may
 //! have entirely different `Scope`s (different tables, different JOINs) —
-//! the only thing that must line up is their *output shape*. Rather than
-//! inventing a separate `SameShape<A, B>` trait (as the design plan
-//! originally sketched), this reuses `Selection::Output` associated-type
-//! equality directly: `SelB: Selection<ScopeB, IdxB, Output = Sel::Output>`
-//! already means "decodes to the exact same Rust tuple", which is exactly
-//! what a SQL set operation requires (same column count, compatible types)
-//! — no new trait needed.
-//!
-//! Each branch is rendered independently via `RawEmbed<D>` (see its doc
-//! comment) into `?`-placeholder text, then spliced together and renumbered
-//! into the outer dialect's placeholder style at `.to_sql()` time via
-//! `render::splice_raw` — the same mechanism `Select::exists`/`not_exists`
-//! use to embed a subquery, generalized to top-level branches joined by a
-//! set operator instead of by `EXISTS (..)`.
+//! the only thing that must line up is their *output shape*, expressed as
+//! `row::RowValues` associated-type equality: two branches must decode to
+//! the exact same Rust tuple, i.e. same column count and compatible types.
+//! Row *keys* deliberately don't have to match, since branches over
+//! different tables never share them, and SQL itself takes a `UNION`'s
+//! column names from the first branch.
 
 use std::marker::PhantomData;
 
 use super::{Select, Selection, SortDir};
-use crate::dialect::{Dialect, RawEmbed};
+use crate::dialect::Dialect;
 use crate::expr::Value;
-use crate::render::splice_raw;
+use crate::render::Fragment;
+use crate::row::RowValues;
 
 enum SetOpKind {
     Union,
@@ -47,8 +40,8 @@ impl SetOpKind {
 /// check a column reference against once they're combined; ordinal position
 /// is the only reference SQL itself allows in this position.
 pub struct SetOp<D, Output> {
-    first: (String, Vec<Value>),
-    rest: Vec<(SetOpKind, String, Vec<Value>)>,
+    first: Fragment,
+    rest: Vec<(SetOpKind, Fragment)>,
     order_by: Vec<(u32, SortDir)>,
     limit: Option<i64>,
     offset: Option<i64>,
@@ -56,7 +49,7 @@ pub struct SetOp<D, Output> {
 }
 
 impl<D: Dialect, Output> SetOp<D, Output> {
-    fn new(first: (String, Vec<Value>)) -> Self {
+    fn new(first: Fragment) -> Self {
         SetOp {
             first,
             rest: Vec::new(),
@@ -67,8 +60,8 @@ impl<D: Dialect, Output> SetOp<D, Output> {
         }
     }
 
-    fn push(mut self, kind: SetOpKind, branch: (String, Vec<Value>)) -> Self {
-        self.rest.push((kind, branch.0, branch.1));
+    fn push(mut self, kind: SetOpKind, branch: Fragment) -> Self {
+        self.rest.push((kind, branch));
         self
     }
 
@@ -76,9 +69,10 @@ impl<D: Dialect, Output> SetOp<D, Output> {
     /// removed, same as plain SQL `UNION`).
     pub fn union<ScopeB, SelB, IdxB>(self, other: &Select<D, ScopeB, SelB>) -> Self
     where
-        SelB: Selection<ScopeB, IdxB, Output = Output>,
+        SelB: Selection<ScopeB, IdxB>,
+        SelB::Output: RowValues<Values = Output>,
     {
-        self.push(SetOpKind::Union, other.render_as::<RawEmbed<D>, IdxB>())
+        self.push(SetOpKind::Union, other.fragment::<IdxB>())
     }
 
     /// Appends another branch via `UNION ALL` (no deduplication — cheaper
@@ -86,26 +80,29 @@ impl<D: Dialect, Output> SetOp<D, Output> {
     /// duplicates are meaningful).
     pub fn union_all<ScopeB, SelB, IdxB>(self, other: &Select<D, ScopeB, SelB>) -> Self
     where
-        SelB: Selection<ScopeB, IdxB, Output = Output>,
+        SelB: Selection<ScopeB, IdxB>,
+        SelB::Output: RowValues<Values = Output>,
     {
-        self.push(SetOpKind::UnionAll, other.render_as::<RawEmbed<D>, IdxB>())
+        self.push(SetOpKind::UnionAll, other.fragment::<IdxB>())
     }
 
     /// Appends another branch via `INTERSECT` (rows present in both).
     pub fn intersect<ScopeB, SelB, IdxB>(self, other: &Select<D, ScopeB, SelB>) -> Self
     where
-        SelB: Selection<ScopeB, IdxB, Output = Output>,
+        SelB: Selection<ScopeB, IdxB>,
+        SelB::Output: RowValues<Values = Output>,
     {
-        self.push(SetOpKind::Intersect, other.render_as::<RawEmbed<D>, IdxB>())
+        self.push(SetOpKind::Intersect, other.fragment::<IdxB>())
     }
 
     /// Appends another branch via `EXCEPT` (rows in the accumulated result
     /// so far, minus rows in `other`).
     pub fn except<ScopeB, SelB, IdxB>(self, other: &Select<D, ScopeB, SelB>) -> Self
     where
-        SelB: Selection<ScopeB, IdxB, Output = Output>,
+        SelB: Selection<ScopeB, IdxB>,
+        SelB::Output: RowValues<Values = Output>,
     {
-        self.push(SetOpKind::Except, other.render_as::<RawEmbed<D>, IdxB>())
+        self.push(SetOpKind::Except, other.fragment::<IdxB>())
     }
 
     /// Orders the combined result by the `position`th (1-indexed) selected
@@ -132,13 +129,13 @@ impl<D: Dialect, Output> SetOp<D, Output> {
         let mut params = Vec::new();
 
         sql.push('(');
-        splice_raw::<D>(&self.first.0, &self.first.1, &mut sql, &mut params);
+        self.first.splice_into::<D>(&mut sql, &mut params);
         sql.push(')');
 
-        for (kind, text, branch_params) in &self.rest {
+        for (kind, branch) in &self.rest {
             sql.push_str(kind.keyword());
             sql.push('(');
-            splice_raw::<D>(text, branch_params, &mut sql, &mut params);
+            branch.splice_into::<D>(&mut sql, &mut params);
             sql.push(')');
         }
 
@@ -175,44 +172,52 @@ impl<D: Dialect, Scope, Sel> Select<D, Scope, Sel> {
     pub fn union<ScopeB, SelB, IdxA, IdxB>(
         &self,
         other: &Select<D, ScopeB, SelB>,
-    ) -> SetOp<D, Sel::Output>
+    ) -> SetOp<D, <Sel::Output as RowValues>::Values>
     where
         Sel: Selection<Scope, IdxA>,
-        SelB: Selection<ScopeB, IdxB, Output = Sel::Output>,
+        Sel::Output: RowValues,
+        SelB: Selection<ScopeB, IdxB>,
+        SelB::Output: RowValues<Values = <Sel::Output as RowValues>::Values>,
     {
-        SetOp::new(self.render_as::<RawEmbed<D>, IdxA>()).union(other)
+        SetOp::new(self.fragment::<IdxA>()).union(other)
     }
 
     pub fn union_all<ScopeB, SelB, IdxA, IdxB>(
         &self,
         other: &Select<D, ScopeB, SelB>,
-    ) -> SetOp<D, Sel::Output>
+    ) -> SetOp<D, <Sel::Output as RowValues>::Values>
     where
         Sel: Selection<Scope, IdxA>,
-        SelB: Selection<ScopeB, IdxB, Output = Sel::Output>,
+        Sel::Output: RowValues,
+        SelB: Selection<ScopeB, IdxB>,
+        SelB::Output: RowValues<Values = <Sel::Output as RowValues>::Values>,
     {
-        SetOp::new(self.render_as::<RawEmbed<D>, IdxA>()).union_all(other)
+        SetOp::new(self.fragment::<IdxA>()).union_all(other)
     }
 
     pub fn intersect<ScopeB, SelB, IdxA, IdxB>(
         &self,
         other: &Select<D, ScopeB, SelB>,
-    ) -> SetOp<D, Sel::Output>
+    ) -> SetOp<D, <Sel::Output as RowValues>::Values>
     where
         Sel: Selection<Scope, IdxA>,
-        SelB: Selection<ScopeB, IdxB, Output = Sel::Output>,
+        Sel::Output: RowValues,
+        SelB: Selection<ScopeB, IdxB>,
+        SelB::Output: RowValues<Values = <Sel::Output as RowValues>::Values>,
     {
-        SetOp::new(self.render_as::<RawEmbed<D>, IdxA>()).intersect(other)
+        SetOp::new(self.fragment::<IdxA>()).intersect(other)
     }
 
     pub fn except<ScopeB, SelB, IdxA, IdxB>(
         &self,
         other: &Select<D, ScopeB, SelB>,
-    ) -> SetOp<D, Sel::Output>
+    ) -> SetOp<D, <Sel::Output as RowValues>::Values>
     where
         Sel: Selection<Scope, IdxA>,
-        SelB: Selection<ScopeB, IdxB, Output = Sel::Output>,
+        Sel::Output: RowValues,
+        SelB: Selection<ScopeB, IdxB>,
+        SelB::Output: RowValues<Values = <Sel::Output as RowValues>::Values>,
     {
-        SetOp::new(self.render_as::<RawEmbed<D>, IdxA>()).except(other)
+        SetOp::new(self.fragment::<IdxA>()).except(other)
     }
 }

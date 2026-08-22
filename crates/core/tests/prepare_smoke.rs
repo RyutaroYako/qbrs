@@ -1,5 +1,5 @@
 //! `prepare!{}`: named, typed placeholders resolved at `.execute()` time
-//! rather than baked in at query-build time — the last Phase 2 item.
+//! rather than baked in at query-build time.
 
 use qbrs_core::dialect::Postgres;
 use qbrs_core::expr::{ExprMethods, Text};
@@ -17,7 +17,20 @@ mod users {
     use super::UsersMarker;
     use qbrs_core::expr::{Column, Text};
     pub const Table: UsersMarker = UsersMarker;
-    pub const email: Column<UsersMarker, Text> = Column::new("email");
+    #[allow(non_camel_case_types)]
+    pub mod columns {
+        use super::*;
+        use qbrs_core::expr::ColumnKey;
+        #[derive(Clone, Copy)]
+        pub struct email;
+        impl ColumnKey for email {
+            type Table = UsersMarker;
+            type Sql = Text;
+            const NAME: &'static str = "email";
+        }
+    }
+
+    pub const email: Column<columns::email> = Column::new();
 }
 
 prepare! {

@@ -1,21 +1,12 @@
 //! The `SELECT` builder: `select(..).from(..).join(..).filter(..)
-//! .order_by(..).limit(..)`, in SQL keyword order, argument-based (no
-//! turbofish for tables — see the design plan's "surface syntax" section).
-//!
-//! Split into submodules once this file passed ~750 lines: `selection`
-//! (the `Selection` trait deciding what a `.select(..)` list decodes to),
-//! `dyn_select` (the `DynSelect` erasure hatch), and `prepared` (reusable
-//! named-placeholder statements). All three still need `Select`'s private
-//! fields (for `.erase()`/`.prepare()`) or its `render_select_body`/
-//! `JoinClause` rendering internals — Rust's privacy rules make a private
-//! item visible to the defining module *and all of its descendants*, so
-//! those submodules see everything here without needing `pub(crate)`.
+//! .order_by(..).limit(..)`, in SQL keyword order, with tables passed as
+//! arguments rather than by turbofish.
 
 use std::marker::PhantomData;
 
-use crate::dialect::{Dialect, SupportsFullOuterJoin, SupportsRightJoin};
+use crate::dialect::{Dialect, RawEmbed, SupportsFullOuterJoin, SupportsRightJoin};
 use crate::expr::{Bool, Expr, ExprKind, IntoExpr, SqlType, Value};
-use crate::render::render_expr;
+use crate::render::{Fragment, render_expr, render_select_list};
 use crate::scope::{Cons, MapNullable, MaybeNull, Nil, NotNull, Superset, Table, TableSlot};
 
 mod dyn_select;
@@ -24,21 +15,17 @@ mod selection;
 mod set_op;
 
 pub use crate::expr::SortDir;
+pub use crate::render::SelectItem;
 pub use dyn_select::DynSelect;
 pub use prepared::{Prepared, PreparedParams, UnresolvedPlaceholder};
-pub use selection::Selection;
+pub use selection::{RowField, Selection};
 pub use set_op::SetOp;
 
-/// One `name AS (body)` binding accumulated by `SelectSeed::with` — `body`
-/// is already-rendered `?`-placeholder text (see `dialect::RawEmbed`'s doc
-/// comment), spliced and renumbered into the final query's own placeholder
-/// style at `render_select_body` time, the same mechanism `SetOp` uses for
-/// its branches.
+/// One `name AS (body)` binding accumulated by `SelectSeed::with`.
 struct CteDef {
     name: &'static str,
     column_names: &'static [&'static str],
-    sql: String,
-    params: Vec<Value>,
+    body: Fragment,
 }
 
 enum JoinKind {
@@ -64,11 +51,6 @@ pub struct OrderKey<Req> {
 }
 
 impl<Req> OrderKey<Req> {
-    /// Used by `window::Window::order_by` to fold an `OrderKey` into a
-    /// window spec's `ORDER BY` list — `window` isn't a descendant module of
-    /// `select`, so it can't reach these fields directly the way `dyn_select`/
-    /// `prepared`/`set_op` do; `pub(crate)` grants exactly the crate-internal
-    /// access needed without making the fields public API.
     pub(crate) fn into_parts(self) -> (ExprKind, SortDir) {
         (self.kind, self.dir)
     }
@@ -130,8 +112,7 @@ impl<Sel> SelectSeed<Sel> {
         self.ctes.push(CteDef {
             name: cte.name,
             column_names: cte.column_names,
-            sql: cte.sql,
-            params: cte.params,
+            body: cte.body,
         });
         self
     }
@@ -142,22 +123,18 @@ impl<Sel> SelectSeed<Sel> {
     /// `.load(&db)`, its table from the argument's own type).
     pub fn from<D, T: Table>(self, _table: T) -> Select<D, Cons<TableSlot<T, NotNull>, Nil>, Sel> {
         Select {
-            ctes: self.ctes,
-            from_table: T::NAME,
-            joins: Vec::new(),
-            wheres: Vec::new(),
-            order_by: Vec::new(),
-            group_by: Vec::new(),
-            having: Vec::new(),
-            limit: None,
-            offset: None,
+            body: SelectBody::new(T::NAME, self.ctes),
             selection: self.selection,
             _marker: PhantomData,
         }
     }
 }
 
-pub struct Select<D, Scope, Sel> {
+/// Every clause of a `SELECT` except the selection list, which `Select`
+/// keeps typed and `DynSelect` keeps rendered. Held whole by both, so a new
+/// clause is added here once instead of being threaded through each of them
+/// and through rendering by hand.
+pub(super) struct SelectBody {
     ctes: Vec<CteDef>,
     from_table: &'static str,
     joins: Vec<JoinClause>,
@@ -167,6 +144,26 @@ pub struct Select<D, Scope, Sel> {
     having: Vec<ExprKind>,
     limit: Option<i64>,
     offset: Option<i64>,
+}
+
+impl SelectBody {
+    fn new(from_table: &'static str, ctes: Vec<CteDef>) -> Self {
+        SelectBody {
+            ctes,
+            from_table,
+            joins: Vec::new(),
+            wheres: Vec::new(),
+            order_by: Vec::new(),
+            group_by: Vec::new(),
+            having: Vec::new(),
+            limit: None,
+            offset: None,
+        }
+    }
+}
+
+pub struct Select<D, Scope, Sel> {
+    body: SelectBody,
     selection: Sel,
     _marker: PhantomData<fn() -> (D, Scope)>,
 }
@@ -174,29 +171,20 @@ pub struct Select<D, Scope, Sel> {
 impl<D, Scope, Sel> Select<D, Scope, Sel> {
     fn retype<NewScope>(self) -> Select<D, NewScope, Sel> {
         Select {
-            ctes: self.ctes,
-            from_table: self.from_table,
-            joins: self.joins,
-            wheres: self.wheres,
-            order_by: self.order_by,
-            group_by: self.group_by,
-            having: self.having,
-            limit: self.limit,
-            offset: self.offset,
+            body: self.body,
             selection: self.selection,
             _marker: PhantomData,
         }
     }
 
-    /// AND-folded, callable any number of times (conditionally, in a loop,
-    /// from a shared helper function) without changing `Self`'s type — no
-    /// `.$dynamic()`-style escape hatch needed for this, the single most
-    /// common "dynamic query" case. See the design plan section 1.
+    /// AND-folded, and callable any number of times — conditionally, in a
+    /// loop, from a helper — without changing `Self`'s type, so the most
+    /// common kind of dynamic query needs no escape hatch.
     pub fn filter<Req, Idxs>(mut self, cond: Expr<Req, Bool>) -> Self
     where
         Scope: Superset<Req, Idxs>,
     {
-        self.wheres.push(cond.kind);
+        self.body.wheres.push(cond.kind);
         self
     }
 
@@ -204,7 +192,7 @@ impl<D, Scope, Sel> Select<D, Scope, Sel> {
     where
         Scope: Superset<Req, Idxs>,
     {
-        self.order_by.push((key.kind, key.dir));
+        self.body.order_by.push((key.kind, key.dir));
         self
     }
 
@@ -215,7 +203,7 @@ impl<D, Scope, Sel> Select<D, Scope, Sel> {
     where
         Scope: Superset<Req, Idxs>,
     {
-        self.group_by.push(key.into_expr().kind);
+        self.body.group_by.push(key.into_expr().kind);
         self
     }
 
@@ -225,17 +213,17 @@ impl<D, Scope, Sel> Select<D, Scope, Sel> {
     where
         Scope: Superset<Req, Idxs>,
     {
-        self.having.push(cond.kind);
+        self.body.having.push(cond.kind);
         self
     }
 
     pub fn limit(mut self, n: i64) -> Self {
-        self.limit = Some(n);
+        self.body.limit = Some(n);
         self
     }
 
     pub fn offset(mut self, n: i64) -> Self {
-        self.offset = Some(n);
+        self.body.offset = Some(n);
         self
     }
 
@@ -250,7 +238,7 @@ impl<D, Scope, Sel> Select<D, Scope, Sel> {
     where
         Cons<TableSlot<New, NotNull>, Scope>: Superset<Req, Idxs>,
     {
-        self.joins.push(JoinClause {
+        self.body.joins.push(JoinClause {
             kind: JoinKind::Inner,
             table: New::NAME,
             on: on.kind,
@@ -266,7 +254,7 @@ impl<D, Scope, Sel> Select<D, Scope, Sel> {
     where
         Cons<TableSlot<New, MaybeNull>, Scope>: Superset<Req, Idxs>,
     {
-        self.joins.push(JoinClause {
+        self.body.joins.push(JoinClause {
             kind: JoinKind::Left,
             table: New::NAME,
             on: on.kind,
@@ -276,8 +264,7 @@ impl<D, Scope, Sel> Select<D, Scope, Sel> {
 
     /// RIGHT JOIN retroactively flips every already-joined table to
     /// nullable (`MapNullable`) before adding the new, guaranteed-present
-    /// table — mirrors Drizzle's `AppendToNullabilityMap` rule exactly, see
-    /// the design plan section 2.
+    /// table, mirroring Drizzle's `AppendToNullabilityMap` rule.
     pub fn right_join<New: Table, Req, Idxs>(
         mut self,
         _table: New,
@@ -288,7 +275,7 @@ impl<D, Scope, Sel> Select<D, Scope, Sel> {
         Scope: MapNullable,
         Cons<TableSlot<New, NotNull>, Scope::Output>: Superset<Req, Idxs>,
     {
-        self.joins.push(JoinClause {
+        self.body.joins.push(JoinClause {
             kind: JoinKind::Right,
             table: New::NAME,
             on: on.kind,
@@ -306,7 +293,7 @@ impl<D, Scope, Sel> Select<D, Scope, Sel> {
         Scope: MapNullable,
         Cons<TableSlot<New, MaybeNull>, Scope::Output>: Superset<Req, Idxs>,
     {
-        self.joins.push(JoinClause {
+        self.body.joins.push(JoinClause {
             kind: JoinKind::Full,
             table: New::NAME,
             on: on.kind,
@@ -316,11 +303,9 @@ impl<D, Scope, Sel> Select<D, Scope, Sel> {
 }
 
 impl<D: Dialect, Scope, Sel> Select<D, Scope, Sel> {
-    /// The terminal step: this is the *only* point each selected column's
-    /// scope-membership is actually checked (proven as a side effect of
-    /// `Sel: Selection<Scope, Idx>` type-checking at all — see `Selection`'s
-    /// doc comment) — see `SelectSeed`'s docs above for why deferring the
-    /// check this far is safe.
+    /// The terminal step, and the *only* point each selected column's
+    /// scope-membership is checked — proven as a side effect of
+    /// `Sel: Selection<Scope, Idx>` type-checking at all.
     pub fn to_sql<Idx>(&self) -> (String, Vec<Value>)
     where
         Sel: Selection<Scope, Idx>,
@@ -328,132 +313,123 @@ impl<D: Dialect, Scope, Sel> Select<D, Scope, Sel> {
         self.render_as::<D, Idx>()
     }
 
-    /// Shared by `to_sql` (rendered in this statement's own dialect `D`),
-    /// `exists`/`not_exists`, and `cte::with` (all three via `RawEmbed<D>` —
-    /// same identifiers, but `?` placeholders so the fragment can be
-    /// renumbered when spliced into an outer query, see `dialect::RawEmbed`'s
-    /// doc comment). `pub(crate)` (not private) specifically so `crate::cte`
-    /// — a sibling module of `select`, not a descendant — can render a
-    /// `Select` down to `(sql, params)` when binding it as a CTE body.
-    pub(crate) fn render_as<RD: Dialect, Idx>(&self) -> (String, Vec<Value>)
+    /// This query as an embeddable `Fragment`: an `EXISTS (..)` subquery, a
+    /// CTE body, or a set-operation branch. The only way to produce one, so
+    /// no caller has to remember that an embedded query renders with `?`
+    /// placeholders rather than `D`'s own style.
+    pub(crate) fn fragment<Idx>(&self) -> Fragment
     where
         Sel: Selection<Scope, Idx>,
     {
-        render_select_body::<RD>(
-            &self.ctes,
-            self.from_table,
-            &self.joins,
-            &self.selection.exprs(),
-            &self.wheres,
-            &self.group_by,
-            &self.having,
-            &self.order_by,
-            self.limit,
-            self.offset,
-        )
+        let (sql, params) = self.render_as::<RawEmbed<D>, Idx>();
+        Fragment::new(sql, params)
+    }
+
+    fn render_as<RD: Dialect, Idx>(&self) -> (String, Vec<Value>)
+    where
+        Sel: Selection<Scope, Idx>,
+    {
+        self.body.render::<RD>(&self.selection.items())
     }
 }
 
-#[allow(clippy::too_many_arguments)]
-fn render_select_body<RD: Dialect>(
-    ctes: &[CteDef],
-    from_table: &str,
-    joins: &[JoinClause],
-    selection_exprs: &[ExprKind],
-    wheres: &[ExprKind],
-    group_by: &[ExprKind],
-    having: &[ExprKind],
-    order_by: &[(ExprKind, SortDir)],
-    limit: Option<i64>,
-    offset: Option<i64>,
-) -> (String, Vec<Value>) {
-    let mut sql = String::new();
-    let mut params = Vec::new();
+impl SelectBody {
+    pub(super) fn render<RD: Dialect>(&self, selection: &[SelectItem]) -> (String, Vec<Value>) {
+        let SelectBody {
+            ctes,
+            from_table,
+            joins,
+            wheres,
+            order_by,
+            group_by,
+            having,
+            limit,
+            offset,
+        } = self;
+        let (limit, offset) = (*limit, *offset);
+        let mut sql = String::new();
+        let mut params = Vec::new();
 
-    if !ctes.is_empty() {
-        sql.push_str("WITH ");
-        for (i, cte) in ctes.iter().enumerate() {
-            if i > 0 {
-                sql.push_str(", ");
-            }
-            crate::render::render_ident::<RD>(&mut sql, cte.name);
-            sql.push_str(" (");
-            for (i, col) in cte.column_names.iter().enumerate() {
+        if !ctes.is_empty() {
+            sql.push_str("WITH ");
+            for (i, cte) in ctes.iter().enumerate() {
                 if i > 0 {
                     sql.push_str(", ");
                 }
-                crate::render::render_ident::<RD>(&mut sql, col);
+                crate::render::render_ident::<RD>(&mut sql, cte.name);
+                sql.push_str(" (");
+                for (i, col) in cte.column_names.iter().enumerate() {
+                    if i > 0 {
+                        sql.push_str(", ");
+                    }
+                    crate::render::render_ident::<RD>(&mut sql, col);
+                }
+                sql.push_str(") AS (");
+                cte.body.splice_into::<RD>(&mut sql, &mut params);
+                sql.push(')');
             }
-            sql.push_str(") AS (");
-            crate::render::splice_raw::<RD>(&cte.sql, &cte.params, &mut sql, &mut params);
-            sql.push(')');
+            sql.push(' ');
         }
-        sql.push(' ');
-    }
-    sql.push_str("SELECT ");
+        sql.push_str("SELECT ");
 
-    for (i, e) in selection_exprs.iter().enumerate() {
-        if i > 0 {
-            sql.push_str(", ");
-        }
-        render_expr::<RD>(e, &mut sql, &mut params);
-    }
+        render_select_list::<RD>(selection, &mut sql, &mut params);
 
-    sql.push_str(" FROM ");
-    crate::render::render_ident::<RD>(&mut sql, from_table);
+        sql.push_str(" FROM ");
+        crate::render::render_ident::<RD>(&mut sql, from_table);
 
-    for j in joins {
-        sql.push(' ');
-        sql.push_str(match j.kind {
-            JoinKind::Inner => "INNER JOIN",
-            JoinKind::Left => "LEFT JOIN",
-            JoinKind::Right => "RIGHT JOIN",
-            JoinKind::Full => "FULL JOIN",
-        });
-        sql.push(' ');
-        crate::render::render_ident::<RD>(&mut sql, j.table);
-        sql.push_str(" ON ");
-        render_expr::<RD>(&j.on, &mut sql, &mut params);
-    }
-
-    push_and_list::<RD>(&mut sql, &mut params, " WHERE ", wheres);
-
-    if !group_by.is_empty() {
-        sql.push_str(" GROUP BY ");
-        for (i, g) in group_by.iter().enumerate() {
-            if i > 0 {
-                sql.push_str(", ");
-            }
-            render_expr::<RD>(g, &mut sql, &mut params);
-        }
-    }
-
-    push_and_list::<RD>(&mut sql, &mut params, " HAVING ", having);
-
-    if !order_by.is_empty() {
-        sql.push_str(" ORDER BY ");
-        for (i, (e, dir)) in order_by.iter().enumerate() {
-            if i > 0 {
-                sql.push_str(", ");
-            }
-            render_expr::<RD>(e, &mut sql, &mut params);
-            sql.push_str(match dir {
-                SortDir::Asc => " ASC",
-                SortDir::Desc => " DESC",
+        for j in joins {
+            sql.push(' ');
+            sql.push_str(match j.kind {
+                JoinKind::Inner => "INNER JOIN",
+                JoinKind::Left => "LEFT JOIN",
+                JoinKind::Right => "RIGHT JOIN",
+                JoinKind::Full => "FULL JOIN",
             });
+            sql.push(' ');
+            crate::render::render_ident::<RD>(&mut sql, j.table);
+            sql.push_str(" ON ");
+            render_expr::<RD>(&j.on, &mut sql, &mut params);
         }
-    }
 
-    if let Some(l) = limit {
-        sql.push_str(" LIMIT ");
-        sql.push_str(&l.to_string());
-    }
-    if let Some(o) = offset {
-        sql.push_str(" OFFSET ");
-        sql.push_str(&o.to_string());
-    }
+        push_and_list::<RD>(&mut sql, &mut params, " WHERE ", wheres);
 
-    (sql, params)
+        if !group_by.is_empty() {
+            sql.push_str(" GROUP BY ");
+            for (i, g) in group_by.iter().enumerate() {
+                if i > 0 {
+                    sql.push_str(", ");
+                }
+                render_expr::<RD>(g, &mut sql, &mut params);
+            }
+        }
+
+        push_and_list::<RD>(&mut sql, &mut params, " HAVING ", having);
+
+        if !order_by.is_empty() {
+            sql.push_str(" ORDER BY ");
+            for (i, (e, dir)) in order_by.iter().enumerate() {
+                if i > 0 {
+                    sql.push_str(", ");
+                }
+                render_expr::<RD>(e, &mut sql, &mut params);
+                sql.push_str(match dir {
+                    SortDir::Asc => " ASC",
+                    SortDir::Desc => " DESC",
+                });
+            }
+        }
+
+        if let Some(l) = limit {
+            sql.push_str(" LIMIT ");
+            sql.push_str(&l.to_string());
+        }
+        if let Some(o) = offset {
+            sql.push_str(" OFFSET ");
+            sql.push_str(&o.to_string());
+        }
+
+        (sql, params)
+    }
 }
 
 impl<D, Scope, Sel> Select<D, Scope, Sel> {
@@ -463,26 +439,15 @@ impl<D, Scope, Sel> Select<D, Scope, Sel> {
     /// the whole flat cons-list regardless of where it came from, the
     /// subquery's `.filter()` can reference both its own new table's
     /// columns and any outer column already in `Scope`, with no special
-    /// casing — the same mechanism that lets `Select`'s ordinary joins
-    /// grow the scope also handles "the new table is a subquery's FROM,
-    /// and the existing scope is the outer query's" for free. This is the
-    /// exact hypothesis the design plan flagged as unverified; validated
-    /// here and in `core/tests/correlated_subquery_smoke.rs`.
+    /// casing: growing the scope works the same whether the new table came
+    /// from a join or from a subquery's `FROM`.
     pub fn correlated<T: Table, InnerSel>(
         &self,
         _table: T,
         selection: InnerSel,
     ) -> Select<D, Cons<TableSlot<T, NotNull>, Scope>, InnerSel> {
         Select {
-            ctes: Vec::new(),
-            from_table: T::NAME,
-            joins: Vec::new(),
-            wheres: Vec::new(),
-            order_by: Vec::new(),
-            group_by: Vec::new(),
-            having: Vec::new(),
-            limit: None,
-            offset: None,
+            body: SelectBody::new(T::NAME, Vec::new()),
             selection,
             _marker: PhantomData,
         }
@@ -500,22 +465,18 @@ impl<D: Dialect, Scope, Sel> Select<D, Scope, Sel> {
     where
         Sel: Selection<Scope, Idx>,
     {
-        let (sql, params) = self.render_as::<crate::dialect::RawEmbed<D>, Idx>();
-        Expr::from_kind(ExprKind::Raw {
-            text: format!("EXISTS ({sql})"),
-            params,
-        })
+        Expr::from_kind(ExprKind::Raw(
+            self.fragment::<Idx>().enclosed_in("EXISTS (", ")"),
+        ))
     }
 
     pub fn not_exists<Idx>(&self) -> Expr<Nil, Bool>
     where
         Sel: Selection<Scope, Idx>,
     {
-        let (sql, params) = self.render_as::<crate::dialect::RawEmbed<D>, Idx>();
-        Expr::from_kind(ExprKind::Raw {
-            text: format!("NOT EXISTS ({sql})"),
-            params,
-        })
+        Expr::from_kind(ExprKind::Raw(
+            self.fragment::<Idx>().enclosed_in("NOT EXISTS (", ")"),
+        ))
     }
 }
 

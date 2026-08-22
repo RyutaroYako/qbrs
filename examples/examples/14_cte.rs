@@ -13,7 +13,7 @@ use qbrs::expr::{BigInt, ExprMethods};
 use qbrs::select::select;
 use qbrs::sql;
 use qbrs::with;
-use qbrs_examples::{orders, seed, setup_db, users};
+use qbrs_examples::*;
 use qbrs_sqlx::LoadExt;
 
 with! {
@@ -39,7 +39,7 @@ async fn main() {
         .group_by(orders::user_id)
         .having(sql!(BigInt, "sum(orders.total)::bigint").gt(1000i64));
 
-    let rows: Vec<(String, i64)> = select((users::email, big_spenders::total))
+    let rows = select((users::email, big_spenders::total))
         .with(qbrs::cte::with(big_spenders::Table, &totals))
         .from::<Postgres, _>(users::Table)
         .inner_join(big_spenders::Table, big_spenders::user_id.eq(users::id))
@@ -47,8 +47,11 @@ async fn main() {
         .await
         .expect("big spenders");
 
+    // `users::email` has a generated accessor; a `with!{}` CTE column has
+    // only `.get(..)`, since synthesizing a `HasTotal` identifier needs a
+    // proc macro and `with!{}` is declarative.
     println!("users who've spent over 1000 (email, total):");
-    for (email, total) in &rows {
-        println!("  ({email:?}, {total})");
+    for row in &rows {
+        println!("  ({:?}, {})", row.email(), row.get(big_spenders::total));
     }
 }

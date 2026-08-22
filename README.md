@@ -55,12 +55,16 @@ struct Orders {
     total: i64,
 }
 
-let rows: Vec<(String, Option<i64>)> = select((users::email, orders::total))
+let rows = select((users::email, orders::total))
     .from::<Postgres, _>(users::Table)
     .left_join(orders::Table, orders::user_id.eq(users::id))
     .order_by(users::id.asc())
     .load(&pool)
     .await?;
+
+for row in &rows {
+    println!("{} {:?}", row.email(), row.total()); // &String, &Option<i64>
+}
 ```
 
 ```sql
@@ -71,8 +75,11 @@ ORDER BY "users"."id" ASC
 ```
 
 `orders::total` is declared as a plain `i64` column — not `Option<i64>` — but
-because it's on the far side of a `LEFT JOIN`, `rows`'s type is inferred as
-`Vec<(String, Option<i64>)>` automatically. Forget the join and reference
+because it's on the far side of a `LEFT JOIN`, `row.total()` comes back as
+`&Option<i64>` automatically. A row is read by the same column value that
+selected it, not by position, so adding a column to the selection doesn't
+move anything (`into_tuples()` gives the positional view back where
+destructuring is what's wanted). Forget the join and reference
 `orders::total` anyway, and it's a compile error, not a runtime surprise:
 
 ```
@@ -89,6 +96,7 @@ error[E0277]: `Orders` is not available in this query's scope
 | `NULL`-ability auto-derived from join kind                                              |     ✅      |                                  ❌ (manual `.nullable()`)                                   |           ❌           |            n/a             |
 | Add predicates conditionally/in a loop, no escape hatch                                 |     ✅      |                                   ⚠️ needs `.into_boxed()`                                   | ✅ (dynamic by design) | ⚠️ drops to `QueryBuilder` |
 | Table/column refs are plain values, not turbofish/closures                              |     ✅      |                                           partial                                            |           ✅           |            n/a             |
+| Result rows keyed by column, not by position                                            |     ✅      |                                              ❌                                              |           ❌           |     ✅ (`query_as!`)      |
 | Compile time at ~40+ joins (measured, see [`tests/compile-bench`](tests/compile-bench)) | linear, ~ms | [documented exponential blowup](https://github.com/diesel-rs/diesel/issues/3223) at ~7 joins |          n/a           |            n/a             |
 
 The trick: whether a column reference makes sense given what's joined is a
@@ -116,6 +124,15 @@ A schema is a `#[derive(Table)]` struct, shown in the
 [Quick example](#quick-example) above. See [`examples/`](examples) for
 complete, runnable code for everything below.
 
+- **Rows keyed by column** —
+  [`16_row_access`](examples/examples/16_row_access.rs). A tuple selection
+  decodes to a `Row`, read with `row.get(users::email)` or the accessor
+  `#[derive(Table)]` generates for each column (`row.email()`). Selecting a
+  single un-tupled column still decodes to a bare value, and
+  `into_tuples()` / `.into()` recover the positional tuple. A computed
+  expression is keyed by the function that produced it (`row.count()`,
+  `row.row_number()`); `label!(name, ..)` renames one when the same
+  function is selected twice, and emits the name as the column's `AS`.
 - **Select / Insert / Update / Delete** —
   [`01_select_basic`](examples/examples/01_select_basic.rs),
   [`03_insert`](examples/examples/03_insert.rs),
@@ -179,6 +196,14 @@ complete, runnable code for everything below.
 - Selecting a computed/raw expression's `NULL`-ability isn't derived the way
   a bare column's is — `sql!(Nullable<Text>, "...")` if the expression itself
   can be `NULL`.
+- A `sql!{}` fragment has no identity to key a row field by, so it is
+  readable only through `into_tuples()` unless given a `label!` alias.
+- Selecting the same key twice makes `row.get(..)` ambiguous (`E0283`,
+  "multiple `impl`s satisfying ... `GetField`") rather than silently
+  resolving to the first — alias one of them.
+- Naming a row type in a signature takes a type alias, and one long enough
+  to trip `clippy::type_complexity`; inference covers every use that stays
+  inside a function.
 
 ## Status
 
@@ -193,7 +218,8 @@ complete, runnable code for everything below.
 correlated subqueries (`EXISTS`/`NOT EXISTS`), the `sql!{}` escape hatch,
 reusable named-placeholder prepared statements (`prepare!{}`), upsert
 (`ON CONFLICT`), `UNION`/`INTERSECT`/`EXCEPT`, ranking window functions
-(`row_number()`/`rank()`/`dense_rank()`), and non-recursive CTEs (`with!{}`)
+(`row_number()`/`rank()`/`dense_rank()`), non-recursive CTEs (`with!{}`), and
+column-keyed result rows
 are implemented and tested against a real Postgres instance. Not yet done:
 `WITH RECURSIVE`, aggregate-as-window-functions (`sum(col) OVER (..)`), and
 relations/eager-loading (intentionally scoped out until the core
@@ -204,7 +230,8 @@ query-building layer has been stable for a while).
 - [`crates/core`](crates/core) (`qbrs-core`) — the type-level machinery: scope
   tracking (`Cons`/`Nil`/`Find`), expressions, `Select`/`Insert`/`Update`/`Delete`
   builders, SQL rendering. No I/O, no async runtime.
-- [`crates/macros`](crates/macros) (`qbrs-macros`) — `#[derive(Table)]`.
+- [`crates/macros`](crates/macros) (`qbrs-macros`) — `#[derive(Table)]` and
+  `label!`.
 - [`crates/qbrs`](crates/qbrs) — the facade crate; depend on this one.
 - [`crates/qbrs-sqlx`](crates/qbrs-sqlx) — execution via `sqlx` (Postgres).
 - [`examples`](examples) (`qbrs-examples`) — runnable examples; see

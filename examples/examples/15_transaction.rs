@@ -53,7 +53,7 @@ async fn main() {
 
     tx.rollback().await.expect("rollback transaction");
 
-    let still_there: Option<(i64,)> = select((users::id,))
+    let still_there: Option<i64> = select(users::id)
         .from::<Postgres, _>(users::Table)
         .filter(users::id.eq(doomed_id))
         .load_one(&pool)

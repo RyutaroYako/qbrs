@@ -10,6 +10,7 @@ mod common;
 use qbrs::Table;
 use qbrs::dialect::Postgres;
 use qbrs::expr::ExprMethods;
+use qbrs::row::IntoTuples;
 use qbrs::select::select;
 use qbrs_sqlx::{ExecuteExt, LoadExt, LoadReturningExt};
 
@@ -54,13 +55,13 @@ async fn transactions_against_real_postgres() {
         .expect("returning row");
     tx.commit().await.expect("commit transaction");
 
-    let row: Option<(String,)> = select((users::email,))
+    let row: Option<String> = select(users::email)
         .from::<Postgres, _>(users::Table)
         .filter(users::id.eq(ada_id))
         .load_one(&pool)
         .await
         .expect("select after commit");
-    assert_eq!(row, Some(("ada@example.com".to_string(),)));
+    assert_eq!(row, Some("ada@example.com".to_string()));
 
     // Explicit rollback: the insert is visible inside the transaction but
     // never lands once rolled back.
@@ -74,16 +75,16 @@ async fn transactions_against_real_postgres() {
         .into_iter()
         .next()
         .expect("returning row");
-    let visible_in_tx: Option<(String,)> = select((users::email,))
+    let visible_in_tx: Option<String> = select(users::email)
         .from::<Postgres, _>(users::Table)
         .filter(users::id.eq(dan_id))
         .load_one(&mut *tx)
         .await
         .expect("select inside transaction");
-    assert_eq!(visible_in_tx, Some(("dan@example.com".to_string(),)));
+    assert_eq!(visible_in_tx, Some("dan@example.com".to_string()));
     tx.rollback().await.expect("rollback transaction");
 
-    let row: Option<(String,)> = select((users::email,))
+    let row: Option<String> = select(users::email)
         .from::<Postgres, _>(users::Table)
         .filter(users::id.eq(dan_id))
         .load_one(&pool)
@@ -106,7 +107,7 @@ async fn transactions_against_real_postgres() {
             .expect("returning row");
         id
     };
-    let row: Option<(String,)> = select((users::email,))
+    let row: Option<String> = select(users::email)
         .from::<Postgres, _>(users::Table)
         .filter(users::id.eq(grace_id))
         .load_one(&pool)
@@ -147,7 +148,8 @@ async fn transactions_against_real_postgres() {
         .from::<Postgres, _>(users::Table)
         .load(&pool)
         .await
-        .expect("select remaining users");
+        .expect("select remaining users")
+        .into_tuples();
     remaining.sort();
     assert_eq!(
         remaining,

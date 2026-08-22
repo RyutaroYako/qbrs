@@ -1,11 +1,8 @@
-//! Rendering `ExprKind` (and, later, whole statements) into a SQL string
-//! plus a positional parameter list. Generic over `D: Dialect` for
-//! identifier quoting and placeholder style (Postgres: `"ident"` / `$N`;
-//! MySQL: `` `ident` `` / `?`; SQLite: `"ident"` / `?`) — but `ExprKind`/
-//! `Value` themselves stay closed, non-generic types, so monomorphizing
-//! this function costs exactly one instantiation per dialect actually
-//! used in a program, not per query shape, unlike diesel's
-//! `QueryFragment::walk_ast` (itself generic over the query's type).
+//! Rendering `ExprKind` into a SQL string plus a positional parameter list.
+//! Generic over `D: Dialect` for identifier quoting and placeholder style,
+//! but `ExprKind`/`Value` themselves stay closed, non-generic types, so this
+//! costs one instantiation per dialect used in a program rather than one per
+//! query shape.
 
 use crate::dialect::Dialect;
 use crate::expr::{BinOp, ExprKind, SortDir, Value};
@@ -43,16 +40,12 @@ pub fn render_expr<D: Dialect>(expr: &ExprKind, out: &mut String, params: &mut V
             render_expr::<D>(inner, out, params);
             out.push(')');
         }
-        ExprKind::Raw {
-            text,
-            params: raw_params,
-        } => {
-            // Wrapped in parens defensively — we don't know the fragment's
-            // internal precedence (e.g. `a OR b`), so it must never
-            // silently change meaning when spliced into a larger AND/OR
-            // chain.
+        ExprKind::Raw(fragment) => {
+            // A fragment's internal precedence is unknown (it may be `a OR
+            // b`), so parenthesize: it must not change meaning when spliced
+            // into a larger AND/OR chain.
             out.push('(');
-            splice_raw::<D>(text, raw_params, out, params);
+            fragment.splice_into::<D>(out, params);
             out.push(')');
         }
         ExprKind::Window {
@@ -60,11 +53,9 @@ pub fn render_expr<D: Dialect>(expr: &ExprKind, out: &mut String, params: &mut V
             partition_by,
             order_by,
         } => {
-            // `func` is rendered as a literal string, *not* wrapped in the
-            // defensive parens `Raw` uses — `(row_number()) OVER (..)` is
-            // not valid SQL (`OVER` only attaches to a bare function-call
-            // syntax node, not an arbitrary parenthesized expression), so
-            // this must stay `row_number() OVER (..)`.
+            // No defensive parens here, unlike `Raw`: `OVER` only attaches
+            // to a bare function-call syntax node, so `(row_number()) OVER
+            // (..)` would not be valid SQL.
             out.push_str(func);
             out.push_str(" OVER (");
             if !partition_by.is_empty() {
@@ -97,32 +88,83 @@ pub fn render_expr<D: Dialect>(expr: &ExprKind, out: &mut String, params: &mut V
     }
 }
 
-/// Renumbers a `?`-placeholder fragment (already-rendered SQL text whose
-/// bind values live in `raw_params`) into the surrounding query's own
-/// placeholder style and shared `params` list — a no-op renumbering for
-/// MySQL/SQLite, since `?` is also their native style; for Postgres this is
-/// what turns a fragment's independently-numbered placeholders into the
-/// right continuation of the outer query's `$N` sequence. Shared by
-/// `ExprKind::Raw` (subqueries embedded as a boolean/scalar expression, e.g.
-/// `EXISTS (..)`) and `select::SetOp` (whole `SELECT` branches joined by
-/// `UNION`/`INTERSECT`/`EXCEPT`) — both need the same "render each piece
-/// once with placeholder-agnostic `?`, then renumber at splice time"
-/// mechanism, since a branch's own placeholder count isn't known until
-/// every other branch preceding it has already been spliced in.
-pub(crate) fn splice_raw<D: Dialect>(
-    text: &str,
-    raw_params: &[Value],
+/// One item in a rendered `SELECT`/`RETURNING` list. `label` is `Some` only
+/// for an item given a `row::AliasKey` alias, which is the only thing that
+/// emits `AS`.
+pub struct SelectItem {
+    pub(crate) kind: ExprKind,
+    pub(crate) label: Option<&'static str>,
+}
+
+impl SelectItem {
+    pub(crate) fn bare(kind: ExprKind) -> Self {
+        SelectItem { kind, label: None }
+    }
+
+    pub(crate) fn labeled(kind: ExprKind, label: &'static str) -> Self {
+        SelectItem {
+            kind,
+            label: Some(label),
+        }
+    }
+}
+
+/// Renders a comma-separated `SELECT`/`RETURNING` list, emitting each item's
+/// `AS` label where it has one.
+pub fn render_select_list<D: Dialect>(
+    items: &[SelectItem],
     out: &mut String,
     params: &mut Vec<Value>,
 ) {
-    let mut raw_idx = 0;
-    for c in text.chars() {
-        if c == '?' {
-            params.push(raw_params[raw_idx].clone());
-            out.push_str(&D::placeholder(params.len()));
-            raw_idx += 1;
-        } else {
-            out.push(c);
+    for (i, item) in items.iter().enumerate() {
+        if i > 0 {
+            out.push_str(", ");
+        }
+        render_expr::<D>(&item.kind, out, params);
+        if let Some(label) = item.label {
+            out.push_str(" AS ");
+            push_ident::<D>(out, label);
+        }
+    }
+}
+
+/// A piece of SQL destined to be embedded in a larger query: a subquery, a
+/// CTE body, a set-operation branch, or a `sql!{}` escape hatch. Its bind
+/// parameters are always written as `?`, never in a dialect's own style,
+/// because their final numbering depends on how much of the host query has
+/// already been rendered — `splice_into` assigns it.
+#[derive(Debug, Clone)]
+pub struct Fragment {
+    sql: String,
+    params: Vec<Value>,
+}
+
+impl Fragment {
+    /// `sql` must use `?` for every bind parameter, with one entry in
+    /// `params` per `?`, in order.
+    pub fn new(sql: String, params: Vec<Value>) -> Self {
+        Fragment { sql, params }
+    }
+
+    /// Wraps the fragment in surrounding SQL, e.g. `EXISTS (`..`)`.
+    pub(crate) fn enclosed_in(self, before: &str, after: &str) -> Self {
+        Fragment {
+            sql: format!("{before}{}{after}", self.sql),
+            params: self.params,
+        }
+    }
+
+    /// Appends this fragment to a query being rendered, renumbering its
+    /// placeholders to continue `params`' sequence.
+    pub(crate) fn splice_into<D: Dialect>(&self, out: &mut String, params: &mut Vec<Value>) {
+        let mut next = self.params.iter();
+        for c in self.sql.chars() {
+            if c == '?' {
+                params.push(next.next().expect("one param per `?`").clone());
+                out.push_str(&D::placeholder(params.len()));
+            } else {
+                out.push(c);
+            }
         }
     }
 }

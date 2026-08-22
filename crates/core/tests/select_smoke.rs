@@ -22,10 +22,44 @@ mod users {
     use qbrs_core::expr::{Bool, Column, Integer, Text};
 
     pub const Table: UsersMarker = UsersMarker;
-    pub const id: Column<UsersMarker, Integer> = Column::new("id");
-    pub const name: Column<UsersMarker, Text> = Column::new("name");
-    pub const active: Column<UsersMarker, Bool> = Column::new("active");
-    pub const created_at: Column<UsersMarker, Integer> = Column::new("created_at");
+    #[allow(non_camel_case_types)]
+    pub mod columns {
+        use super::*;
+        use qbrs_core::expr::ColumnKey;
+        #[derive(Clone, Copy)]
+        pub struct id;
+        impl ColumnKey for id {
+            type Table = UsersMarker;
+            type Sql = Integer;
+            const NAME: &'static str = "id";
+        }
+        #[derive(Clone, Copy)]
+        pub struct name;
+        impl ColumnKey for name {
+            type Table = UsersMarker;
+            type Sql = Text;
+            const NAME: &'static str = "name";
+        }
+        #[derive(Clone, Copy)]
+        pub struct active;
+        impl ColumnKey for active {
+            type Table = UsersMarker;
+            type Sql = Bool;
+            const NAME: &'static str = "active";
+        }
+        #[derive(Clone, Copy)]
+        pub struct created_at;
+        impl ColumnKey for created_at {
+            type Table = UsersMarker;
+            type Sql = Integer;
+            const NAME: &'static str = "created_at";
+        }
+    }
+
+    pub const id: Column<columns::id> = Column::new();
+    pub const name: Column<columns::name> = Column::new();
+    pub const active: Column<columns::active> = Column::new();
+    pub const created_at: Column<columns::created_at> = Column::new();
 }
 
 #[allow(non_upper_case_globals)]
@@ -34,8 +68,28 @@ mod orders {
     use qbrs_core::expr::{Column, Integer};
 
     pub const Table: OrdersMarker = OrdersMarker;
-    pub const user_id: Column<OrdersMarker, Integer> = Column::new("user_id");
-    pub const total: Column<OrdersMarker, Integer> = Column::new("total");
+    #[allow(non_camel_case_types)]
+    pub mod columns {
+        use super::*;
+        use qbrs_core::expr::ColumnKey;
+        #[derive(Clone, Copy)]
+        pub struct user_id;
+        impl ColumnKey for user_id {
+            type Table = OrdersMarker;
+            type Sql = Integer;
+            const NAME: &'static str = "user_id";
+        }
+        #[derive(Clone, Copy)]
+        pub struct total;
+        impl ColumnKey for total {
+            type Table = OrdersMarker;
+            type Sql = Integer;
+            const NAME: &'static str = "total";
+        }
+    }
+
+    pub const user_id: Column<columns::user_id> = Column::new();
+    pub const total: Column<columns::total> = Column::new();
 }
 
 #[test]

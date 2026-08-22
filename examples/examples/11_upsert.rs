@@ -24,7 +24,8 @@ async fn main() {
             .expect("insert grace")
             .into_iter()
             .next()
-            .expect("returning row");
+            .expect("returning row")
+            .into();
     println!("inserted: id={id} display_name={display_name:?}");
 
     // `email` already exists — DO NOTHING means this row is silently
@@ -36,7 +37,7 @@ async fn main() {
         .await
         .expect("upsert do-nothing");
 
-    let (unchanged,): (Option<String>,) = qbrs::select::select((users::display_name,))
+    let unchanged: Option<String> = qbrs::select::select(users::display_name)
         .from::<Postgres, _>(users::Table)
         .filter(users::id.eq(id))
         .load_one(&pool)

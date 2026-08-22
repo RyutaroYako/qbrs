@@ -18,7 +18,7 @@ async fn main() {
     // scope-checking (the caller is trusted to reference real, in-scope
     // columns by name), but its `?` placeholder is still bound as a real
     // parameter, not spliced into the SQL text.
-    let matches: Vec<(String,)> = select((users::email,))
+    let matches: Vec<String> = select(users::email)
         .from::<Postgres, _>(users::Table)
         .filter(sql!(Bool, "lower(email) LIKE ?", "%@example.com"))
         .filter(users::active.eq(true))

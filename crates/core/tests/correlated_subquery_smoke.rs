@@ -1,7 +1,6 @@
-//! Spike for the design plan's flagged-as-unverified hypothesis: does
-//! "subquery Scope = Cons<inner, outer>" actually let a correlated
-//! subquery reference outer columns, with no special-cased machinery
-//! beyond what `Find`/`Superset` already do for ordinary joins?
+//! Does "subquery Scope = Cons<inner, outer>" let a correlated subquery
+//! reference outer columns with no machinery beyond what `Find`/`Superset`
+//! already do for ordinary joins?
 
 use qbrs_core::dialect::Postgres;
 use qbrs_core::expr::ExprMethods;
@@ -22,7 +21,20 @@ mod users {
     use super::UsersMarker;
     use qbrs_core::expr::{Column, Integer};
     pub const Table: UsersMarker = UsersMarker;
-    pub const id: Column<UsersMarker, Integer> = Column::new("id");
+    #[allow(non_camel_case_types)]
+    pub mod columns {
+        use super::*;
+        use qbrs_core::expr::ColumnKey;
+        #[derive(Clone, Copy)]
+        pub struct id;
+        impl ColumnKey for id {
+            type Table = UsersMarker;
+            type Sql = Integer;
+            const NAME: &'static str = "id";
+        }
+    }
+
+    pub const id: Column<columns::id> = Column::new();
 }
 
 #[allow(non_upper_case_globals)]
@@ -30,7 +42,20 @@ mod orders {
     use super::OrdersMarker;
     use qbrs_core::expr::{Column, Integer};
     pub const Table: OrdersMarker = OrdersMarker;
-    pub const user_id: Column<OrdersMarker, Integer> = Column::new("user_id");
+    #[allow(non_camel_case_types)]
+    pub mod columns {
+        use super::*;
+        use qbrs_core::expr::ColumnKey;
+        #[derive(Clone, Copy)]
+        pub struct user_id;
+        impl ColumnKey for user_id {
+            type Table = OrdersMarker;
+            type Sql = Integer;
+            const NAME: &'static str = "user_id";
+        }
+    }
+
+    pub const user_id: Column<columns::user_id> = Column::new();
 }
 
 #[test]

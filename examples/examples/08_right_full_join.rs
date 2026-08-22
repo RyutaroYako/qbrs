@@ -4,6 +4,7 @@
 
 use qbrs::dialect::Postgres;
 use qbrs::expr::ExprMethods;
+use qbrs::row::IntoTuples;
 use qbrs::select::select;
 use qbrs_examples::{orders, seed, setup_db, users};
 use qbrs_sqlx::LoadExt;
@@ -23,7 +24,8 @@ async fn main() {
         .right_join(users::Table, orders::user_id.eq(users::id))
         .load(&pool)
         .await
-        .expect("right join select");
+        .expect("right join select")
+        .into_tuples();
     rows.sort();
 
     println!("orders RIGHT JOIN users (email, total):");
@@ -44,7 +46,8 @@ async fn main() {
         .full_join(orders::Table, orders::user_id.eq(users::id))
         .load(&pool)
         .await
-        .expect("full join select");
+        .expect("full join select")
+        .into_tuples();
     full.sort();
 
     println!("\nusers FULL JOIN orders (email, total):");

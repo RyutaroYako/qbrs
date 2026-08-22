@@ -17,8 +17,28 @@ mod orders {
     use qbrs_core::expr::{BigInt, Column, Integer};
 
     pub const Table: OrdersMarker = OrdersMarker;
-    pub const id: Column<OrdersMarker, Integer> = Column::new("id");
-    pub const total: Column<OrdersMarker, BigInt> = Column::new("total");
+    #[allow(non_camel_case_types)]
+    pub mod columns {
+        use super::*;
+        use qbrs_core::expr::ColumnKey;
+        #[derive(Clone, Copy)]
+        pub struct id;
+        impl ColumnKey for id {
+            type Table = OrdersMarker;
+            type Sql = Integer;
+            const NAME: &'static str = "id";
+        }
+        #[derive(Clone, Copy)]
+        pub struct total;
+        impl ColumnKey for total {
+            type Table = OrdersMarker;
+            type Sql = BigInt;
+            const NAME: &'static str = "total";
+        }
+    }
+
+    pub const id: Column<columns::id> = Column::new();
+    pub const total: Column<columns::total> = Column::new();
 }
 
 with! {

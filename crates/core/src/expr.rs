@@ -4,11 +4,11 @@
 //! flat cons-list of tables this expression touches — see `scope::Superset`)
 //! and `S` (its SQL type). The actual payload, `ExprKind`, is a plain closed
 //! enum with no generics at all, so the renderer is never re-monomorphized
-//! per query shape (unlike diesel's `QueryFragment`/`walk_ast`, which is
-//! itself generic over the query's type).
+//! per query shape.
 
 use std::marker::PhantomData;
 
+use crate::render::Fragment;
 use crate::scope::{Concat, Cons, MaybeNull, Nil, Table};
 
 /// A SQL scalar type. Implemented only by the closed set of leaf types
@@ -18,10 +18,9 @@ pub trait SqlType: 'static {
 }
 
 /// The non-generic expression payload. Never constructed or matched on
-/// outside this crate — the typed `Expr<Req, S>` wrapper is the only
+/// outside this crate: the typed `Expr<Req, S>` wrapper is the only
 /// supported way to build one, which is what keeps the `Req`/`S` tags
-/// trustworthy (a hand-built `ExprKind` could otherwise claim to be
-/// anything).
+/// trustworthy.
 #[derive(Debug, Clone)]
 pub enum ExprKind {
     Column {
@@ -37,21 +36,14 @@ pub enum ExprKind {
     And(Vec<ExprKind>),
     Or(Vec<ExprKind>),
     Not(Box<ExprKind>),
-    /// Escape hatch for raw SQL fragments (the `sql!{}` macro target).
-    /// Placeholders in `text` are positional (`?`, rendered per-dialect at
-    /// render time); `params` are bound in order.
-    Raw {
-        text: String,
-        params: Vec<Value>,
-    },
+    /// An embedded piece of SQL: the `sql!{}` escape hatch, or a subquery
+    /// rendered by `select::Select::fragment`.
+    Raw(Fragment),
     /// `func OVER (PARTITION BY .. ORDER BY ..)`. `func` is rendered
-    /// literally (not recursively as an `ExprKind`) — see
-    /// `window::WindowFunc`'s doc comment for why: it's always one of the
-    /// closed set of niladic ranking functions (`row_number()`, `rank()`,
-    /// `dense_rank()`) for now, so there is no sub-expression to recurse
-    /// into yet. `partition_by`/`order_by` *are* full `ExprKind`s (they can
-    /// reference real columns), which is why this variant carries `Vec`s of
-    /// them rather than pre-rendered text.
+    /// literally: it's always one of the closed set of niladic ranking
+    /// functions, so there's no sub-expression to recurse into.
+    /// `partition_by`/`order_by` *are* full `ExprKind`s, since they can
+    /// reference real columns.
     Window {
         func: String,
         partition_by: Vec<ExprKind>,
@@ -59,9 +51,9 @@ pub enum ExprKind {
     },
 }
 
-/// Sort direction — shared by `ORDER BY` (`select::OrderKey`) and window
-/// functions' `OVER (.. ORDER BY ..)` (`window::Window`), which is why it
-/// lives here rather than in either of those modules specifically.
+/// Sort direction. Shared by `ORDER BY` (`select::OrderKey`) and window
+/// functions' `OVER (.. ORDER BY ..)` (`window::Window`), hence living here
+/// rather than in either module.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SortDir {
     Asc,
@@ -80,10 +72,9 @@ pub enum BinOp {
 }
 
 /// A closed, non-generic sum of every literal value the crate can bind as a
-/// query parameter. Deliberately not `Box<dyn ToSql>` — keeping this a
-/// plain enum means the SQL renderer has no vtable dispatch anywhere in its
-/// hot path, and stays a single non-generic function regardless of how many
-/// distinct `Req`/`S` combinations exist in the calling crate.
+/// query parameter. Deliberately not `Box<dyn ToSql>`: a plain enum keeps
+/// the renderer free of vtable dispatch and lets it stay a single
+/// non-generic function no matter how many query shapes exist.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Value {
     I32(i32),
@@ -92,12 +83,11 @@ pub enum Value {
     Text(String),
     Bool(bool),
     Bytes(Vec<u8>),
-    /// A NULL of a specific base type. Deliberately *not* a single untyped
-    /// `Null` variant: a real Postgres bind still declares a parameter type
-    /// (OID) even when the value is NULL, and a mismatched type there can
-    /// fail query planning (`operator does not exist: text = integer`)
-    /// even though the value itself is NULL. Each `NullX` variant lets the
-    /// execution layer bind `Option::<X>::None` with the right type.
+    /// A NULL of a specific base type, *not* a single untyped `Null`: a
+    /// Postgres bind declares a parameter type even when the value is NULL,
+    /// and a mismatched one can fail query planning. Each `NullX` variant
+    /// lets the execution layer bind `Option::<X>::None` with the right
+    /// type.
     NullI32,
     NullI64,
     NullF64,
@@ -105,13 +95,10 @@ pub enum Value {
     NullBool,
     NullBytes,
     /// A named placeholder in a `prepare!{}`-built query, not yet resolved
-    /// to a concrete value. Reusing the existing `Vec<Value>` parameter
-    /// pipeline for this (rather than introducing a parallel "parameter
-    /// slot" type threaded through every render/bind call site) is what
-    /// keeps named placeholders a small, additive feature: rendering
-    /// doesn't care what's *inside* a `Value` it's binding, only that
-    /// there's one per placeholder position — see `select::Prepared` for
-    /// where these get substituted for real values before binding.
+    /// to a concrete value. It rides the existing `Vec<Value>` parameter
+    /// pipeline: rendering doesn't care what's *inside* a `Value`, only that
+    /// there's one per placeholder position. `select::Prepared` substitutes
+    /// real values before binding.
     Placeholder(&'static str),
 }
 
@@ -181,47 +168,88 @@ impl<Req, S: SqlType> IntoExpr<S> for Expr<Req, S> {
     }
 }
 
-/// A column reference: table `T`, SQL type `S`. Generated per-field by the
-/// `#[derive(Table)]` macro as a `pub const NAME: Column<Table, SqlType>`
-/// inside each table's module (e.g. `users::id`). A plain, `Copy` value —
-/// not tied to any particular query — which is what lets it be reused
-/// across queries and passed as an ordinary function argument instead of
-/// through a scope-bound cursor closure.
-pub struct Column<T: Table, S: SqlType> {
-    pub name: &'static str,
-    _marker: PhantomData<(T, S)>,
+/// A column's compile-time identity. One implementor per column in the
+/// schema, generated by `#[derive(Table)]` (and by `with!{}` for a CTE's
+/// pseudo-columns), which is what lets a column be a *key* — two columns of
+/// the same table and SQL type are still distinct types here, so a row can
+/// be indexed by column without ambiguity.
+pub trait ColumnKey: Copy + 'static {
+    type Table: Table;
+    type Sql: SqlType;
+    const NAME: &'static str;
 }
 
-impl<T: Table, S: SqlType> Column<T, S> {
-    pub const fn new(name: &'static str) -> Self {
-        Column {
-            name,
+/// A column reference, identified entirely by its `ColumnKey`. Generated
+/// per-field by `#[derive(Table)]` as a `pub const NAME: Column<..>` inside
+/// each table's module (e.g. `users::id`). A plain, `Copy` value — not tied
+/// to any particular query — which is what lets it be reused across queries
+/// and passed as an ordinary function argument instead of through a
+/// scope-bound cursor closure.
+pub struct Column<C: ColumnKey>(PhantomData<C>);
+
+impl<C: ColumnKey> Column<C> {
+    pub const fn new() -> Self {
+        Column(PhantomData)
+    }
+}
+
+impl<C: ColumnKey> Default for Column<C> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl<C: ColumnKey> Clone for Column<C> {
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+impl<C: ColumnKey> Copy for Column<C> {}
+
+impl<C: ColumnKey> IntoExpr<C::Sql> for Column<C> {
+    type Req = Cons<C::Table, Nil>;
+    fn into_expr(self) -> Expr<Self::Req, C::Sql> {
+        Expr::from_kind(ExprKind::Column {
+            table: <C::Table as Table>::NAME,
+            name: C::NAME,
+        })
+    }
+}
+
+/// An expression that carries its own row key `K`: `count()` and the window
+/// functions, whose identity is the function that produced them. Selecting
+/// two of the same one into a row is what `row::Row::get` rejects, and what
+/// `Expr::alias` exists to resolve.
+pub struct Keyed<K, Req, S: SqlType> {
+    pub(crate) kind: ExprKind,
+    _marker: PhantomData<fn() -> (K, Req, S)>,
+}
+
+impl<K, Req, S: SqlType> Keyed<K, Req, S> {
+    pub(crate) fn from_kind(kind: ExprKind) -> Self {
+        Keyed {
+            kind,
             _marker: PhantomData,
         }
     }
 }
 
-impl<T: Table, S: SqlType> Clone for Column<T, S> {
+impl<K, Req, S: SqlType> Clone for Keyed<K, Req, S> {
     fn clone(&self) -> Self {
-        *self
+        Keyed::from_kind(self.kind.clone())
     }
 }
-impl<T: Table, S: SqlType> Copy for Column<T, S> {}
 
-impl<T: Table, S: SqlType> IntoExpr<S> for Column<T, S> {
-    type Req = Cons<T, Nil>;
-    fn into_expr(self) -> Expr<Self::Req, S> {
-        Expr::from_kind(ExprKind::Column {
-            table: T::NAME,
-            name: self.name,
-        })
+impl<K, Req, S: SqlType> IntoExpr<S> for Keyed<K, Req, S> {
+    type Req = Req;
+    fn into_expr(self) -> Expr<Req, S> {
+        Expr::from_kind(self.kind)
     }
 }
 
 /// Comparison/boolean-combinator methods, blanket-implemented for anything
 /// convertible to a typed expression (columns, literals, and `Expr` itself).
-/// Splitting this out from `IntoExpr` is what lets a single blanket impl
-/// provide `.eq()` etc. on all three without conflicting impls.
+/// Kept separate from `IntoExpr` so one blanket impl can serve all three.
 pub trait ExprMethods<S: SqlType>: IntoExpr<S> + Sized {
     fn eq<Rhs>(self, rhs: Rhs) -> Expr<<Self::Req as Concat<Rhs::Req>>::Output, Bool>
     where
@@ -291,11 +319,9 @@ where
     })
 }
 
-/// `.like()` is Text-only (doesn't make sense for other SQL types), so it's
-/// a separate trait rather than part of the generic `ExprMethods` — but
-/// still blanket-implemented the same way, so it's usable directly on a
-/// `Column<T, Text>` (not just on an already-converted `Expr<Req, Text>>`),
-/// matching `.eq()`'s ergonomics.
+/// `.like()` is Text-only, so it's a separate trait rather than part of the
+/// generic `ExprMethods` — still blanket-implemented, so it works directly
+/// on a `Column<T, Text>` just like `.eq()` does.
 pub trait TextExprMethods: IntoExpr<Text> + Sized {
     fn like<Rhs>(self, rhs: Rhs) -> Expr<<Self::Req as Concat<Rhs::Req>>::Output, Bool>
     where
@@ -323,10 +349,8 @@ impl<Req> Expr<Req, Bool> {
     }
 }
 
-/// `!condition`, not `condition.not()` — implementing the standard
-/// `Not` trait instead of a same-named inherent method is what clippy's
-/// `should_implement_trait` lint is steering toward, and it reads more
-/// naturally at call sites besides.
+/// `!condition`, not `condition.not()`: the standard `Not` trait reads more
+/// naturally at call sites than a same-named inherent method.
 impl<Req> std::ops::Not for Expr<Req, Bool> {
     type Output = Expr<Req, Bool>;
     fn not(self) -> Self::Output {
@@ -336,12 +360,9 @@ impl<Req> std::ops::Not for Expr<Req, Bool> {
 
 /// Declares a leaf (base) SQL type: the marker struct, its `SqlType` impl,
 /// its `WrapNullable<MaybeNull>` impl, and `IntoExpr` from its native Rust
-/// type. Deliberately generates one concrete, non-generic impl per type
-/// rather than a single blanket `impl<T: SqlType> WrapNullable<MaybeNull>
-/// for T` — the Phase 0 spike found that blanket form conflicts (E0119)
-/// with `Nullable<T>`'s own `WrapNullable<MaybeNull>` impl, the same
-/// coherence trap `Find`/`Contains` needed `Here`/`There<I>` to route
-/// around.
+/// type. One concrete, non-generic impl per type — a blanket
+/// `impl<T: SqlType> WrapNullable<MaybeNull> for T` would conflict with
+/// `Nullable<T>`'s own impl (see `scope::WrapNullable`).
 /// A base SQL type's typed NULL — see `Value::NullI32` etc. for why this
 /// can't just be a single untyped `Value::Null`.
 pub trait NullValue: SqlType {
@@ -406,33 +427,33 @@ where
     }
 }
 
-/// `count(*)`. A minimal, pragmatic start on aggregates — implemented via
-/// the same `Raw` fragment machinery as `sql!{}` rather than a dedicated
-/// `ExprKind::FunctionCall` variant, since a real function-call design
-/// (covering `count(col)`, `sum(col)`, `avg(col)`, etc. generically) needs
-/// the renderer to recursively render an inner `ExprKind` into a fragment,
-/// which the current `Raw` text-with-`?`-placeholders shape doesn't support.
-/// Deferred to whenever the broader aggregate-function API is designed
-/// (tracked as Phase 3+ work) — this exists now only to make `GROUP BY` /
-/// `HAVING` testable without blocking on that larger design.
-pub fn count() -> Expr<Nil, BigInt> {
-    Expr::from_kind(ExprKind::Raw {
-        text: "count(*)".to_string(),
-        params: Vec::new(),
-    })
+crate::row::expr_key!(
+    Count,
+    HasCount,
+    count,
+    "The identity a selected `count(*)` is filed under in a row."
+);
+
+/// `count(*)`, built on the same `Raw` fragment machinery as `sql!{}`.
+///
+/// **Known limitation**: aggregates over a column (`count(col)`, `sum(col)`,
+/// ...) need a real `ExprKind::FunctionCall` variant, since the renderer
+/// would have to recurse into an inner expression — deferred until the
+/// broader aggregate API is designed. This exists to make `GROUP BY` /
+/// `HAVING` usable in the meantime.
+pub fn count() -> Keyed<Count, Nil, BigInt> {
+    Keyed::from_kind(ExprKind::Raw(Fragment::new(
+        "count(*)".to_string(),
+        Vec::new(),
+    )))
 }
 
 /// A named, typed placeholder: usable anywhere a value of type `S` is
-/// expected (`.eq(placeholder::<Integer>("id"))`), rendering as a normal
-/// bound parameter but resolved to a concrete value later, at
-/// `Prepared::execute()` time, rather than when the query is built. Not
-/// exported as part of the public "just write queries" surface — the
-/// `prepare!{}` macro is the intended entry point, since it also generates
-/// the typed `Params` struct that guarantees every placeholder actually
-/// gets a value of the right type at execute time (closing the gap
-/// Drizzle's own `sql.placeholder()` leaves: its `.execute()` takes an
-/// untyped `Record<string, unknown>`, so a missing/misspelled key is only
-/// caught at runtime).
+/// expected (`.eq(placeholder::<Integer>("id"))`), rendered as a normal
+/// bound parameter but resolved to a concrete value at
+/// `Prepared::execute()` time. `prepare!{}` is the intended entry point
+/// rather than this function, since it also generates the typed `Params`
+/// struct that makes a missing or misspelled placeholder a compile error.
 #[doc(hidden)]
 pub fn placeholder<S: SqlType>(name: &'static str) -> Expr<Nil, S> {
     Expr::from_kind(ExprKind::Value(Value::Placeholder(name)))

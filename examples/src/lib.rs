@@ -27,11 +27,9 @@ pub struct Orders {
     pub shipped: bool,
 }
 
-/// Keeps the embedded Postgres — and the temp directory holding its data —
-/// alive for as long as an example is running. Dropping it stops the
-/// server, so examples bind it (`let (pool, _db) = ...`) rather than
-/// discarding it; the postmaster is a child process and would otherwise
-/// outlive the example.
+/// Keeps the embedded Postgres and its data directory alive for as long as
+/// an example runs. Dropping it stops the server, so examples bind it
+/// (`let (pool, _db) = ...`) rather than discarding it.
 pub struct Db(#[allow(dead_code)] Option<(pglite::PGlite, tempfile::TempDir)>);
 
 /// Connects to `DATABASE_URL` if set, otherwise starts a throwaway embedded

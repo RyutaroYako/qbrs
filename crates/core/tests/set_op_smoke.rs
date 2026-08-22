@@ -22,8 +22,28 @@ mod users {
     use qbrs_core::expr::{Column, Integer, Text};
 
     pub const Table: UsersMarker = UsersMarker;
-    pub const id: Column<UsersMarker, Integer> = Column::new("id");
-    pub const email: Column<UsersMarker, Text> = Column::new("email");
+    #[allow(non_camel_case_types)]
+    pub mod columns {
+        use super::*;
+        use qbrs_core::expr::ColumnKey;
+        #[derive(Clone, Copy)]
+        pub struct id;
+        impl ColumnKey for id {
+            type Table = UsersMarker;
+            type Sql = Integer;
+            const NAME: &'static str = "id";
+        }
+        #[derive(Clone, Copy)]
+        pub struct email;
+        impl ColumnKey for email {
+            type Table = UsersMarker;
+            type Sql = Text;
+            const NAME: &'static str = "email";
+        }
+    }
+
+    pub const id: Column<columns::id> = Column::new();
+    pub const email: Column<columns::email> = Column::new();
 }
 
 #[allow(non_upper_case_globals)]
@@ -32,8 +52,28 @@ mod archived_users {
     use qbrs_core::expr::{Column, Integer, Text};
 
     pub const Table: ArchivedUsersMarker = ArchivedUsersMarker;
-    pub const id: Column<ArchivedUsersMarker, Integer> = Column::new("id");
-    pub const email: Column<ArchivedUsersMarker, Text> = Column::new("email");
+    #[allow(non_camel_case_types)]
+    pub mod columns {
+        use super::*;
+        use qbrs_core::expr::ColumnKey;
+        #[derive(Clone, Copy)]
+        pub struct id;
+        impl ColumnKey for id {
+            type Table = ArchivedUsersMarker;
+            type Sql = Integer;
+            const NAME: &'static str = "id";
+        }
+        #[derive(Clone, Copy)]
+        pub struct email;
+        impl ColumnKey for email {
+            type Table = ArchivedUsersMarker;
+            type Sql = Text;
+            const NAME: &'static str = "email";
+        }
+    }
+
+    pub const id: Column<columns::id> = Column::new();
+    pub const email: Column<columns::email> = Column::new();
 }
 
 #[test]

@@ -8,6 +8,7 @@
 use qbrs::dialect::Postgres;
 use qbrs::expr::{ExprMethods, Text};
 use qbrs::prepare;
+use qbrs::row::IntoTuples;
 use qbrs::select::select;
 use qbrs_examples::{seed, setup_db, users};
 use qbrs_sqlx::PreparedExt;
@@ -40,7 +41,8 @@ async fn main() {
                 },
             )
             .await
-            .expect("execute prepared query");
+            .expect("execute prepared query")
+            .into_tuples();
         println!("{email} -> {rows:?}");
     }
 }

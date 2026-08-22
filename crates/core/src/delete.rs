@@ -4,7 +4,7 @@ use std::marker::PhantomData;
 
 use crate::dialect::{Dialect, SupportsReturning};
 use crate::expr::{Bool, Expr, ExprKind, Value};
-use crate::render::{render_expr, render_ident};
+use crate::render::{SelectItem, render_expr, render_ident, render_select_list};
 use crate::scope::{Cons, Nil, NotNull, Superset, Table, TableSlot};
 use crate::select::Selection;
 
@@ -63,7 +63,7 @@ impl<D: SupportsReturning, T: Table> Delete<D, T> {
     {
         DeleteReturning {
             wheres: self.wheres,
-            returning_exprs: sel.exprs(),
+            returning: sel.items(),
             _marker: PhantomData,
         }
     }
@@ -71,7 +71,7 @@ impl<D: SupportsReturning, T: Table> Delete<D, T> {
 
 pub struct DeleteReturning<D, T: Table, Sel> {
     wheres: Vec<ExprKind>,
-    returning_exprs: Vec<ExprKind>,
+    returning: Vec<SelectItem>,
     _marker: PhantomData<fn() -> (D, T, Sel)>,
 }
 
@@ -79,12 +79,7 @@ impl<D: Dialect, T: Table, Sel> DeleteReturning<D, T, Sel> {
     pub fn to_sql(&self) -> (String, Vec<Value>) {
         let (mut sql, mut params) = render_delete::<D, T>(&self.wheres);
         sql.push_str(" RETURNING ");
-        for (i, e) in self.returning_exprs.iter().enumerate() {
-            if i > 0 {
-                sql.push_str(", ");
-            }
-            render_expr::<D>(e, &mut sql, &mut params);
-        }
+        render_select_list::<D>(&self.returning, &mut sql, &mut params);
         (sql, params)
     }
 }

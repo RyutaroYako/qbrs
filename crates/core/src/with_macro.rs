@@ -16,11 +16,16 @@
 ///     .to_sql();
 /// ```
 ///
-/// Generates the same shape `#[derive(Table)]` does (a `Table` marker plus
-/// one `Column<Table, S>` const per field) so the resulting pseudo-table is
-/// usable anywhere a real one is — plus a `CteShape` impl recording the
-/// declared columns' native types as a tuple, which `cte::with` checks
-/// against the actual query passed to it.
+/// Generates the same shape `#[derive(Table)]` does (a `Table` marker, a
+/// `columns` module of per-column `ColumnKey` markers, and one `Column`
+/// const per field) so the resulting pseudo-table is usable anywhere a real
+/// one is — plus a `CteShape` impl recording the declared columns' native
+/// types as a tuple, which `cte::with` checks against the actual query
+/// passed to it.
+///
+/// **Known limitation**: no per-column accessor traits, unlike
+/// `#[derive(Table)]`. Synthesizing a `HasFoo` identifier from `foo` needs a
+/// proc macro; a CTE's columns are read with `row.get(name::col)`.
 ///
 /// Column types must be written as a full path (`qbrs::expr::Integer`, not a
 /// bare `Integer` even with a `use qbrs::expr::Integer` already in scope) —
@@ -37,10 +42,23 @@ macro_rules! with {
             impl $crate::scope::Table for Table {
                 const NAME: &'static str = stringify!($name);
             }
+            #[allow(non_camel_case_types)]
+            pub mod columns {
+                $(
+                    #[derive(Clone, Copy)]
+                    pub struct $field;
+                    impl $crate::expr::ColumnKey for $field {
+                        type Table = super::Table;
+                        type Sql = $ty;
+                        const NAME: &'static str = stringify!($field);
+                    }
+                )*
+            }
+
             $(
                 #[allow(non_upper_case_globals)]
-                pub const $field: $crate::expr::Column<Table, $ty> =
-                    $crate::expr::Column::new(stringify!($field));
+                pub const $field: $crate::expr::Column<columns::$field> =
+                    $crate::expr::Column::new();
             )*
 
             impl $crate::cte::CteShape for Table {

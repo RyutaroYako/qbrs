@@ -1,29 +1,22 @@
-//! Execution integration between qbrs's type-safe query builder and a real
-//! Postgres via `sqlx`. This crate owns *only* the value-binding and
-//! row-decoding glue — the query building, SQL rendering, and all
-//! compile-time safety guarantees live in `qbrs-core` and stay entirely
-//! independent of any particular async runtime or driver, mirroring how
-//! sea-query pairs with sea-query-binder rather than owning a driver layer
-//! itself (see the design plan section 6).
+//! Execution integration between qbrs's query builder and a real Postgres
+//! via `sqlx`. This crate owns only the value-binding and row-decoding glue;
+//! query building, SQL rendering, and every compile-time guarantee live in
+//! `qbrs-core`, which stays independent of any async runtime or driver.
 
 use qbrs_core::delete::{Delete, DeleteReturning};
 use qbrs_core::dialect::Postgres;
-use qbrs_core::expr::{Column, Expr, SqlType, Value};
+use qbrs_core::expr::{Column, ColumnKey, Expr, Keyed, SqlType, Value};
 use qbrs_core::insert::{Insert, InsertReturning, InsertRow};
-use qbrs_core::scope::{Superset, Table};
-use qbrs_core::select::{DynSelect, Prepared, PreparedParams, Select, Selection, SetOp};
+use qbrs_core::row::{Aliased, Row, RowCons, RowNil};
+use qbrs_core::scope::Table;
+use qbrs_core::select::{DynSelect, Prepared, PreparedParams, RowField, Select, Selection, SetOp};
 use qbrs_core::update::{Update, UpdateReturning};
-use sqlx::Row;
+use sqlx::Row as _;
 use sqlx::postgres::PgRow;
 
-/// Errors from executing a qbrs query against Postgres via `sqlx`.
-///
-/// Kept as a real enum (rather than surfacing raw `sqlx::Error` for
-/// everything) so a qbrs-level misuse — an unresolved `prepare!{}`
-/// placeholder — is distinguishable from an actual driver/database error
-/// without string-matching a message. Previously both cases collapsed into
-/// `sqlx::Error::Configuration(String)`, which looked identical to a real
-/// sqlx-level configuration problem.
+/// Errors from executing a qbrs query against Postgres via `sqlx`. An enum
+/// rather than a bare `sqlx::Error` so a qbrs-level misuse is distinguishable
+/// from a driver/database error without string-matching a message.
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
     /// A real error from Postgres or the `sqlx` driver: a failed
@@ -31,35 +24,23 @@ pub enum Error {
     #[error(transparent)]
     Sqlx(#[from] sqlx::Error),
 
-    /// A named placeholder built via `prepare!{}` was never resolved
-    /// before execution — either `Prepared::resolve()` found no matching
-    /// field in `Params`, or `.load()`/`.execute()` was called directly on
-    /// a query still holding an unresolved `Value::Placeholder` instead of
-    /// going through `.prepare()` + `Prepared::resolve()`. Not a driver
-    /// error, so kept out of the `Sqlx` variant.
+    /// A `prepare!{}` placeholder reached execution unresolved: either
+    /// `Prepared::resolve()` found no matching field in `Params`, or the
+    /// query was executed directly instead of through `.prepare()`.
     #[error(transparent)]
     UnresolvedPlaceholder(#[from] qbrs_core::select::UnresolvedPlaceholder),
 }
 
-/// This crate's `Result`, parameterized only over the success type — same
-/// shape as `sqlx::Result`, with `qbrs_sqlx::Error` as the fixed error type.
+/// This crate's `Result`: the same shape as `sqlx::Result`, with
+/// `qbrs_sqlx::Error` as the fixed error type.
 pub type Result<T> = std::result::Result<T, Error>;
 
-/// Binds a closed `Value` to a real Postgres query parameter. Typed `NullX`
-/// variants (see `qbrs_core::expr::Value`'s doc comment) are what make this
-/// possible without knowing the surrounding column's type separately —
-/// binding a bare untyped NULL can fail Postgres's query planner even
-/// though the value itself is NULL, because the wire protocol still
-/// declares a parameter type.
+/// Binds a `Value` to a Postgres query parameter. `Value`'s typed `NullX`
+/// variants carry the parameter type a NULL bind still has to declare.
 ///
-/// Fallible because of `Value::Placeholder`: reaching this function means
-/// a `prepare!{}`-style named placeholder was never resolved via
-/// `Prepared::resolve()` before execution (e.g. `.load()` was called
-/// directly on a query built with the low-level, doc-hidden
-/// `expr::placeholder()` instead of going through `.prepare()`) — a real
-/// misuse this crate can't prevent at compile time, so it's surfaced as an
-/// `Error::UnresolvedPlaceholder` here rather than silently binding the
-/// wrong thing or panicking.
+/// Fallible only for `Value::Placeholder`: an unresolved named placeholder
+/// is a misuse no compile-time check here can catch, so it surfaces as
+/// `Error::UnresolvedPlaceholder` rather than a wrong bind or a panic.
 fn bind_value<'q>(
     query: sqlx::query::Query<'q, sqlx::Postgres, sqlx::postgres::PgArguments>,
     v: Value,
@@ -93,129 +74,101 @@ fn bind_all<'q>(
     Ok(query)
 }
 
-/// Decodes a `Selection<Scope, Idx>` positionally out of a real `PgRow`.
-/// Kept as a separate trait (rather than folded into `Selection` itself) so
-/// `qbrs-core` never has to depend on `sqlx`; every impl here just adds a
-/// `sqlx::Decode`/`Type` bound on top of an existing `Selection` impl,
-/// which is also what makes join-derived `Option<T>` wrapping "just work"
-/// here for free — `Selection::Output` already resolved that, and
-/// `Option<T>: Decode` has a blanket impl in sqlx itself.
+/// Decodes one selected item positionally out of a `PgRow`. Separate from
+/// `RowField` so `qbrs-core` never depends on `sqlx`: each impl adds a
+/// `Decode`/`Type` bound to an existing `RowField` impl. Join-derived
+/// `Option<T>` needs no special handling — `RowField::Value` already
+/// resolved it, and sqlx decodes `Option<T>` for free.
+pub trait PgDecodeField<Scope, Idx>: RowField<Scope, Idx> {
+    #[doc(hidden)]
+    fn decode_field(row: &PgRow, idx: &mut usize) -> sqlx::Result<Self::Value>;
+}
+
+macro_rules! decode_field {
+    (impl[$($generics:tt)*] $ty:ty) => {
+        impl<$($generics)*, Scope, Idx> PgDecodeField<Scope, Idx> for $ty
+        where
+            $ty: RowField<Scope, Idx>,
+            <$ty as RowField<Scope, Idx>>::Value:
+                for<'r> sqlx::Decode<'r, sqlx::Postgres> + sqlx::Type<sqlx::Postgres>,
+        {
+            fn decode_field(row: &PgRow, idx: &mut usize) -> sqlx::Result<Self::Value> {
+                let v = row.try_get::<Self::Value, _>(*idx)?;
+                *idx += 1;
+                Ok(v)
+            }
+        }
+    };
+}
+decode_field!(impl[C: ColumnKey] Column<C>);
+decode_field!(impl[Req, S: SqlType] Expr<Req, S>);
+decode_field!(impl[K, Req, S: SqlType] Keyed<K, Req, S>);
+decode_field!(impl[K, Inner] Aliased<K, Inner>);
+
+/// Decodes a whole `Selection<Scope, Idx>` out of a `PgRow`, positionally.
 pub trait PgDecode<Scope, Idx>: Selection<Scope, Idx> {
     #[doc(hidden)]
     fn decode_at(row: &PgRow, idx: &mut usize) -> sqlx::Result<Self::Output>;
 }
 
-impl<T: Table, S: SqlType, Scope, Idx> PgDecode<Scope, Idx> for Column<T, S>
-where
-    Self: Selection<Scope, Idx>,
-    <Self as Selection<Scope, Idx>>::Output:
-        for<'r> sqlx::Decode<'r, sqlx::Postgres> + sqlx::Type<sqlx::Postgres>,
-{
-    fn decode_at(row: &PgRow, idx: &mut usize) -> sqlx::Result<Self::Output> {
-        let v = row.try_get::<Self::Output, _>(*idx)?;
-        *idx += 1;
-        Ok(v)
-    }
+macro_rules! decode_scalar {
+    (impl[$($generics:tt)*] $ty:ty) => {
+        impl<$($generics)*, Scope, Idx> PgDecode<Scope, Idx> for $ty
+        where
+            $ty: Selection<Scope, Idx> + PgDecodeField<Scope, Idx>,
+            $ty: Selection<Scope, Idx, Output = <$ty as RowField<Scope, Idx>>::Value>,
+        {
+            fn decode_at(row: &PgRow, idx: &mut usize) -> sqlx::Result<Self::Output> {
+                <$ty as PgDecodeField<Scope, Idx>>::decode_field(row, idx)
+            }
+        }
+    };
+}
+decode_scalar!(impl[C: ColumnKey] Column<C>);
+decode_scalar!(impl[Req, S: SqlType] Expr<Req, S>);
+decode_scalar!(impl[K, Req, S: SqlType] Keyed<K, Req, S>);
+decode_scalar!(impl[K, Inner] Aliased<K, Inner>);
+
+macro_rules! decode_row_chain {
+    ($row:ident, $idx:ident, $n:ident $i:ident) => {
+        RowCons::new(<$n as PgDecodeField<Scope, $i>>::decode_field($row, $idx)?, RowNil)
+    };
+    ($row:ident, $idx:ident, $n:ident $i:ident, $($rest:tt)*) => {
+        RowCons::new(
+            <$n as PgDecodeField<Scope, $i>>::decode_field($row, $idx)?,
+            decode_row_chain!($row, $idx, $($rest)*),
+        )
+    };
 }
 
-impl<Req, S: SqlType, Scope, Idx> PgDecode<Scope, Idx> for Expr<Req, S>
-where
-    Scope: Superset<Req, Idx>,
-    S::Native: for<'r> sqlx::Decode<'r, sqlx::Postgres> + sqlx::Type<sqlx::Postgres>,
-{
-    fn decode_at(row: &PgRow, idx: &mut usize) -> sqlx::Result<Self::Output> {
-        let v = row.try_get::<S::Native, _>(*idx)?;
-        *idx += 1;
-        Ok(v)
-    }
+macro_rules! decode_tuple {
+    ($($n:ident $i:ident),+) => {
+        impl<Scope, $($n,)+ $($i,)+> PgDecode<Scope, ($($i,)+)> for ($($n,)+)
+        where
+            $($n: PgDecodeField<Scope, $i>,)+
+        {
+            fn decode_at(row: &PgRow, idx: &mut usize) -> sqlx::Result<Self::Output> {
+                Ok(Row::new(decode_row_chain!(row, idx, $($n $i),+)))
+            }
+        }
+    };
 }
+decode_tuple!(A IA);
+decode_tuple!(A IA, B IB);
+decode_tuple!(A IA, B IB, C IC);
+decode_tuple!(A IA, B IB, C IC, D ID);
+decode_tuple!(A IA, B IB, C IC, D ID, E IE);
+decode_tuple!(A IA, B IB, C IC, D ID, E IE, F IF);
+decode_tuple!(A IA, B IB, C IC, D ID, E IE, F IF, G IG);
+decode_tuple!(A IA, B IB, C IC, D ID, E IE, F IF, G IG, H IH);
+decode_tuple!(A IA, B IB, C IC, D ID, E IE, F IF, G IG, H IH, I II);
+decode_tuple!(A IA, B IB, C IC, D ID, E IE, F IF, G IG, H IH, I II, J IJ);
+decode_tuple!(A IA, B IB, C IC, D ID, E IE, F IF, G IG, H IH, I II, J IJ, K IK);
+decode_tuple!(A IA, B IB, C IC, D ID, E IE, F IF, G IG, H IH, I II, J IJ, K IK, L IL);
 
-impl<Scope, Idx, A: PgDecode<Scope, Idx>> PgDecode<Scope, Idx> for (A,) {
-    fn decode_at(row: &PgRow, idx: &mut usize) -> sqlx::Result<Self::Output> {
-        Ok((A::decode_at(row, idx)?,))
-    }
-}
-
-impl<Scope, IdxA, IdxB, A: PgDecode<Scope, IdxA>, B: PgDecode<Scope, IdxB>>
-    PgDecode<Scope, (IdxA, IdxB)> for (A, B)
-{
-    fn decode_at(row: &PgRow, idx: &mut usize) -> sqlx::Result<Self::Output> {
-        Ok((A::decode_at(row, idx)?, B::decode_at(row, idx)?))
-    }
-}
-
-impl<
-    Scope,
-    IdxA,
-    IdxB,
-    IdxC,
-    A: PgDecode<Scope, IdxA>,
-    B: PgDecode<Scope, IdxB>,
-    C: PgDecode<Scope, IdxC>,
-> PgDecode<Scope, (IdxA, IdxB, IdxC)> for (A, B, C)
-{
-    fn decode_at(row: &PgRow, idx: &mut usize) -> sqlx::Result<Self::Output> {
-        Ok((
-            A::decode_at(row, idx)?,
-            B::decode_at(row, idx)?,
-            C::decode_at(row, idx)?,
-        ))
-    }
-}
-
-impl<
-    Scope,
-    IdxA,
-    IdxB,
-    IdxC,
-    IdxD,
-    A: PgDecode<Scope, IdxA>,
-    B: PgDecode<Scope, IdxB>,
-    C: PgDecode<Scope, IdxC>,
-    D: PgDecode<Scope, IdxD>,
-> PgDecode<Scope, (IdxA, IdxB, IdxC, IdxD)> for (A, B, C, D)
-{
-    fn decode_at(row: &PgRow, idx: &mut usize) -> sqlx::Result<Self::Output> {
-        Ok((
-            A::decode_at(row, idx)?,
-            B::decode_at(row, idx)?,
-            C::decode_at(row, idx)?,
-            D::decode_at(row, idx)?,
-        ))
-    }
-}
-
-impl<
-    Scope,
-    IdxA,
-    IdxB,
-    IdxC,
-    IdxD,
-    IdxE,
-    A: PgDecode<Scope, IdxA>,
-    B: PgDecode<Scope, IdxB>,
-    C: PgDecode<Scope, IdxC>,
-    D: PgDecode<Scope, IdxD>,
-    E: PgDecode<Scope, IdxE>,
-> PgDecode<Scope, (IdxA, IdxB, IdxC, IdxD, IdxE)> for (A, B, C, D, E)
-{
-    fn decode_at(row: &PgRow, idx: &mut usize) -> sqlx::Result<Self::Output> {
-        Ok((
-            A::decode_at(row, idx)?,
-            B::decode_at(row, idx)?,
-            C::decode_at(row, idx)?,
-            D::decode_at(row, idx)?,
-            E::decode_at(row, idx)?,
-        ))
-    }
-}
-
-/// Generic over `E: sqlx::PgExecutor` (rather than hardcoding `&PgPool`) so
-/// every public `.load()`/`.execute()` method here works unchanged against
-/// either a plain `&PgPool` or a `&mut sqlx::PgTransaction<'_>` — sqlx
-/// itself only implements `Executor` for `&mut PgConnection` (which
-/// `Transaction` derefs to), not `Transaction` directly, so callers pass
-/// `&mut *tx`, matching sqlx's own transaction usage pattern.
+/// Generic over `E: sqlx::PgExecutor` so every `.load()`/`.execute()` works
+/// against a `&PgPool` or a transaction alike. sqlx implements `Executor` for
+/// `&mut PgConnection`, not `Transaction`, so callers pass `&mut *tx`.
 async fn fetch_all<'e, Scope, Idx, Sel: PgDecode<Scope, Idx>, E: sqlx::PgExecutor<'e>>(
     executor: E,
     sql: &str,
@@ -253,14 +206,8 @@ async fn execute_only<'e, E: sqlx::PgExecutor<'e>>(
     Ok(result.rows_affected())
 }
 
-/// Threading an explicit `Idx` parameter (rather than hiding it in a
-/// `where` clause on a single-parameter trait) is the same fix the Phase 0
-/// spike already needed for `scope::Superset` itself: Rust has no
-/// existential quantification over impl generics, so an index used only in
-/// a `where` clause (and not the trait's own parameter list) is an
-/// unconstrained-type-parameter compile error (E0207). Callers never see
-/// `Idx` — it's always inferred at the call site, exactly like `Find`'s and
-/// `Superset`'s own indices.
+/// `Idx` is threaded through the trait's parameter list for the reason
+/// `scope::Superset` explains. Callers never see it; it's inferred.
 pub trait LoadExt<Idx> {
     type Output;
     fn load<'e, E: sqlx::PgExecutor<'e>>(
@@ -405,13 +352,10 @@ where
     }
 }
 
-/// Decodes a `DynSelect`'s `Output` positionally out of a `PgRow`. A
-/// separate, narrower trait from `PgDecode` rather than a reuse of it:
-/// once a query is erased via `.erase()`, only the plain-Rust `Output`
-/// type survives (see `DynSelect`'s doc comment) — there's no `Selection`
-/// impl left to piggyback decode logic on, so this is implemented directly
-/// against the same closed set of native types `Selection`/`PgDecode`
-/// cover, not derived from them.
+/// Decodes a `DynSelect`'s `Output` positionally out of a `PgRow`. Narrower
+/// than `PgDecode`: erasure leaves only the plain-Rust `Output`, with no
+/// `Selection` impl left to hang decoding off, so this is implemented
+/// directly against the same closed set of native types.
 pub trait DecodeRow: Sized {
     #[doc(hidden)]
     fn decode_at(row: &PgRow, idx: &mut usize) -> sqlx::Result<Self>;
@@ -441,6 +385,25 @@ decode_row_leaf!(f64);
 decode_row_leaf!(String);
 decode_row_leaf!(bool);
 decode_row_leaf!(Vec<u8>);
+
+impl DecodeRow for RowNil {
+    fn decode_at(_row: &PgRow, _idx: &mut usize) -> sqlx::Result<Self> {
+        Ok(RowNil)
+    }
+}
+
+impl<K, V: DecodeRow, Tail: DecodeRow> DecodeRow for RowCons<K, V, Tail> {
+    fn decode_at(row: &PgRow, idx: &mut usize) -> sqlx::Result<Self> {
+        let value = V::decode_at(row, idx)?;
+        Ok(RowCons::new(value, Tail::decode_at(row, idx)?))
+    }
+}
+
+impl<L: DecodeRow> DecodeRow for Row<L> {
+    fn decode_at(row: &PgRow, idx: &mut usize) -> sqlx::Result<Self> {
+        Ok(Row::new(L::decode_at(row, idx)?))
+    }
+}
 
 impl<A: DecodeRow> DecodeRow for (A,) {
     fn decode_at(row: &PgRow, idx: &mut usize) -> sqlx::Result<Self> {
@@ -506,13 +469,10 @@ impl<Output: DecodeRow> LoadDynExt for DynSelect<Postgres, Output> {
     }
 }
 
-/// Loads a `UNION`/`INTERSECT`/`EXCEPT` chain (see
-/// `qbrs_core::select::SetOp`) against real Postgres. Reuses the same
-/// `DecodeRow` trait `LoadDynExt` uses — once combined via a set operator, a
-/// `SetOp`'s branches no longer carry their individual `Scope`s/`Selection`
-/// impls (they were already rendered to text at combine time), so there is
-/// nothing left to decode against but the plain `Output` type, exactly the
-/// erased situation `DynSelect` is already in.
+/// Loads a `UNION`/`INTERSECT`/`EXCEPT` chain. Reuses `DecodeRow` for the
+/// same reason `LoadDynExt` does: a `SetOp`'s branches were rendered to
+/// fragments at combine time, leaving only the plain `Output` to decode
+/// against.
 pub trait LoadSetOpExt {
     type Output;
     fn load<'e, E: sqlx::PgExecutor<'e>>(
@@ -534,11 +494,9 @@ impl<Output: DecodeRow> LoadSetOpExt for SetOp<Postgres, Output> {
     }
 }
 
-/// Executes a `prepare!{}`-built query against real Postgres, resolving its
-/// named placeholders from `params` first — see `qbrs_core::select::Prepared`.
-/// The same `Prepared` value is meant to be reused across many `execute`
-/// calls with different `params`, since `.resolve()` only clones the
-/// template, not re-render the SQL text.
+/// Executes a `prepare!{}`-built query, resolving its named placeholders
+/// from `params` first. One `Prepared` is meant to serve many `execute`
+/// calls: `.resolve()` clones the template rather than re-rendering it.
 pub trait PreparedExt<Params> {
     type Output;
     fn execute<'e, E: sqlx::PgExecutor<'e>>(
@@ -569,10 +527,9 @@ impl<Params: PreparedParams, Output: DecodeRow> PreparedExt<Params> for Prepared
 mod tests {
     use super::*;
 
-    // No real Postgres needed: `bind_all`/`bind_value` only inspect the
-    // `Value` enum before ever reaching the network, so the misuse case
-    // (executing a query with an unresolved `prepare!{}` placeholder) is
-    // reachable — and its error type checkable — without a live DB.
+    // No real Postgres needed: binding inspects the `Value` enum before
+    // anything reaches the network, so an unresolved placeholder is
+    // reachable, and its error checkable, without a live DB.
     #[test]
     fn unresolved_placeholder_is_a_typed_error_not_a_sqlx_configuration_string() {
         let query = sqlx::query(sqlx::AssertSqlSafe("SELECT $1"));
@@ -585,8 +542,8 @@ mod tests {
             err,
             Error::UnresolvedPlaceholder(qbrs_core::select::UnresolvedPlaceholder("email"))
         ));
-        // `Error` is a real `std::error::Error`, not just a `Debug`/`Display`
-        // pair, so callers can use it with `anyhow`/`Box<dyn Error>`/etc.
+        // A real `std::error::Error`, so it composes with
+        // `anyhow`/`Box<dyn Error>`.
         let _: &dyn std::error::Error = &err;
         assert_eq!(err.to_string(), "no value provided for placeholder `email`");
     }

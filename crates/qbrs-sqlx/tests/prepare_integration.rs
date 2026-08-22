@@ -51,12 +51,12 @@ async fn prepared_query_reused_across_different_params() {
         .expect("seed users");
     assert_eq!(ids.len(), 2);
 
-    let query = select((users::id,))
+    let query = select(users::id)
         .from::<Postgres, _>(users::Table)
         .filter(users::email.eq(ByEmail::email()))
         .prepare::<ByEmail, _>();
 
-    let ada: Vec<(i64,)> = query
+    let ada: Vec<i64> = query
         .execute(
             &pool,
             ByEmail {
@@ -65,10 +65,10 @@ async fn prepared_query_reused_across_different_params() {
         )
         .await
         .expect("execute for ada");
-    assert_eq!(ada, vec![(ids[0],)]);
+    assert_eq!(ada, vec![ids[0]]);
 
     // Same `query` value, no re-render — just a different `params`.
-    let dan: Vec<(i64,)> = query
+    let dan: Vec<i64> = query
         .execute(
             &pool,
             ByEmail {
@@ -77,7 +77,7 @@ async fn prepared_query_reused_across_different_params() {
         )
         .await
         .expect("execute for dan");
-    assert_eq!(dan, vec![(ids[1],)]);
+    assert_eq!(dan, vec![ids[1]]);
 
     sqlx::query("DROP TABLE users_prepare_test")
         .execute(&pool)

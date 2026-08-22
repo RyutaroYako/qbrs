@@ -1,16 +1,21 @@
-//! `#[derive(Table)]`: turns a plain Rust struct (native field types —
-//! `i64`, `String`, `Option<String>`, ...) into a schema module (`mod
-//! users { pub struct Table; pub const id: Column<Table, BigInt> = ..; }`)
-//! plus `*Insert`/`*Update` companion structs using the `Defaultable<T>`
-//! design from the plan. Nullability is inferred from `Option<T>` wrapping
-//! rather than a separate `not_null`/`nullable` attribute — one source of
-//! truth, less ceremony. `#[column(primary_key)]`, `#[column(generated)]`,
-//! and `#[column(default)]` are the only per-field attributes.
+//! `#[derive(Table)]`: turns a struct of native field types into a schema
+//! module (`mod users { pub struct Table; pub mod columns { pub struct id; }
+//! pub const id: Column<columns::id> = ..; }`) plus `*Insert`/`*Update`
+//! companion structs. Nullability is inferred from `Option<T>` wrapping
+//! rather than a separate attribute. `#[column(primary_key)]`,
+//! `#[column(generated)]`, and `#[column(default)]` are the only per-field
+//! attributes.
+//!
+//! `label!` declares output-column names for computed selections. Both live
+//! here rather than as `macro_rules!` in `qbrs-core` (where `sql!`,
+//! `prepare!`, and `with!` live) because both synthesize an identifier —
+//! `HasEmail` from `email` — which a declarative macro cannot do.
 
 use proc_macro::TokenStream;
 use proc_macro2::TokenStream as TokenStream2;
 use quote::{format_ident, quote};
-use syn::{Data, DeriveInput, Fields, Ident, Type, parse_macro_input};
+use syn::punctuated::Punctuated;
+use syn::{Data, DeriveInput, Fields, Ident, Token, Type, parse_macro_input};
 
 #[proc_macro_derive(Table, attributes(table, column))]
 pub fn derive_table(input: TokenStream) -> TokenStream {
@@ -25,9 +30,7 @@ struct ColumnInfo {
     /// The inner type with any `Option<..>` wrapper stripped off.
     base_ty: Type,
     /// The `qbrs::expr` `SqlType` marker mapped from `base_ty` (e.g. `i64`
-    /// -> `BigInt`). Computed once and reused everywhere it's needed
-    /// (schema module, and the typed-NULL binding in Insert/Update codegen)
-    /// rather than re-deriving it from `base_ty` at each call site.
+    /// -> `BigInt`).
     sql_type: TokenStream2,
     nullable: bool,
     primary_key: bool,
@@ -77,9 +80,8 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
                     generated = true;
                 } else if meta.path.is_ident("default") {
                     has_default = true;
-                    // `default = "expr"` is accepted but the expression
-                    // itself is a migration/DDL concern (v2), not needed
-                    // at the Rust-type level — just consume the value.
+                    // `default = "expr"` parses, but the expression is a
+                    // migration/DDL concern; nothing here needs its value.
                     if meta.input.peek(syn::Token![=]) {
                         let _: syn::Expr = meta.value()?.parse()?;
                     }
@@ -149,9 +151,8 @@ fn strip_option(ty: &Type) -> (bool, Type) {
 }
 
 /// Maps a base (non-`Option`) native Rust type to its `qbrs_core::expr`
-/// `SqlType` marker path. Deliberately a closed match, not a fallback —
-/// an unsupported type should be a clear compile error naming the type,
-/// not a confusing failure somewhere downstream.
+/// `SqlType` marker path. A closed match, so an unsupported type is a clear
+/// compile error naming the type rather than a downstream failure.
 fn sql_type_for(ty: &Type) -> syn::Result<TokenStream2> {
     if let Type::Path(p) = ty
         && let Some(seg) = p.path.segments.last()
@@ -183,28 +184,45 @@ fn gen_schema_mod(
     table_name: &str,
     columns: &[ColumnInfo],
 ) -> syn::Result<TokenStream2> {
+    let mut keys = Vec::new();
     let mut consts = Vec::new();
+    let mut accessors = Vec::new();
+    let mut accessor_uses = Vec::new();
     for c in columns {
         let name = &c.field_name;
         let base_sql_ty = &c.sql_type;
-        // A nullable *schema* column must get `Column<Table, Nullable<X>>`,
-        // not `Column<Table, X>` — this is independent of (and more basic
-        // than) the separate, already-documented limitation that join-
-        // derived nullability doesn't yet flow into `Selection::Output`.
-        // Missing this wrapper here was a real bug caught by the Postgres
-        // integration test: `.eq()` on a nullable column would otherwise
-        // demand a non-`Option` value, and decoded rows would reject an
-        // actual NULL instead of yielding `None`.
+        // A nullable schema column needs `Nullable<X>`: without the wrapper,
+        // `.eq()` would demand a non-`Option` value and decoding a real NULL
+        // would fail instead of yielding `None`.
         let col_sql_ty = if c.nullable {
             quote! { ::qbrs::scope::Nullable<#base_sql_ty> }
         } else {
             quote! { #base_sql_ty }
         };
         let col_name_str = name.to_string();
+        keys.push(quote! {
+            #[derive(Clone, Copy)]
+            pub struct #name;
+            impl ::qbrs::expr::ColumnKey for #name {
+                type Table = super::Table;
+                type Sql = #col_sql_ty;
+                const NAME: &'static str = #col_name_str;
+            }
+        });
         consts.push(quote! {
             #[allow(non_upper_case_globals)]
-            pub const #name: ::qbrs::expr::Column<Table, #col_sql_ty> =
-                ::qbrs::expr::Column::new(#col_name_str);
+            pub const #name: ::qbrs::expr::Column<columns::#name> =
+                ::qbrs::expr::Column::new();
+        });
+        let trait_ident = format_ident!("Has{}", to_camel_case(&col_name_str));
+        accessors.push(accessor_trait(
+            &trait_ident,
+            name,
+            &quote! { columns::#name },
+        ));
+        accessor_uses.push(quote! {
+            #[allow(unused_imports)]
+            pub use #mod_ident::#trait_ident as _;
         });
     }
 
@@ -215,12 +233,100 @@ fn gen_schema_mod(
             impl ::qbrs::scope::Table for Table {
                 const NAME: &'static str = #table_name;
             }
+
+            #[allow(non_camel_case_types)]
+            pub mod columns {
+                #(#keys)*
+            }
+
             #(#consts)*
+            #(#accessors)*
         }
+
+        #(#accessor_uses)*
     })
 }
 
-/// Per the plan's rule table:
+/// One column's `row.<name>()` accessor. The `Idx` parameter is the same
+/// inferred lookup index `row::GetField` and `scope::Find` carry; it can't
+/// be hidden, since an impl generic constrained only by a `where` clause
+/// isn't accepted.
+fn accessor_trait(trait_ident: &Ident, method: &Ident, key: &TokenStream2) -> TokenStream2 {
+    quote! {
+        pub trait #trait_ident<Idx> {
+            type Value;
+            fn #method(&self) -> &Self::Value;
+        }
+
+        impl<L, Idx> #trait_ident<Idx> for ::qbrs::row::Row<L>
+        where
+            L: ::qbrs::row::GetField<#key, Idx>,
+        {
+            type Value = <L as ::qbrs::row::GetField<#key, Idx>>::Value;
+            fn #method(&self) -> &Self::Value {
+                self.get(self::#method)
+            }
+        }
+    }
+}
+
+/// `label!(rank_in_user, rank_overall);` — declares output-column names for
+/// computed selections, in a `label` module so they can never be shadowed by
+/// a local binding of the same name. One invocation per scope; declaring it
+/// inside the function that runs the query keeps the names next to their use
+/// and sidesteps that limit.
+#[proc_macro]
+pub fn label(input: TokenStream) -> TokenStream {
+    let names = parse_macro_input!(input with Punctuated::<Ident, Token![,]>::parse_terminated);
+    let mut decls = Vec::new();
+    let mut uses = Vec::new();
+    for name in &names {
+        let name_str = name.to_string();
+        let trait_ident = format_ident!("Has{}", to_camel_case(&name_str));
+        let accessor = accessor_trait(&trait_ident, name, &quote! { #name });
+        decls.push(quote! {
+            #[allow(non_camel_case_types)]
+            #[derive(Clone, Copy)]
+            pub struct #name;
+            impl ::qbrs::row::RowKey for #name {
+                type Key = #name;
+            }
+            impl ::qbrs::row::AliasKey for #name {
+                const NAME: &'static str = #name_str;
+            }
+            #accessor
+        });
+        uses.push(quote! {
+            #[allow(unused_imports)]
+            pub use label::#trait_ident as _;
+        });
+    }
+    quote! {
+        pub mod label {
+            #(#decls)*
+        }
+        #(#uses)*
+    }
+    .into()
+}
+
+fn to_camel_case(s: &str) -> String {
+    let mut out = String::new();
+    let mut upper = true;
+    for c in s.chars() {
+        if c == '_' {
+            upper = true;
+        } else if upper {
+            out.extend(c.to_uppercase());
+            upper = false;
+        } else {
+            out.push(c);
+        }
+    }
+    out
+}
+
+/// Field shape per column:
 /// generated              -> excluded entirely
 /// not_null, no default   -> `T` (required, taken by `new()`)
 /// not_null, has default  -> `Defaultable<T>`
@@ -347,9 +453,8 @@ fn gen_insert_struct(
 
 /// Update struct: every field optional (untouched vs. touched); nullable
 /// columns get a doubly-nested `Option<Option<T>>` to distinguish
-/// "untouched" from "explicit NULL" (see `update::UpdateRow`). Primary
-/// keys and generated columns are excluded — updating either is not a
-/// supported v1 operation.
+/// "untouched" from "explicit NULL". Primary keys and generated columns are
+/// excluded; updating either isn't supported.
 fn gen_update_struct(
     struct_ident: &Ident,
     mod_ident: &Ident,

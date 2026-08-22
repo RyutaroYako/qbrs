@@ -22,8 +22,28 @@ mod employees {
     use qbrs_core::expr::{Column, Integer, Text};
 
     pub const Table: EmployeesMarker = EmployeesMarker;
-    pub const department: Column<EmployeesMarker, Text> = Column::new("department");
-    pub const salary: Column<EmployeesMarker, Integer> = Column::new("salary");
+    #[allow(non_camel_case_types)]
+    pub mod columns {
+        use super::*;
+        use qbrs_core::expr::ColumnKey;
+        #[derive(Clone, Copy)]
+        pub struct department;
+        impl ColumnKey for department {
+            type Table = EmployeesMarker;
+            type Sql = Text;
+            const NAME: &'static str = "department";
+        }
+        #[derive(Clone, Copy)]
+        pub struct salary;
+        impl ColumnKey for salary {
+            type Table = EmployeesMarker;
+            type Sql = Integer;
+            const NAME: &'static str = "salary";
+        }
+    }
+
+    pub const department: Column<columns::department> = Column::new();
+    pub const salary: Column<columns::salary> = Column::new();
 }
 
 #[allow(non_upper_case_globals, dead_code)]
@@ -31,7 +51,20 @@ mod orders {
     use super::OrdersMarker;
     use qbrs_core::expr::{Column, Integer};
 
-    pub const total: Column<OrdersMarker, Integer> = Column::new("total");
+    #[allow(non_camel_case_types)]
+    pub mod columns {
+        use super::*;
+        use qbrs_core::expr::ColumnKey;
+        #[derive(Clone, Copy)]
+        pub struct total;
+        impl ColumnKey for total {
+            type Table = OrdersMarker;
+            type Sql = Integer;
+            const NAME: &'static str = "total";
+        }
+    }
+
+    pub const total: Column<columns::total> = Column::new();
 }
 
 #[test]

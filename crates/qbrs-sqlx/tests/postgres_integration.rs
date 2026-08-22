@@ -1,25 +1,18 @@
-//! End-to-end test against a *real* Postgres. Revisiting the design plan's
-//! DB-setup decision: PGlite was passed over because it needed a Node.js
-//! sidecar to speak the Postgres wire protocol
-//! (`@electric-sql/pglite-socket`). That is no longer true — `pglite-rs`
-//! links the `postgres-pglite` engine straight into the test binary and
-//! serves it over a unix socket, so no Node and no Docker are involved.
+//! End-to-end test against a *real* Postgres.
 //!
 //! - **Default (no setup)**: with `DATABASE_URL` unset, a throwaway
-//!   PostgreSQL 17.5 is started in a temp directory and torn down after.
-//!   The engine is linked in at build time, so nothing is downloaded at
-//!   test time — which matters, because this crate's own development
-//!   environment blocks the CDN `postgresql_embedded` used to fetch from.
-//! - **External Postgres**: set `DATABASE_URL` to run the same tests
-//!   against a real server (a local install, a CI service, ...).
-//!
-//! See `common::test_pool` for why this uses multi-process mode.
+//!   PostgreSQL 17.5 runs in a temp directory and is torn down after. The
+//!   engine is linked in at build time, so nothing is downloaded at test
+//!   time.
+//! - **External Postgres**: set `DATABASE_URL` to run the same tests against
+//!   a real server.
 
 mod common;
 
 use qbrs::Table;
 use qbrs::dialect::Postgres;
 use qbrs::expr::ExprMethods;
+use qbrs::row::IntoTuples;
 use qbrs::select::{OrderExt, select};
 use qbrs_sqlx::{ExecuteExt, LoadExt, LoadReturningExt};
 
@@ -102,7 +95,7 @@ async fn full_crud_roundtrip_against_real_postgres() {
         .expect("insert orders");
 
     // Plain SELECT with WHERE + ORDER BY + LIMIT
-    let names: Vec<(String,)> = select((users::email,))
+    let names: Vec<String> = select(users::email)
         .from::<Postgres, _>(users::Table)
         .filter(users::active.eq(true))
         .order_by(users::id.asc())
@@ -112,10 +105,7 @@ async fn full_crud_roundtrip_against_real_postgres() {
         .expect("select users");
     assert_eq!(
         names,
-        vec![
-            ("ada@example.com".to_string(),),
-            ("dan@example.com".to_string(),)
-        ]
+        vec!["ada@example.com".to_string(), "dan@example.com".to_string()]
     );
 
     // LEFT JOIN — dan has no orders, so his row's total must come back NULL,
@@ -126,7 +116,8 @@ async fn full_crud_roundtrip_against_real_postgres() {
         .order_by(users::id.asc())
         .load(&pool)
         .await
-        .expect("left join select");
+        .expect("left join select")
+        .into_tuples();
     rows.sort();
     assert!(rows.contains(&("dan@example.com".to_string(), None)));
     assert!(rows.contains(&("ada@example.com".to_string(), Some(1000))));
@@ -144,13 +135,13 @@ async fn full_crud_roundtrip_against_real_postgres() {
         .expect("update user");
     assert_eq!(affected, 1);
 
-    let updated_name: Option<(Option<String>,)> = select((users::display_name,))
+    let updated_name: Option<Option<String>> = select(users::display_name)
         .from::<Postgres, _>(users::Table)
         .filter(users::id.eq(ada_id))
         .load_one(&pool)
         .await
         .expect("select updated user");
-    assert_eq!(updated_name, Some((Some("Ada Lovelace".to_string()),)));
+    assert_eq!(updated_name, Some(Some("Ada Lovelace".to_string())));
 
     // DELETE
     let deleted = qbrs::delete::delete::<Postgres, _>(users::Table)
@@ -160,12 +151,12 @@ async fn full_crud_roundtrip_against_real_postgres() {
         .expect("delete user");
     assert_eq!(deleted, 1);
 
-    let remaining: Vec<(i64,)> = select((users::id,))
+    let remaining: Vec<i64> = select(users::id)
         .from::<Postgres, _>(users::Table)
         .load(&pool)
         .await
         .expect("select remaining users");
-    assert_eq!(remaining, vec![(ada_id,)]);
+    assert_eq!(remaining, vec![ada_id]);
 
     common::shutdown(pool, guard).await;
 }

@@ -1,10 +1,6 @@
-//! Proves `DynSelect` actually solves the one case the design plan
-//! identified as a mathematical impossibility for static typing: a single
-//! static type cannot mean "joined" in one branch and "not joined" in
-//! another, so unifying two differently-shaped queries needs *some*
-//! erasure — this checks that `.erase()` is narrow enough to still catch
-//! real mistakes (a forgotten join) while being just permissive enough to
-//! let the two branches unify.
+//! `.erase()` has to be permissive enough to unify two differently-joined
+//! branches, and narrow enough to still reject a forgotten join. These
+//! check both halves.
 
 use qbrs_core::dialect::Postgres;
 use qbrs_core::expr::ExprMethods;
@@ -25,7 +21,20 @@ mod users {
     use super::UsersMarker;
     use qbrs_core::expr::{Column, Integer};
     pub const Table: UsersMarker = UsersMarker;
-    pub const id: Column<UsersMarker, Integer> = Column::new("id");
+    #[allow(non_camel_case_types)]
+    pub mod columns {
+        use super::*;
+        use qbrs_core::expr::ColumnKey;
+        #[derive(Clone, Copy)]
+        pub struct id;
+        impl ColumnKey for id {
+            type Table = UsersMarker;
+            type Sql = Integer;
+            const NAME: &'static str = "id";
+        }
+    }
+
+    pub const id: Column<columns::id> = Column::new();
 }
 
 #[allow(non_upper_case_globals)]
@@ -33,11 +42,24 @@ mod orders {
     use super::OrdersMarker;
     use qbrs_core::expr::{Column, Integer};
     pub const Table: OrdersMarker = OrdersMarker;
-    pub const user_id: Column<OrdersMarker, Integer> = Column::new("user_id");
+    #[allow(non_camel_case_types)]
+    pub mod columns {
+        use super::*;
+        use qbrs_core::expr::ColumnKey;
+        #[derive(Clone, Copy)]
+        pub struct user_id;
+        impl ColumnKey for user_id {
+            type Table = OrdersMarker;
+            type Sql = Integer;
+            const NAME: &'static str = "user_id";
+        }
+    }
+
+    pub const user_id: Column<columns::user_id> = Column::new();
 }
 
-fn build(with_orders: bool) -> DynSelect<Postgres, (i32,)> {
-    let base = select((users::id,)).from::<Postgres, _>(users::Table);
+fn build(with_orders: bool) -> DynSelect<Postgres, i32> {
+    let base = select(users::id).from::<Postgres, _>(users::Table);
     if with_orders {
         base.inner_join(orders::Table, orders::user_id.eq(users::id))
             .erase()
