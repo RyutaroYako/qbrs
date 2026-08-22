@@ -162,8 +162,6 @@ nullability that `S` doesn't carry.
 marker traits — `SupportsReturning`, `SupportsOnConflict`, `SupportsRightJoin`,
 `SupportsFullOuterJoin` — so an unsupported call is a compile error. Keep capabilities
 fine-grained: they were split precisely because MySQL has `RIGHT JOIN` but not `FULL JOIN`.
-`RawEmbed<D>` is an internal dialect wrapper that forces `?` placeholders; it is reached
-through `Select::fragment` only (see below), never named at a call site.
 
 ### Embedded SQL goes through `Fragment`
 
@@ -173,7 +171,7 @@ query has been rendered. That's `render::Fragment` — carrying the text and its
 together, spliced with `Fragment::splice_into`, which assigns the numbering.
 
 `Select::fragment` is the only way to make one from a query, so no call site has to remember
-to render with `RawEmbed<D>` rather than `D`. If you add another place that embeds SQL in a
+that an embedded query's placeholders are written by position and numbered later. If you add another place that embeds SQL in a
 larger query, take a `Fragment`; don't reintroduce a bare `(String, Vec<Value>)` pair.
 
 ### Builder shape

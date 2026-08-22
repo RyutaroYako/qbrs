@@ -180,12 +180,26 @@ pub trait CountExt<Idx> {
 
 impl<Scope, Sel: Selection<Scope, Idx>, Idx> CountExt<Idx> for Select<Postgres, Scope, Sel> {
     async fn count<'e, E: sqlx::PgExecutor<'e>>(&self, executor: E) -> Result<i64> {
-        let (sql, params) = self.count_sql::<Idx>();
-        let row = bind_all(sqlx::query(sqlx::AssertSqlSafe(sql.as_str())), params)?
-            .fetch_one(executor)
-            .await?;
-        Ok(row.try_get::<i64, _>(0)?)
+        count_rows(executor, self.count_sql::<Idx>()).await
     }
+}
+
+/// Erasure is for a query whose joins depend on a condition, and such a
+/// query is paged like any other, so it counts like any other.
+impl<Output> CountExt<()> for DynSelect<Postgres, Output> {
+    async fn count<'e, E: sqlx::PgExecutor<'e>>(&self, executor: E) -> Result<i64> {
+        count_rows(executor, self.count_sql()).await
+    }
+}
+
+async fn count_rows<'e, E: sqlx::PgExecutor<'e>>(
+    executor: E,
+    (sql, params): (String, Vec<Value>),
+) -> Result<i64> {
+    let row = bind_all(sqlx::query(sqlx::AssertSqlSafe(sql.as_str())), params)?
+        .fetch_one(executor)
+        .await?;
+    Ok(row.try_get::<i64, _>(0)?)
 }
 
 pub trait ExecuteExt {

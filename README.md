@@ -83,10 +83,22 @@ destructuring is what's wanted). Forget the join and reference
 `orders::total` anyway, and it's a compile error, not a runtime surprise:
 
 ```
-error[E0277]: `Orders` is not available in this query's scope
-  = help: add `.join(<table>, ..)` (or `.from(..)`) for `Orders`
-          before referencing its columns here
+error[E0277]: `orders::Table` is not available in this query's scope
+  --> src/main.rs:23:22
+   |
+23 |       let rows = select((users::email, orders::total))
+   |  ________________^
+24 | |         .from::<Postgres, _>(users::Table)
+   | |__________________________________________^ add `.join(<table>, ..)` (or `.from(..)`)
+   |                                              for `orders::Table` before referencing
+   |                                              its columns here
+   |
+   = note: columns can only be referenced once their table has been joined into the
+           current FROM/JOIN scope
 ```
+
+(rustc prints the underlying `Find`/`RowField`/`Selection` obligation chain after
+that, as it does for any unsatisfied trait bound.)
 
 ## Why qbrs?
 
@@ -203,8 +215,8 @@ A schema is a `#[derive(Table)]` struct, shown in the
   join is a compile error rather than a `must appear in the GROUP BY clause`
   at run time, and each is named after its column, so it reads back as
   `row.get(sum(orders::total))` and satisfies a CTE or DTO field called
-  `total`. All are nullable except `count`: an aggregate over zero rows is
-  NULL.
+  `total`. All are nullable except the two counts: an aggregate over zero
+  rows is NULL, but a count of them is `0`.
 - **Raw SQL escape hatch** (`sql!{}`) —
   [`06_raw_sql`](examples/examples/06_raw_sql.rs). Values still bind as real
   parameters, never spliced as text.
@@ -284,7 +296,7 @@ A schema is a `#[derive(Table)]` struct, shown in the
 - A correlated `EXISTS` is tagged with the outer query's tables, so it can
   only be filtered onto that query — but `prepare!{}` doesn't tie its
   `Params` struct to the query it was built from, and a mismatch surfaces at
-  `.execute()` as `UnresolvedPlaceholder` rather than at compile time.
+  `.load()` as `UnresolvedPlaceholder` rather than at compile time.
 - `sql!{}` treats `?` as a bind slot; write `??` for a literal one. Its text
   must be a constant — a literal, a `const`, `concat!`, `include_str!` — so
   runtime-assembled text can never become SQL shape.
@@ -325,8 +337,8 @@ query-building layer has been stable for a while).
 - [`crates/core`](crates/core) (`qbrs-core`) — the type-level machinery: scope
   tracking (`Cons`/`Nil`/`Find`), expressions, `Select`/`Insert`/`Update`/`Delete`
   builders, SQL rendering. No I/O, no async runtime.
-- [`crates/macros`](crates/macros) (`qbrs-macros`) — `#[derive(Table)]` and
-  `label!`.
+- [`crates/macros`](crates/macros) (`qbrs-macros`) — `#[derive(Table)]`,
+  `#[derive(FromRow)]`, `label!`, and `with!`.
 - [`crates/qbrs`](crates/qbrs) — the facade crate; depend on this one.
 - [`crates/qbrs-sqlx`](crates/qbrs-sqlx) — execution via `sqlx` (Postgres).
 - [`examples`](examples) (`qbrs-examples`) — runnable examples; see

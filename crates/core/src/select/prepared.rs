@@ -14,14 +14,14 @@ pub trait PreparedParams {
 }
 
 /// A query rendered once, with its `Value::Placeholder(name)` slots left
-/// unresolved, reusable across many `.execute(params)` calls. `execute`
+/// unresolved, reusable across many `.load(executor, params)` calls. `load`
 /// takes the exact `Params` struct `prepare!{}` generated for this query, so
 /// a missing or mistyped value is a compile error.
 ///
 /// That holds as long as every placeholder came from `Params::field()`
 /// accessors of the same `prepare!{}` invocation, which is why the
 /// lower-level `expr::placeholder` is `#[doc(hidden)]`: a hand-written name
-/// that matches nothing fails at `.execute()` time instead.
+/// that matches nothing fails at `.load()` time instead.
 pub struct Prepared<Params, Output> {
     sql: String,
     template: Vec<Value>,
@@ -47,7 +47,8 @@ impl<D, Scope, Sel> Select<D, Scope, Sel> {
     }
 }
 
-/// Returned by `Prepared::execute`/`resolve` when a placeholder in the
+/// Returned by `Prepared::resolve` — and so by the `.load()` that calls
+/// it — when a placeholder in the
 /// template has no matching field in the `Params` passed in. Reachable only
 /// by hand-constructing a mismatched `expr::placeholder` name.
 #[derive(Debug, Clone, PartialEq, Eq)]

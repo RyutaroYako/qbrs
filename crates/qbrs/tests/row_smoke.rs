@@ -128,7 +128,7 @@ fn an_unaliased_expression_is_keyed_by_the_function_that_made_it() {
         .to_sql();
     assert_eq!(
         sql,
-        "SELECT \"users\".\"email\", (count(*)) FROM \"users\" GROUP BY \"users\".\"email\""
+        "SELECT \"users\".\"email\", count(*) FROM \"users\" GROUP BY \"users\".\"email\""
     );
 
     let row = Row::new(RowCons::<qbrs::expr::Count, _, _>::new(3i64, RowNil));
@@ -237,7 +237,7 @@ fn a_grouped_count_counts_groups_not_the_first_group() {
         .count_sql();
     assert_eq!(
         sql,
-        "SELECT count(*) FROM (SELECT (count(*)) FROM \"users\" GROUP BY \"users\".\"id\") AS \"qbrs_total\""
+        "SELECT count(*) FROM (SELECT count(*) FROM \"users\" GROUP BY \"users\".\"id\") AS \"qbrs_total\""
     );
 }
 
@@ -253,7 +253,7 @@ fn a_count_drops_the_paging_the_page_needed() {
         .offset(40u32);
     assert_eq!(
         page.count_sql().0,
-        "SELECT (count(*)) FROM \"users\" WHERE (\"users\".\"active\" = $1)"
+        "SELECT count(*) FROM \"users\" WHERE (\"users\".\"active\" = $1)"
     );
 }
 

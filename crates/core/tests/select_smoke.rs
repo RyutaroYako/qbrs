@@ -197,7 +197,7 @@ fn group_by_and_having_render() {
         .to_sql();
     assert_eq!(
         q.0,
-        "SELECT \"users\".\"active\", (count(*)) FROM \"users\" GROUP BY \"users\".\"active\" HAVING ((count(*)) > $1)"
+        "SELECT \"users\".\"active\", count(*) FROM \"users\" GROUP BY \"users\".\"active\" HAVING (count(*) > $1)"
     );
     assert_eq!(q.1, vec![qbrs_core::expr::Value::I64(1)]);
 }

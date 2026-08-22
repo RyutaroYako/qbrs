@@ -25,7 +25,8 @@ pub use prepared::{Prepared, PreparedParams, UnresolvedPlaceholder};
 pub use selection::{RowField, Selection};
 pub use set_op::SetOp;
 
-/// One `name AS (body)` binding accumulated by `SelectSeed::with`.
+/// One `name AS (body)` binding, carried in by the `Cte` a query was
+/// entered through.
 #[derive(Clone)]
 struct CteDef {
     name: &'static str,
@@ -200,6 +201,32 @@ impl SelectBody {
             limit: None,
             offset: None,
         }
+    }
+
+    /// `SELECT count(*)` over this body with its paging dropped: a total
+    /// counts the rows that match, not the page being shown. A grouped
+    /// query counts its *groups*, since that is what a page of it would
+    /// show, so its body becomes a subquery instead of having its
+    /// `GROUP BY` dropped or kept.
+    fn count_sql<D: Dialect>(&self) -> (String, Vec<Value>) {
+        let mut body = self.clone();
+        body.order_by.clear();
+        body.limit = None;
+        body.offset = None;
+        // `HAVING` without `GROUP BY` groups the whole result into one row,
+        // and a failing condition yields none — so it needs wrapping too.
+        let grouped = !body.group_by.is_empty() || !body.having.is_empty();
+
+        let mut sink = QuerySink::<D>::new();
+        if grouped {
+            sink.text("SELECT count(*) FROM (");
+        }
+        body.render_into::<D>(&[crate::expr::count_item()], &mut sink);
+        if grouped {
+            sink.text(") AS ");
+            crate::render::render_ident::<D>(&mut sink, "qbrs_total");
+        }
+        sink.finish()
     }
 
     /// Attaches whatever `WITH` binding a join source carries before its
@@ -411,27 +438,7 @@ impl<D: Dialect, Scope, Sel> Select<D, Scope, Sel> {
     where
         Sel: Selection<Scope, Idx>,
     {
-        let mut body = self.body.clone();
-        body.order_by.clear();
-        body.limit = None;
-        body.offset = None;
-        // `HAVING` without `GROUP BY` groups the whole result into one row,
-        // and a failing condition yields none — so it needs wrapping too.
-        let grouped = !body.group_by.is_empty() || !body.having.is_empty();
-        let mut sink = QuerySink::<D>::new();
-        body.render_into::<D>(&[crate::expr::count_item()], &mut sink);
-        let (sql, params) = sink.finish();
-        if grouped {
-            let mut outer = QuerySink::<D>::new();
-            outer.text("SELECT count(*) FROM (");
-            outer.text(&sql);
-            outer.text(") AS ");
-            crate::render::render_ident::<D>(&mut outer, "qbrs_total");
-            let (wrapped, _) = outer.finish();
-            (wrapped, params)
-        } else {
-            (sql, params)
-        }
+        self.body.count_sql::<D>()
     }
 
     /// This query as an embeddable `Fragment`: an `EXISTS (..)` subquery, a

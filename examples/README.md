@@ -47,7 +47,7 @@ DATABASE_URL=postgres://postgres:postgres@localhost:5432/qbrs_test \
 | [`07_dynamic_filters`](examples/07_dynamic_filters.rs) | dynamic query composition without a `.$dynamic()`-style escape hatch |
 | [`08_right_full_join`](examples/08_right_full_join.rs) | RIGHT/FULL JOIN — previously-joined tables retroactively become nullable |
 | [`09_dynamic_join`](examples/09_dynamic_join.rs) | `DynSelect` — the narrow erasure hatch for conditionally joining or not |
-| [`10_prepared`](examples/10_prepared.rs) | `prepare!{}` — a query rendered once, reused across many typed `.execute(params)` calls |
+| [`10_prepared`](examples/10_prepared.rs) | `prepare!{}` — a query rendered once, reused across many typed `.load(.., params)` calls |
 | [`11_upsert`](examples/11_upsert.rs) | `ON CONFLICT (..) DO NOTHING` / `DO UPDATE SET ..`, gated to dialects with `SupportsOnConflict` |
 | [`12_union`](examples/12_union.rs) | `UNION ALL`/`INTERSECT` across `SELECT`s with unrelated `Scope`s |
 | [`13_window`](examples/13_window.rs) | `row_number()`/`rank()` `.over(window()..)` |

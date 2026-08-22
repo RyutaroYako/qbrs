@@ -92,7 +92,7 @@ fn correlated_exists_references_outer_column() {
 fn correlated_subquery_with_bound_value_renumbers_correctly() {
     // The outer query also binds a literal value — proving the subquery's
     // own `?`-then-renumber placeholder doesn't collide with the outer
-    // query's `$N` sequence (dialect::RawEmbed's whole reason to exist).
+    // query's `$N` sequence (`Fragment`'s whole reason to exist).
     let outer = select((users::id,))
         .from::<Postgres, _>(users::Table)
         .filter(users::id.gt(0));

@@ -1,7 +1,8 @@
 //! Common table expressions: `with!{}` declares a named pseudo-table,
 //! `cte::with()` binds a query to it (checked against the declared column
-//! shape at compile time), and `.with(cte)` attaches it to an outer query —
-//! after that, the CTE's table behaves exactly like a real one. Columns are
+//! shape at compile time), and the binding goes wherever a table goes —
+//! `.from(..)`, `.inner_join(..)` — after which the CTE's table behaves
+//! exactly like a real one. Columns are
 //! always rendered with an explicit name list (`WITH name (col, ..) AS (..)`),
 //! since a computed expression like `sum(..)` has no column name of its own.
 //! Known limitation: non-recursive, single-level CTEs only — `WITH RECURSIVE`

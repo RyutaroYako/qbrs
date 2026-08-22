@@ -90,6 +90,15 @@ fn both_branches_unify_into_the_same_type() {
     );
 }
 
+#[test]
+fn an_erased_query_still_counts_its_rows_without_its_page() {
+    let (sql, _) = build(true).limit(10).offset(20).count_sql();
+    assert_eq!(
+        sql,
+        "SELECT count(*) FROM \"users\" INNER JOIN \"orders\" ON (\"orders\".\"user_id\" = \"users\".\"id\")"
+    );
+}
+
 // The un-erased version of `build()` genuinely does not compile — kept
 // here, commented, as a record of exactly what `.erase()` buys:
 //

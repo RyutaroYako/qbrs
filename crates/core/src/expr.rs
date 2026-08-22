@@ -57,13 +57,14 @@ pub(crate) enum ExprKind {
         expr: Box<ExprKind>,
         target: CastTarget,
     },
-    /// `name(arg)` — the aggregate functions. A real node rather than a raw
-    /// fragment because the argument is an expression the renderer has to
-    /// recurse into, and because that is what lets the argument's column
-    /// count toward the expression's `Req`.
+    /// `name(arg)`, or `name(*)` where there is no argument — the
+    /// aggregates. A real node rather than a raw fragment because an
+    /// argument is an expression the renderer has to recurse into, and
+    /// because that is what lets its column count toward the expression's
+    /// `Req`.
     Func {
         name: &'static str,
-        arg: Box<ExprKind>,
+        arg: Option<Box<ExprKind>>,
     },
     /// `func OVER (PARTITION BY .. ORDER BY ..)`. `func` is rendered
     /// literally: it's always one of the closed set of niladic ranking
@@ -649,23 +650,22 @@ crate::row::expr_key!(
     't'
 );
 
-/// `count(*)`, built on the same `Raw` fragment machinery as `sql!{}`.
-///
-/// Counts rows. `count_of(column)` counts that column's non-NULL values,
-/// which is the different question a `LEFT JOIN` makes visible.
 /// `count(*)` as a rendered selection item, for `Select::count_sql`.
 pub(crate) fn count_item() -> crate::render::SelectItem {
-    crate::render::SelectItem::bare(ExprKind::Raw(Fragment::from_authored(
-        "count(*)",
-        Vec::new(),
-    )))
+    crate::render::SelectItem::bare(count_star())
 }
 
+fn count_star() -> ExprKind {
+    ExprKind::Func {
+        name: "count",
+        arg: None,
+    }
+}
+
+/// Counts rows. `count_of(column)` counts that column's non-NULL values,
+/// which is the different question a `LEFT JOIN` makes visible.
 pub fn count() -> Keyed<Count, Nil, BigInt> {
-    Keyed::from_kind(ExprKind::Raw(Fragment::from_authored(
-        "count(*)",
-        Vec::new(),
-    )))
+    Keyed::from_kind(count_star())
 }
 
 /// What `sum(..)` of a column decodes to. `sum` is NULL over zero rows, so
@@ -718,10 +718,10 @@ impl<Op: 'static, C: crate::row::Named + 'static> crate::row::Named for Agg<Op, 
 fn aggregate_kind<C: ColumnKey>(name: &'static str, cast: Option<CastTarget>) -> ExprKind {
     let call = ExprKind::Func {
         name,
-        arg: Box::new(ExprKind::Column {
+        arg: Some(Box::new(ExprKind::Column {
             table: <C::Table as Table>::NAME,
             name: <C as crate::row::Named>::NAME,
-        }),
+        })),
     };
     match cast {
         Some(target) => ExprKind::Cast {
@@ -808,7 +808,7 @@ pub fn raw_expr<S: SqlType>(sql: &'static str, params: Vec<Value>) -> Expr<Nil, 
 /// A named, typed placeholder: usable anywhere a value of type `S` is
 /// expected (`.eq(placeholder::<Integer>("id"))`), rendered as a normal
 /// bound parameter but resolved to a concrete value at
-/// `Prepared::execute()` time. `prepare!{}` is the intended entry point
+/// `Prepared::load()` time. `prepare!{}` is the intended entry point
 /// rather than this function, since it also generates the typed `Params`
 /// struct that makes a missing or misspelled placeholder a compile error.
 #[doc(hidden)]

@@ -1,7 +1,7 @@
 //! Window functions: `row_number()`/`rank()`/`dense_rank()` `.over(window()
 //! .partition_by(..).order_by(..))`.
 //!
-//! `row_number()`/`rank()`/`dense_rank()` return `WindowFunc<S>`, whose only
+//! `row_number()`/`rank()`/`dense_rank()` return `WindowFunc<K, S>`, whose only
 //! method is `.over()`, so `.over()` can't be reached from an arbitrary
 //! expression that would render nonsense SQL.
 //!

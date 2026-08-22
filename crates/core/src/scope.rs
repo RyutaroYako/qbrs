@@ -64,15 +64,9 @@ pub struct Nil;
 /// time a column of it is referenced.
 pub struct Cons<Head, Tail>(PhantomData<(Head, Tail)>);
 
-/// One occurrence of a table in the scope list: table `T`, with join-derived
-/// nullability `N`, under the name `A`.
-///
-/// `A` defaults to `T` — an unaliased join is a table under its own name —
-/// and lookups key on it rather than on `T`, so the same table can appear
-/// twice once there is a way to spell two different `A`s. Carrying the
-/// parameter now is what keeps that from being a breaking change to every
-/// hand-written `Scope` alias later.
-pub struct TableSlot<T: Table, N: Nullability, A = T>(PhantomData<(T, N, A)>);
+/// One occurrence of a table in the scope list: table `T`, with the
+/// nullability `N` its join gave it.
+pub struct TableSlot<T: Table, N: Nullability>(PhantomData<(T, N)>);
 
 /// Index marker: "found at the head of the list".
 pub struct Here;
@@ -95,13 +89,11 @@ pub trait Find<T: Table, Index> {
     type Nullability: Nullability;
 }
 
-impl<A, T: Table, N: Nullability, Tail> Find<A, Here> for Cons<TableSlot<T, N, A>, Tail>
-where
-    A: Table,
-{
+impl<T: Table, N: Nullability, Tail> Find<T, Here> for Cons<TableSlot<T, N>, Tail> {
     type Nullability = N;
 }
 
+#[diagnostic::do_not_recommend]
 impl<T: Table, Head, Tail, I> Find<T, There<I>> for Cons<Head, Tail>
 where
     Tail: Find<T, I>,
@@ -163,10 +155,8 @@ impl ScopeTables for Nil {
     type Tables = Nil;
 }
 
-impl<T: Table, N: Nullability, A, Tail: ScopeTables> ScopeTables
-    for Cons<TableSlot<T, N, A>, Tail>
-{
-    type Tables = Cons<A, Tail::Tables>;
+impl<T: Table, N: Nullability, Tail: ScopeTables> ScopeTables for Cons<TableSlot<T, N>, Tail> {
+    type Tables = Cons<T, Tail::Tables>;
 }
 
 /// Flip every table already in a scope to `MaybeNull`. Used by RIGHT/FULL
@@ -181,10 +171,8 @@ impl MapNullable for Nil {
     type Output = Nil;
 }
 
-impl<T: Table, N: Nullability, A, Tail: MapNullable> MapNullable
-    for Cons<TableSlot<T, N, A>, Tail>
-{
-    type Output = Cons<TableSlot<T, MaybeNull, A>, Tail::Output>;
+impl<T: Table, N: Nullability, Tail: MapNullable> MapNullable for Cons<TableSlot<T, N>, Tail> {
+    type Output = Cons<TableSlot<T, MaybeNull>, Tail::Output>;
 }
 
 /// Idempotently wrap a SQL type as nullable-or-not depending on a
