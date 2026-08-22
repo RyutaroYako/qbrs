@@ -19,6 +19,13 @@ macro_rules! sql {
         // string: `concat!`, `include_str!` and a `const` of your own all
         // pass, an assembled `String` does not.
         const __QBRS_SQL: &'static str = $text;
+        // Both counts are constants here, so a mismatch is a compile error
+        // rather than a panic when the expression is built.
+        const _: () = ::std::assert!(
+            $crate::expr::placeholder_count(__QBRS_SQL)
+                == <[&'static str]>::len(&[$(::std::stringify!($arg)),*]),
+            "`sql!` needs one value per `?` placeholder (write `??` for a literal `?`)",
+        );
         $crate::expr::raw_expr::<$sql_type>(
             __QBRS_SQL,
             ::std::vec![$(::std::convert::Into::<$crate::expr::Value>::into($arg)),*],

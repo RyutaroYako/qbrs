@@ -12,7 +12,7 @@ pub use qbrs_macros::{FromRow, Table, label, with};
 /// Nothing that only ever appears as `impl Trait` in an argument position.
 pub mod prelude {
     pub use crate::{FromRow, Table, label, with};
-    pub use qbrs_core::cte::with as bind_cte;
+    pub use qbrs_core::cte;
     pub use qbrs_core::delete::delete;
     pub use qbrs_core::dialect::{MySql, Postgres, Sqlite};
     pub use qbrs_core::expr::Column;
@@ -20,7 +20,7 @@ pub mod prelude {
         AliasExt, BigInt, Bool, Bytes, ExprMethods, HasCount, Integer, Real, SortDir, Text,
         TextExprMethods, avg, count, count_of, max, min, sum,
     };
-    pub use qbrs_core::expr::{Declared, Expr, Keyed};
+    pub use qbrs_core::expr::{Aliased, Declared, Expr, IntoExpr, Keyed};
     pub use qbrs_core::insert::{Defaultable, insert};
     pub use qbrs_core::row::{IntoStructs, IntoTuples, Named, Row, RowCons, RowNil};
     pub use qbrs_core::scope::{
@@ -29,7 +29,7 @@ pub mod prelude {
     pub use qbrs_core::select::{
         Correlated, DynSelect, OrderExt, Predicate, Prepared, Select, SetOp, predicate, select,
     };
-    pub use qbrs_core::update::update;
+    pub use qbrs_core::update::{NothingToSet, update};
     pub use qbrs_core::window::{
         HasDenseRank, HasRank, HasRowNumber, dense_rank, rank, row_number, window,
     };

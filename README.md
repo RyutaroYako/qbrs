@@ -258,7 +258,8 @@ A schema is a `#[derive(Table)]` struct, shown in the
   a bare column's is — `sql!(Nullable<Text>, "...")` if the expression itself
   can be `NULL`.
 - A `sql!{}` fragment has no name of its own, so it is readable only
-  positionally until `label!` gives it one. The same applies wherever two
+  positionally until `label!` gives it one — passing one to `row.get(..)` is
+  a compile error, not a lookup of some other unnamed field. The same applies wherever two
   selections are compared by name — a CTE body and a `UNION` branch.
 - Selecting the same name twice is ambiguous at the point it's read rather
   than resolving to the first; alias one of them.
@@ -299,7 +300,8 @@ A schema is a `#[derive(Table)]` struct, shown in the
   `.load()` as `UnresolvedPlaceholder` rather than at compile time.
 - `sql!{}` treats `?` as a bind slot; write `??` for a literal one. Its text
   must be a constant — a literal, a `const`, `concat!`, `include_str!` — so
-  runtime-assembled text can never become SQL shape.
+  runtime-assembled text can never become SQL shape, and the placeholder
+  count is checked against the value count at compile time.
 - Postgres and SQLite are executed in CI — SQLite against an in-memory
   database in `tests/dialect-exec`, which runs every rendered statement shape
   rather than asserting its text. MySQL is rendered and asserted as strings
@@ -308,8 +310,9 @@ A schema is a `#[derive(Table)]` struct, shown in the
   and MySQL only, and SQLite rejects it, which makes `Defaultable::Default`
   unusable there.
 - A computed expression over a column has to say what it decodes to —
-  `expr.declare::<Nullable<BigInt>>().alias(label::x)` — because its
-  NULL-ability doesn't follow from any one column's join.
+  `expr.decodes_as::<Nullable<BigInt>>()` — because its NULL-ability doesn't
+  follow from any one column's join. Like any unnamed selection it is then
+  read positionally, or by name once `.alias(label::x)` gives it one.
 
 ## Status
 

@@ -36,13 +36,17 @@ pub enum Error {
 pub type Result<T> = std::result::Result<T, Error>;
 
 /// Every extension trait that puts a terminal method on a builder, plus the
-/// error type a caller's own signatures have to name. Which trait applies
+/// error type a caller's own signatures have to name. `Result` is
+/// deliberately absent: a glob-imported alias of that name shadows
+/// `std::result::Result` in every module that follows, and a service layer
+/// has its own error type in most of them — write `qbrs_sqlx::Result<T>`
+/// where the alias is wanted. Which trait applies
 /// depends on the builder, so importing them one at a time is bookkeeping
 /// with no decision in it — and `count` in particular resolves against
 /// `Iterator::count` with a confusing message until `CountExt` is in scope.
 pub mod prelude {
+    pub use crate::Error;
     pub use crate::{CountExt, ExecuteExt, LoadExt, PreparedExt};
-    pub use crate::{Error, Result};
 }
 
 /// Binds a `Value` to a Postgres query parameter. `Value`'s typed `NullX`

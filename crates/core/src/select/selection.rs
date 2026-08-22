@@ -63,6 +63,20 @@ where
     }
 }
 
+/// A table-referencing expression that has stated what it decodes to is
+/// selectable on the same terms as a scope-free one: filed under `Anon`, and
+/// so readable positionally rather than by name until `.alias(..)` gives it
+/// one.
+impl<Req, S: SqlType, Scope, Idx> RowField<Scope, Idx> for Declared<Req, S>
+where
+    Scope: Superset<Req, Idx>,
+{
+    type Value = S::Native;
+    fn item(&self) -> SelectItem {
+        SelectItem::bare(self.kind.clone())
+    }
+}
+
 /// A scope-free expression — what `sql!{}` produces — needs only a name.
 impl<K: AliasKey, S: SqlType, Scope, Idx> RowField<Scope, Idx> for Aliased<K, Expr<Nil, S>>
 where

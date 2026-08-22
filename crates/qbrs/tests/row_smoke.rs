@@ -260,13 +260,13 @@ fn a_count_drops_the_paging_the_page_needed() {
 #[test]
 fn a_named_expression_over_a_column_states_what_it_decodes_to() {
     qbrs::label!(flagged);
-    // `.declare()` is the difference between a type the builder guessed from
+    // `.decodes_as()` is the difference between a type the builder guessed from
     // whatever built the expression and one the caller stands behind.
     let (sql, _) = select((
         users::id,
         users::active
             .eq(true)
-            .declare::<qbrs::expr::Bool>()
+            .decodes_as::<qbrs::expr::Bool>()
             .alias(label::flagged),
     ))
     .from::<Postgres, _>(users::Table)

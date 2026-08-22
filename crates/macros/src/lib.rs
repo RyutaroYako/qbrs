@@ -556,6 +556,7 @@ pub fn label(input: TokenStream) -> TokenStream {
             impl ::qbrs::row::RowKey for #name {
                 type Key = #name;
             }
+            impl ::qbrs::row::LookupKey for #name {}
             impl ::qbrs::expr::AliasKey for #name {}
             #[doc(hidden)]
             impl ::qbrs::row::Named for #name {

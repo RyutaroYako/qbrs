@@ -296,6 +296,21 @@ impl<Req, S: SqlType> RowKey for crate::expr::Declared<Req, S> {
     type Key = Anon;
 }
 
+/// A value that can name a field at a `.get()`/`.take()` call. Every
+/// `RowKey` can *file* a field; only these can find one again, which is what
+/// keeps an unlabelled expression's `Anon` field out of reach of any other
+/// unlabelled expression.
+#[diagnostic::on_unimplemented(
+    message = "`{Self}` doesn't name a field",
+    label = "an unlabelled expression has no name to look up",
+    note = "give it one with `.alias(label::..)`, or read it positionally with `into_tuple()`"
+)]
+pub trait LookupKey: RowKey {}
+
+impl<C: ColumnKey> LookupKey for Column<C> {}
+impl<K, Req, S: SqlType> LookupKey for Keyed<K, Req, S> {}
+impl<K, Inner> LookupKey for Aliased<K, Inner> {}
+
 /// A decoded row. Its fields are fixed by the query's selection list, and
 /// each is read by the same value that selected it.
 pub struct Row<L>(L);
@@ -316,7 +331,7 @@ impl<L> Row<L> {
     /// `row.get(users::email)` — the key is the same value that appeared in
     /// the selection list, so there is no name to keep in sync and no
     /// position to get wrong.
-    pub fn get<K: RowKey, Idx>(&self, _key: K) -> &<L as Field<K::Key, Idx>>::Value
+    pub fn get<K: LookupKey, Idx>(&self, _key: K) -> &<L as Field<K::Key, Idx>>::Value
     where
         L: Field<K::Key, Idx>,
     {
@@ -325,7 +340,7 @@ impl<L> Row<L> {
 
     /// Moves one field out and hands back the row without it, so several
     /// fields can be taken in turn.
-    pub fn take<K: RowKey, Idx>(
+    pub fn take<K: LookupKey, Idx>(
         self,
         _key: K,
     ) -> (

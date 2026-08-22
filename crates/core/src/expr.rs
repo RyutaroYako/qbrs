@@ -352,7 +352,7 @@ impl<Req, S: SqlType> Expr<Req, S> {
     /// States what this expression decodes to, which is what makes it
     /// selectable: `S` was inferred from whatever built the expression, and
     /// an inference can contradict the join the query actually has.
-    pub fn declare<S2: SqlType>(self) -> Declared<Req, S2> {
+    pub fn decodes_as<S2: SqlType>(self) -> Declared<Req, S2> {
         Declared {
             kind: self.kind,
             _marker: PhantomData,
@@ -801,6 +801,27 @@ aggregate!(
 /// `Nil` rather than being a parameter, so a raw fragment can't claim a
 /// scope it hasn't got.
 #[doc(hidden)]
+/// Counts the `?` placeholders in a `sql!` text, so the macro can compare
+/// that count with the number of values it was handed while both are still
+/// constants. `??` is a literal `?` and counts for nothing.
+#[doc(hidden)]
+pub const fn placeholder_count(sql: &str) -> usize {
+    let bytes = sql.as_bytes();
+    let mut i = 0;
+    let mut count = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'?' {
+            if i + 1 < bytes.len() && bytes[i + 1] == b'?' {
+                i += 2;
+                continue;
+            }
+            count += 1;
+        }
+        i += 1;
+    }
+    count
+}
+
 pub fn raw_expr<S: SqlType>(sql: &'static str, params: Vec<Value>) -> Expr<Nil, S> {
     Expr::from_kind(ExprKind::Raw(Fragment::from_authored(sql, params)))
 }

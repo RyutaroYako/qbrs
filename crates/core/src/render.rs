@@ -53,38 +53,27 @@ impl<D: Dialect> Sink for QuerySink<D> {
 
 /// Builds a `Fragment`: a parameter starts a new segment instead of being
 /// written, so its eventual number is decided by whoever splices it.
-pub(crate) struct FragmentSink {
-    segments: Vec<String>,
-    params: Vec<Value>,
-}
+pub(crate) struct FragmentSink(Fragment);
 
 impl FragmentSink {
     pub(crate) fn new() -> Self {
-        FragmentSink {
-            segments: vec![String::new()],
-            params: Vec::new(),
-        }
+        FragmentSink(Fragment::empty())
     }
 
     pub(crate) fn finish(self) -> Fragment {
-        Fragment::new(self.segments, self.params)
-    }
-
-    fn last(&mut self) -> &mut String {
-        self.segments.last_mut().expect("one segment to start")
+        self.0
     }
 }
 
 impl Sink for FragmentSink {
     fn text(&mut self, s: &str) {
-        self.last().push_str(s);
+        self.0.tail().push_str(s);
     }
     fn ch(&mut self, c: char) {
-        self.last().push(c);
+        self.0.tail().push(c);
     }
     fn bind(&mut self, value: &Value) {
-        self.params.push(value.clone());
-        self.segments.push(String::new());
+        self.0.rest.push((value.clone(), String::new()));
     }
 }
 
@@ -249,70 +238,78 @@ pub(crate) fn render_select_list<D: Dialect>(items: &[SelectItem], sink: &mut dy
 
 /// A piece of SQL destined to be embedded in a larger query: a subquery, a
 /// CTE body, a set-operation branch, or a `sql!{}` escape hatch. Held as the
-/// text *between* its bind parameters, so a parameter is a position rather
-/// than a character — nothing has to be escaped, and re-splicing an already
-/// spliced fragment can't confuse the two.
+/// text *between* its bind parameters — `head`, then one `(param, text)`
+/// pair per parameter — so a parameter is a position rather than a
+/// character: nothing has to be escaped, re-splicing an already-spliced
+/// fragment can't confuse the two, and there is no way to hold a parameter
+/// with no text on either side of it.
 #[derive(Debug, Clone)]
-pub struct Fragment {
-    /// One more segment than there are params: `s0 ? s1 ? s2`.
-    segments: Vec<String>,
-    params: Vec<Value>,
+pub(crate) struct Fragment {
+    head: String,
+    rest: Vec<(Value, String)>,
 }
 
 impl Fragment {
-    pub(crate) fn new(segments: Vec<String>, params: Vec<Value>) -> Self {
-        debug_assert_eq!(segments.len(), params.len() + 1);
-        Fragment { segments, params }
+    fn empty() -> Self {
+        Fragment {
+            head: String::new(),
+            rest: Vec::new(),
+        }
     }
 
-    /// Splits `sql!{}`'s authored text on its `?` placeholders. `??` is a
-    /// literal `?`.
+    /// Where the next text goes: after the last parameter, or in `head`
+    /// while there are none.
+    fn tail(&mut self) -> &mut String {
+        match self.rest.last_mut() {
+            Some((_, text)) => text,
+            None => &mut self.head,
+        }
+    }
+
+    /// Splits `sql!{}`'s authored text on its `?` placeholders, pairing each
+    /// with its value. `??` is a literal `?`. `sql!` checks the two counts
+    /// against each other at compile time; this is the one entry point that
+    /// can be reached around it.
     pub(crate) fn from_authored(sql: &'static str, params: Vec<Value>) -> Self {
-        let mut segments = vec![String::new()];
+        let mut fragment = Fragment::empty();
+        let mut params = params.into_iter();
         let mut chars = sql.chars().peekable();
         while let Some(c) = chars.next() {
-            if c != '?' {
-                segments.last_mut().expect("one segment to start").push(c);
-                continue;
-            }
-            if chars.peek() == Some(&'?') {
-                chars.next();
-                segments.last_mut().expect("one segment to start").push('?');
-            } else {
-                segments.push(String::new());
+            match c {
+                '?' if chars.peek() == Some(&'?') => {
+                    chars.next();
+                    fragment.tail().push('?');
+                }
+                '?' => {
+                    let value = params
+                        .next()
+                        .expect("`sql!` checks that every `?` has a value");
+                    fragment.rest.push((value, String::new()));
+                }
+                c => fragment.tail().push(c),
             }
         }
-        assert_eq!(
-            segments.len() - 1,
-            params.len(),
-            "`sql!` has {} `?` placeholders but was given {} values (write `??` for a literal `?`)",
-            segments.len() - 1,
-            params.len()
+        assert!(
+            params.next().is_none(),
+            "more values than `?` placeholders (write `??` for a literal `?`)"
         );
-        Fragment { segments, params }
+        fragment
     }
 
     /// Wraps the fragment in surrounding SQL, e.g. `EXISTS (`..`)`.
     pub(crate) fn enclosed_in(mut self, before: &str, after: &str) -> Self {
-        self.segments
-            .first_mut()
-            .expect("at least one segment")
-            .insert_str(0, before);
-        self.segments
-            .last_mut()
-            .expect("at least one segment")
-            .push_str(after);
+        self.head.insert_str(0, before);
+        self.tail().push_str(after);
         self
     }
 
     /// Appends this fragment to whatever is being rendered, handing each of
     /// its parameters to the sink in turn.
     pub(crate) fn splice_into(&self, sink: &mut dyn Sink) {
-        for (i, segment) in self.segments.iter().enumerate() {
-            sink.text(segment);
-            if let Some(value) = self.params.get(i) {
-                sink.bind(value);
-            }
+        sink.text(&self.head);
+        for (value, text) in &self.rest {
+            sink.bind(value);
+            sink.text(text);
         }
     }
 }
