@@ -177,7 +177,10 @@ A schema is a `#[derive(Table)]` struct, shown in the
   schema default gets a three-state `Defaultable<Option<T>>` on `*Insert`
   (omit / explicit `NULL` / explicit value); `*Update` mirrors this with
   `Option<Option<T>>` (untouched / `NULL` / value). A request struct's
-  `Option<T>` converts into either. Rows arrive one at a time with
+  `Option<T>` converts into either. An `*Insert` is built by naming its
+  columns — `UsersInsert::builder().email(..).build()` — and `build()` is
+  reachable only once every column without a default has a value, so no
+  column can be dropped and no two of the same type swapped. Rows arrive one at a time with
   `.values(row)` or all at once with `.values_all(rows)`; a statement with
   nothing in it — an `*Update` whose every field is untouched, an insert of
   zero rows — has no SQL form, so those hand back
@@ -245,7 +248,7 @@ A schema is a `#[derive(Table)]` struct, shown in the
   ```rust
   let mut tx = pool.begin().await?;
   insert::<Postgres, _>(users::Table)
-      .values(UsersInsert::new("ada@example.com"))
+      .values(UsersInsert::builder().email("ada@example.com").build())
       .execute(&mut *tx)
       .await?;
   tx.commit().await?;

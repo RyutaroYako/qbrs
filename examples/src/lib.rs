@@ -102,9 +102,24 @@ pub async fn seed(pool: &sqlx::PgPool) {
     use qbrs_sqlx::{ExecuteExt, LoadExt};
 
     let ids: Vec<i64> = qbrs::insert::insert::<Postgres, _>(users::Table)
-        .values(UsersInsert::new("ada@example.com").display_name("Ada Lovelace"))
-        .values(UsersInsert::new("dan@example.com").display_name("Dan"))
-        .values(UsersInsert::new("grace@example.com").display_name("Grace Hopper"))
+        .values(
+            UsersInsert::builder()
+                .email("ada@example.com")
+                .display_name("Ada Lovelace")
+                .build(),
+        )
+        .values(
+            UsersInsert::builder()
+                .email("dan@example.com")
+                .display_name("Dan")
+                .build(),
+        )
+        .values(
+            UsersInsert::builder()
+                .email("grace@example.com")
+                .display_name("Grace Hopper")
+                .build(),
+        )
         .returning(users::id)
         .load(pool)
         .await
@@ -124,9 +139,15 @@ pub async fn seed(pool: &sqlx::PgPool) {
         .expect("deactivate dan");
 
     qbrs::insert::insert::<Postgres, _>(orders::Table)
-        .values(OrdersInsert::new(ids[0], 1500))
-        .values(OrdersInsert::new(ids[0], 2500).shipped(true))
-        .values(OrdersInsert::new(ids[2], 999))
+        .values(OrdersInsert::builder().user_id(ids[0]).total(1500).build())
+        .values(
+            OrdersInsert::builder()
+                .user_id(ids[0])
+                .total(2500)
+                .shipped(true)
+                .build(),
+        )
+        .values(OrdersInsert::builder().user_id(ids[2]).total(999).build())
         .execute(pool)
         .await
         .expect("seed orders");

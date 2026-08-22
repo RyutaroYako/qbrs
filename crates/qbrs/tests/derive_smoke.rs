@@ -46,7 +46,12 @@ fn schema_module_and_select_builder_work_together() {
 #[test]
 fn insert_uses_generated_new_and_setters() {
     let (sql, params) = qbrs::insert::insert::<Postgres, _>(users::Table)
-        .values(UsersInsert::new("a@example.com").display_name("Ada"))
+        .values(
+            UsersInsert::builder()
+                .email("a@example.com")
+                .display_name("Ada")
+                .build(),
+        )
         .returning(users::id)
         .to_sql();
 

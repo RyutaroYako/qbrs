@@ -209,7 +209,10 @@ the 16-element limit count tables rather than columns.
 (a second one collides on `mod label`); declaring it inside the function that runs the
 query is the intended usage and sidesteps that. Nullability comes from `Option<T>` wrapping (no
 separate attribute); attributes are only `#[column(primary_key | generated | default)]`.
-Insert fields use `Defaultable<T>` (and `Defaultable<Option<T>>` for nullable-with-default) so
+`*Insert` is built through a type-state builder: one generic slot per column without a
+default, `()` until that column is given a value and its own type after, so `build()` exists
+exactly when the row is complete and nothing is unwrapped. Insert fields use `Defaultable<T>`
+(and `Defaultable<Option<T>>` for nullable-with-default) so
 omit / explicit-NULL / explicit-value stay distinguishable; update fields use `Option<T>` /
 `Option<Option<T>>` for untouched / set-NULL / set-value. A statement with nothing in it —
 `UPDATE .. SET` with no assignments, `INSERT` with no rows — has no SQL form, and both

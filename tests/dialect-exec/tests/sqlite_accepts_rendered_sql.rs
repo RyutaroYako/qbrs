@@ -82,8 +82,13 @@ async fn sqlite_executes_every_rendered_statement_shape() {
     run(
         &pool,
         insert::<Sqlite, _>(users::Table)
-            .values(UsersInsert::new("ada@example.com").display_name("Ada"))
-            .values(UsersInsert::new("dan@example.com"))
+            .values(
+                UsersInsert::builder()
+                    .email("ada@example.com")
+                    .display_name("Ada")
+                    .build(),
+            )
+            .values(UsersInsert::builder().email("dan@example.com").build())
             .to_sql(),
     )
     .await;
@@ -91,9 +96,9 @@ async fn sqlite_executes_every_rendered_statement_shape() {
     let ids = run(
         &pool,
         insert::<Sqlite, _>(orders::Table)
-            .values(OrdersInsert::new(1, 100))
-            .values(OrdersInsert::new(1, 2000))
-            .values(OrdersInsert::new(2, 30))
+            .values(OrdersInsert::builder().user_id(1).total(100).build())
+            .values(OrdersInsert::builder().user_id(1).total(2000).build())
+            .values(OrdersInsert::builder().user_id(2).total(30).build())
             .returning(orders::id)
             .to_sql(),
     )
@@ -103,7 +108,12 @@ async fn sqlite_executes_every_rendered_statement_shape() {
     run(
         &pool,
         insert::<Sqlite, _>(users::Table)
-            .values(UsersInsert::new("ada@example.com").display_name("Ada L."))
+            .values(
+                UsersInsert::builder()
+                    .email("ada@example.com")
+                    .display_name("Ada L.")
+                    .build(),
+            )
             .on_conflict_do_update(
                 users::email,
                 UsersUpdate {
@@ -260,7 +270,7 @@ async fn sqlite_executes_every_rendered_statement_shape() {
     let bulk = run(
         &pool,
         insert::<Sqlite, _>(orders::Table)
-            .values_all((10..13).map(|n| OrdersInsert::new(1, n)))
+            .values_all((10..13).map(|n| OrdersInsert::builder().user_id(1).total(n).build()))
             .expect("three rows")
             .returning(orders::id)
             .to_sql(),

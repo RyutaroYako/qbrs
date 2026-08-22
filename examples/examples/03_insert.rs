@@ -17,7 +17,12 @@ async fn main() {
     // keyword `DEFAULT` rather than sending a value at all.
     let (id, email, display_name): (i64, String, Option<String>) =
         qbrs::insert::insert::<Postgres, _>(users::Table)
-            .values(UsersInsert::new("grace@example.com").display_name("Grace Hopper"))
+            .values(
+                UsersInsert::builder()
+                    .email("grace@example.com")
+                    .display_name("Grace Hopper")
+                    .build(),
+            )
             .returning((users::id, users::email, users::display_name))
             .load(&pool)
             .await
@@ -32,8 +37,13 @@ async fn main() {
     // `display_name` — each row independently uses DEFAULT/a bound value
     // for the columns it omits/sets, all sharing the same column list.
     let ids: Vec<i64> = qbrs::insert::insert::<Postgres, _>(users::Table)
-        .values(UsersInsert::new("a@example.com"))
-        .values(UsersInsert::new("b@example.com").display_name("B"))
+        .values(UsersInsert::builder().email("a@example.com").build())
+        .values(
+            UsersInsert::builder()
+                .email("b@example.com")
+                .display_name("B")
+                .build(),
+        )
         .returning(users::id)
         .load(&pool)
         .await

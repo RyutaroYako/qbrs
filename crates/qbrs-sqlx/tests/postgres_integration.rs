@@ -88,8 +88,13 @@ async fn full_crud_roundtrip_against_real_postgres() {
 
     // INSERT .. RETURNING
     let inserted_ids: Vec<i64> = qbrs::insert::insert::<Postgres, _>(users::Table)
-        .values(UsersInsert::new("ada@example.com").display_name("Ada"))
-        .values(UsersInsert::new("dan@example.com"))
+        .values(
+            UsersInsert::builder()
+                .email("ada@example.com")
+                .display_name("Ada")
+                .build(),
+        )
+        .values(UsersInsert::builder().email("dan@example.com").build())
         .returning(users::id)
         .load(&pool)
         .await
@@ -99,8 +104,8 @@ async fn full_crud_roundtrip_against_real_postgres() {
     let dan_id = inserted_ids[1];
 
     qbrs::insert::insert::<Postgres, _>(orders::Table)
-        .values(OrdersInsert::new(ada_id, 1000))
-        .values(OrdersInsert::new(ada_id, 2500))
+        .values(OrdersInsert::builder().user_id(ada_id).total(1000).build())
+        .values(OrdersInsert::builder().user_id(ada_id).total(2500).build())
         .execute(&pool)
         .await
         .expect("insert orders");

@@ -18,7 +18,12 @@ async fn main() {
     let mut tx = pool.begin().await.expect("begin transaction");
 
     let user_id: i64 = qbrs::insert::insert::<Postgres, _>(users::Table)
-        .values(UsersInsert::new("nadia@example.com").display_name("Nadia"))
+        .values(
+            UsersInsert::builder()
+                .email("nadia@example.com")
+                .display_name("Nadia")
+                .build(),
+        )
         .returning(users::id)
         .load(&mut *tx)
         .await
@@ -28,7 +33,7 @@ async fn main() {
         .expect("returning row");
 
     qbrs::insert::insert::<Postgres, _>(orders::Table)
-        .values(OrdersInsert::new(user_id, 4200))
+        .values(OrdersInsert::builder().user_id(user_id).total(4200).build())
         .execute(&mut *tx)
         .await
         .expect("insert order");
@@ -42,7 +47,7 @@ async fn main() {
     let mut tx = pool.begin().await.expect("begin transaction");
 
     let doomed_id: i64 = qbrs::insert::insert::<Postgres, _>(users::Table)
-        .values(UsersInsert::new("temp@example.com"))
+        .values(UsersInsert::builder().email("temp@example.com").build())
         .returning(users::id)
         .load(&mut *tx)
         .await

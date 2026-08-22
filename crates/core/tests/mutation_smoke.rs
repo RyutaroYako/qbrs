@@ -74,13 +74,29 @@ struct UsersInsert {
     created_at: Defaultable<String>,
 }
 
+/// Stands in for the type-state builder `#[derive(Table)]` emits; this file
+/// hand-writes the schema so `qbrs-core` can be tested without the macros.
+struct UsersInsertBuilder;
+
 impl UsersInsert {
-    fn new(email: impl Into<String>) -> Self {
+    fn builder() -> UsersInsertBuilder {
+        UsersInsertBuilder
+    }
+}
+
+impl UsersInsertBuilder {
+    fn email(self, email: impl Into<String>) -> UsersInsert {
         UsersInsert {
             email: email.into(),
             display_name: None,
             created_at: Defaultable::Default,
         }
+    }
+}
+
+impl UsersInsert {
+    fn build(self) -> Self {
+        self
     }
 }
 
@@ -128,7 +144,7 @@ impl UpdateRow for UsersUpdate {
 #[test]
 fn insert_omits_default_as_the_default_keyword() {
     let (sql, params) = insert::<Postgres, _>(users::Table)
-        .values(UsersInsert::new("a@example.com"))
+        .values(UsersInsert::builder().email("a@example.com").build())
         .to_sql();
     assert_eq!(
         sql,
@@ -143,8 +159,8 @@ fn insert_omits_default_as_the_default_keyword() {
 #[test]
 fn insert_bulk_and_returning() {
     let (sql, _params) = insert::<Postgres, _>(users::Table)
-        .values(UsersInsert::new("a@example.com"))
-        .values(UsersInsert::new("b@example.com"))
+        .values(UsersInsert::builder().email("a@example.com").build())
+        .values(UsersInsert::builder().email("b@example.com").build())
         .returning(users::id)
         .to_sql();
     assert_eq!(
@@ -159,7 +175,7 @@ fn an_update_that_sets_nothing_is_an_error_not_a_panic() {
     assert!(matches!(nothing, Err(NothingToSet)));
 
     let nothing = insert::<Postgres, _>(users::Table)
-        .values(UsersInsert::new("a@example.com"))
+        .values(UsersInsert::builder().email("a@example.com").build())
         .on_conflict_do_update(users::email, UsersUpdate::default());
     assert!(matches!(nothing, Err(NothingToSet)));
 }
@@ -187,7 +203,7 @@ fn update_only_touches_set_fields() {
 #[test]
 fn upsert_do_nothing_renders_conflict_target() {
     let (sql, params) = insert::<Postgres, _>(users::Table)
-        .values(UsersInsert::new("a@example.com"))
+        .values(UsersInsert::builder().email("a@example.com").build())
         .on_conflict_do_nothing(users::email)
         .to_sql();
     assert_eq!(
@@ -203,7 +219,7 @@ fn upsert_do_nothing_renders_conflict_target() {
 #[test]
 fn upsert_do_update_reuses_update_row_and_supports_returning() {
     let (sql, params) = insert::<Postgres, _>(users::Table)
-        .values(UsersInsert::new("a@example.com"))
+        .values(UsersInsert::builder().email("a@example.com").build())
         .on_conflict_do_update(
             users::email,
             UsersUpdate {

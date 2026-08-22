@@ -43,8 +43,8 @@ async fn prepared_query_reused_across_different_params() {
     .expect("create table");
 
     let ids: Vec<i64> = qbrs::insert::insert::<Postgres, _>(users::Table)
-        .values(UsersInsert::new("ada@example.com"))
-        .values(UsersInsert::new("dan@example.com"))
+        .values(UsersInsert::builder().email("ada@example.com").build())
+        .values(UsersInsert::builder().email("dan@example.com").build())
         .returning(users::id)
         .load(&pool)
         .await

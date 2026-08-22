@@ -17,7 +17,12 @@ async fn main() {
 
     let (id, display_name): (i64, Option<String>) =
         qbrs::insert::insert::<Postgres, _>(users::Table)
-            .values(UsersInsert::new("grace@example.com").display_name("Grace Hopper"))
+            .values(
+                UsersInsert::builder()
+                    .email("grace@example.com")
+                    .display_name("Grace Hopper")
+                    .build(),
+            )
             .returning((users::id, users::display_name))
             .load(&pool)
             .await
@@ -31,7 +36,12 @@ async fn main() {
     // `email` already exists — DO NOTHING means this row is silently
     // skipped, so the original `display_name` survives untouched.
     qbrs::insert::insert::<Postgres, _>(users::Table)
-        .values(UsersInsert::new("grace@example.com").display_name("Someone Else"))
+        .values(
+            UsersInsert::builder()
+                .email("grace@example.com")
+                .display_name("Someone Else")
+                .build(),
+        )
         .on_conflict_do_nothing(users::email)
         .execute(&pool)
         .await
@@ -51,7 +61,12 @@ async fn main() {
     // `*Update` struct `.set(..)` takes — only the fields actually set on
     // it are updated.
     let updated: Option<String> = qbrs::insert::insert::<Postgres, _>(users::Table)
-        .values(UsersInsert::new("grace@example.com").display_name("Someone Else"))
+        .values(
+            UsersInsert::builder()
+                .email("grace@example.com")
+                .display_name("Someone Else")
+                .build(),
+        )
         .on_conflict_do_update(
             users::email,
             UsersUpdate {

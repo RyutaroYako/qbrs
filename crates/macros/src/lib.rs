@@ -683,23 +683,96 @@ fn gen_insert_struct(
         .iter()
         .filter(|c| !c.nullable && !c.has_default)
         .collect();
-    let new_params = required.iter().map(|c| {
+    let builder_ident = format_ident!("{}Builder", insert_ident);
+    // One type parameter per required column, `()` until it is given a
+    // value and the column's own type after — so `build()` exists exactly
+    // when every required column has one, and no value is ever unwrapped.
+    let slots: Vec<Ident> = required
+        .iter()
+        .map(|c| format_ident!("__Qbrs{}", to_camel_case(&c.field_name.to_string())))
+        .collect();
+    let required_names: Vec<&Ident> = required.iter().map(|c| &c.field_name).collect();
+    let required_types: Vec<&syn::Type> = required.iter().map(|c| &c.base_ty).collect();
+    let optional: Vec<&&ColumnInfo> = insertable
+        .iter()
+        .filter(|c| c.nullable || c.has_default)
+        .collect();
+    let optional_names: Vec<&Ident> = optional.iter().map(|c| &c.field_name).collect();
+    let optional_types: Vec<TokenStream2> = optional
+        .iter()
+        .map(|c| {
+            let base = &c.base_ty;
+            match (c.nullable, c.has_default) {
+                (true, false) => quote! { ::std::option::Option<#base> },
+                (false, true) => quote! { ::qbrs::insert::Defaultable<#base> },
+                _ => quote! { ::qbrs::insert::Defaultable<::std::option::Option<#base>> },
+            }
+        })
+        .collect();
+
+    let builder_generics = if slots.is_empty() {
+        quote! {}
+    } else {
+        quote! { <#(#slots = ()),*> }
+    };
+    let builder_args = if slots.is_empty() {
+        quote! {}
+    } else {
+        quote! { <#(#slots),*> }
+    };
+    let empty_args = if slots.is_empty() {
+        quote! {}
+    } else {
+        let units = slots.iter().map(|_| quote! { () });
+        quote! { <#(#units),*> }
+    };
+    let full_args = if slots.is_empty() {
+        quote! {}
+    } else {
+        quote! { <#(#required_types),*> }
+    };
+
+    // Setting a required column moves its slot from `()` to its type,
+    // leaving the others alone.
+    let required_setters = required.iter().enumerate().map(|(i, c)| {
         let name = &c.field_name;
         let base = &c.base_ty;
-        quote! { #name: impl ::std::convert::Into<#base> }
-    });
-    let new_assigns = insertable.iter().map(|c| {
-        let name = &c.field_name;
-        if !c.nullable && !c.has_default {
-            quote! { #name: #name.into() }
-        } else if c.nullable && !c.has_default {
-            quote! { #name: ::std::option::Option::None }
-        } else {
-            quote! { #name: ::std::default::Default::default() }
+        let others: Vec<&Ident> = slots
+            .iter()
+            .enumerate()
+            .filter(|(j, _)| *j != i)
+            .map(|(_, s)| s)
+            .collect();
+        let before: Vec<TokenStream2> = slots
+            .iter()
+            .enumerate()
+            .map(|(j, s)| if j == i { quote! { () } } else { quote! { #s } })
+            .collect();
+        let after: Vec<TokenStream2> = slots
+            .iter()
+            .enumerate()
+            .map(|(j, s)| if j == i { quote! { #base } } else { quote! { #s } })
+            .collect();
+        let carried_required: Vec<TokenStream2> = required_names
+            .iter()
+            .enumerate()
+            .filter(|(j, _)| *j != i)
+            .map(|(_, n)| quote! { #n: self.#n })
+            .collect();
+        quote! {
+            impl<#(#others),*> #builder_ident<#(#before),*> {
+                pub fn #name(self, value: impl ::std::convert::Into<#base>) -> #builder_ident<#(#after),*> {
+                    #builder_ident {
+                        #name: ::std::convert::Into::into(value),
+                        #(#carried_required,)*
+                        #(#optional_names: self.#optional_names,)*
+                    }
+                }
+            }
         }
     });
 
-    let setters = insertable.iter().filter(|c| c.nullable || c.has_default).map(|c| {
+    let setters = optional.iter().map(|c| {
         let name = &c.field_name;
         let base = &c.base_ty;
         if c.nullable && !c.has_default {
@@ -759,13 +832,35 @@ fn gen_insert_struct(
         }
 
         impl #insert_ident {
-            pub fn new(#(#new_params),*) -> Self {
-                Self {
-                    #(#new_assigns,)*
+            /// Names every column it sets, so two columns of the same type
+            /// cannot be handed to each other's position. `build()` appears
+            /// once every column without a default has a value.
+            pub fn builder() -> #builder_ident #empty_args {
+                #builder_ident {
+                    #(#required_names: (),)*
+                    #(#optional_names: ::std::default::Default::default(),)*
                 }
             }
+        }
 
+        pub struct #builder_ident #builder_generics {
+            #(#required_names: #slots,)*
+            #(#optional_names: #optional_types,)*
+        }
+
+        #(#required_setters)*
+
+        impl #builder_args #builder_ident #builder_args {
             #(#setters)*
+        }
+
+        impl #builder_ident #full_args {
+            pub fn build(self) -> #insert_ident {
+                #insert_ident {
+                    #(#required_names: self.#required_names,)*
+                    #(#optional_names: self.#optional_names,)*
+                }
+            }
         }
 
         impl ::qbrs::insert::InsertRow for #insert_ident {

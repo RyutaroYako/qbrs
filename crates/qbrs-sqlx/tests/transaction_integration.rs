@@ -45,7 +45,7 @@ async fn transactions_against_real_postgres() {
     // `.commit()` succeeds.
     let mut tx = pool.begin().await.expect("begin transaction");
     let ada_id: i64 = qbrs::insert::insert::<Postgres, _>(users::Table)
-        .values(UsersInsert::new("ada@example.com"))
+        .values(UsersInsert::builder().email("ada@example.com").build())
         .returning(users::id)
         .load(&mut *tx)
         .await
@@ -67,7 +67,7 @@ async fn transactions_against_real_postgres() {
     // never lands once rolled back.
     let mut tx = pool.begin().await.expect("begin transaction");
     let dan_id: i64 = qbrs::insert::insert::<Postgres, _>(users::Table)
-        .values(UsersInsert::new("dan@example.com"))
+        .values(UsersInsert::builder().email("dan@example.com").build())
         .returning(users::id)
         .load(&mut *tx)
         .await
@@ -97,7 +97,7 @@ async fn transactions_against_real_postgres() {
     let grace_id = {
         let mut tx = pool.begin().await.expect("begin transaction");
         let id: i64 = qbrs::insert::insert::<Postgres, _>(users::Table)
-            .values(UsersInsert::new("grace@example.com"))
+            .values(UsersInsert::builder().email("grace@example.com").build())
             .returning(users::id)
             .load(&mut *tx)
             .await
@@ -118,8 +118,8 @@ async fn transactions_against_real_postgres() {
     // Insert + update + delete inside one transaction, committed together.
     let mut tx = pool.begin().await.expect("begin transaction");
     let ids: Vec<i64> = qbrs::insert::insert::<Postgres, _>(users::Table)
-        .values(UsersInsert::new("a@example.com"))
-        .values(UsersInsert::new("b@example.com"))
+        .values(UsersInsert::builder().email("a@example.com").build())
+        .values(UsersInsert::builder().email("b@example.com").build())
         .returning(users::id)
         .load(&mut *tx)
         .await
