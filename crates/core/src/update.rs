@@ -33,10 +33,29 @@ pub use private::Sealed as UpdateRowSealed;
 /// PATCH handler holds when the request changed nothing — has no
 /// assignments at all, so the check belongs where such a value enters a
 /// statement rather than at rendering time.
-#[derive(Debug, Clone)]
 pub struct Assignments<T> {
     sets: Vec<(&'static str, ExprKind)>,
     _marker: PhantomData<fn() -> T>,
+}
+
+// Hand-written for the reason `Expr`'s are: a derive would ask the phantom
+// table marker to be `Clone`/`Debug`, and a schema's marker is a bare unit
+// struct — so the derived impls would apply to no table at all.
+impl<T> Clone for Assignments<T> {
+    fn clone(&self) -> Self {
+        Assignments {
+            sets: self.sets.clone(),
+            _marker: PhantomData,
+        }
+    }
+}
+
+impl<T> std::fmt::Debug for Assignments<T> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Assignments")
+            .field("sets", &self.sets)
+            .finish()
+    }
 }
 
 impl<T: Table> Assignments<T> {

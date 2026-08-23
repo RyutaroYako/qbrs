@@ -76,7 +76,9 @@ traits:
 
 - `Find<T, Index>` — proof `T` is in scope, plus its join-derived `Nullability`.
 - `Superset<Req, Idxs>` — proof a whole `Req` list is in scope; used wherever a
-  pre-built `Expr` enters a query.
+  pre-built `Expr` enters a query. Carries the same `Proof` seal `Find` does, and needs it
+  more: `Idxs` is a free slot, so a local type there is all the orphan rule asks for, and
+  this is the trait the builder bounds actually name.
 - `MapNullable` — RIGHT/FULL JOIN flipping every already-joined table to `MaybeNull`.
 - `WrapNullable<N>` — idempotently wraps a SQL type as `Nullable<T>`.
 
@@ -264,6 +266,11 @@ query is the intended usage and sidesteps that. Nullability comes from `Option<T
 separate attribute); attributes are only `#[column(primary_key | generated | default)]`.
 Every column setter takes `insert::IntoColumnValue<Field>` — one trait for all four field
 shapes, so two same-typed columns accept the same values however they are declared.
+A table whose every column is generated leaves an `INSERT` with no column to name, which SQL
+spells `DEFAULT VALUES` (`() VALUES ()` in MySQL) and spells for exactly one row — so the
+bulk paths take `insert::Insertable`, which the derive emits only when there is a column to
+repeat.
+
 `*Insert` is built through a type-state builder: one generic slot per column that is neither
 nullable nor defaulted, `insert::Missing<C>` until that column is given a value and its own
 type after. `build()`'s bound — `insert::Filled<C>` per slot, on the method rather than on

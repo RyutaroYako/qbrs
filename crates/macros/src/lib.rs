@@ -1004,6 +1004,13 @@ fn gen_insert_struct(
         }
     });
 
+    // A table whose every column is generated has one row to give, so it
+    // doesn't get the marker the bulk paths ask for.
+    let insertable_marker = if insertable.is_empty() {
+        quote! {}
+    } else {
+        quote! { impl ::qbrs::insert::Insertable for #insert_ident {} }
+    };
     let columns_arr = insertable.iter().map(|c| sql_name(&c.field_name));
     let into_values = insertable.iter().map(|c| {
         let name = &c.field_name;
@@ -1088,6 +1095,8 @@ fn gen_insert_struct(
         }
 
         impl ::qbrs::insert::InsertRowSealed for #insert_ident {}
+
+        #insertable_marker
 
         impl ::qbrs::insert::InsertRow for #insert_ident {
             type Table = #mod_ident::Table;

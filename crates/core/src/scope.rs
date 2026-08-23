@@ -177,15 +177,25 @@ impl<Head, Tail: Concat<Other>, Other> Concat<Other> for Cons<Head, Tail> {
     label = "requires {Req}, but the current query scope doesn't contain all of it",
     note = "in a generic helper, `Idxs` has to be a type parameter of its own — one shared index matches no scope, however right the tables look"
 )]
-pub trait Superset<Req, Idxs> {}
+pub trait Superset<Req, Idxs> {
+    /// Unnameable outside this crate, for the reason `proof` explains — and
+    /// needed here as much as on `Find`, since `Idxs` is a free slot: a
+    /// local type in it is all the orphan rule asks for, and this is the
+    /// trait every builder bound actually names.
+    #[doc(hidden)]
+    type Proof: proof::Sealed;
+}
 
-impl<S> Superset<Nil, Nil> for S {}
+impl<S> Superset<Nil, Nil> for S {
+    type Proof = proof::Proof;
+}
 
 impl<S, Head: Table, Tail, IdxHead, IdxsTail> Superset<Cons<Head, Tail>, Cons<IdxHead, IdxsTail>>
     for S
 where
     S: Find<Head, IdxHead> + Superset<Tail, IdxsTail>,
 {
+    type Proof = proof::Proof;
 }
 
 /// A scope's tables without their nullability: the `Req` list an expression

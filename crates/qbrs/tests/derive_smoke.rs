@@ -343,3 +343,41 @@ fn a_schema_qualified_table_is_two_identifiers() {
         "SELECT \"analytics\".\"events\".\"name\" FROM \"analytics\".\"events\""
     );
 }
+
+#[derive(Table)]
+#[table(name = "import_runs")]
+#[allow(dead_code)]
+struct ImportRun {
+    #[column(primary_key, generated)]
+    id: i64,
+    #[column(generated)]
+    started_at: i64,
+}
+
+#[test]
+fn a_table_with_nothing_to_insert_says_default_values() {
+    // Every column is the database's to write, so the row names none — and
+    // an empty column list is a syntax error in two of the three dialects.
+    let (sql, params) = qbrs::insert::insert(import_run::Table)
+        .values(ImportRunInsert::builder().build())
+        .to_sql(Postgres);
+    assert_eq!(sql, "INSERT INTO \"import_runs\" DEFAULT VALUES");
+    assert!(params.is_empty());
+
+    let (mysql, _) = qbrs::insert::insert(import_run::Table)
+        .values(ImportRunInsert::builder().build())
+        .to_sql(qbrs::dialect::MySql);
+    assert_eq!(mysql, "INSERT INTO `import_runs` () VALUES ()");
+}
+
+#[test]
+fn an_assignments_list_clones_and_prints() {
+    // Its phantom table marker is a bare unit struct, so a derived `Clone`
+    // would apply to no schema at all.
+    let sets = Assignments::set_to(users::email, "a@example.com");
+    let (sql, _) = qbrs::update::update(users::Table)
+        .set(sets.clone())
+        .to_sql(Postgres);
+    assert_eq!(sql, "UPDATE \"users\" SET \"email\" = $1");
+    assert!(format!("{sets:?}").starts_with("Assignments"));
+}

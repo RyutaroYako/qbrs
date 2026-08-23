@@ -33,6 +33,11 @@ pub trait Dialect: 'static + Copy + Default + private::Sealed {
     /// grammar has no place for a parenthesised `SELECT` around `UNION`.
     const PARENTHESIZED_SET_OP_BRANCHES: bool = true;
 
+    /// How to insert a row that names no column, which is what a table
+    /// whose every column is generated leaves. `INSERT INTO t () VALUES ()`
+    /// is MySQL's spelling and a syntax error everywhere else.
+    const INSERT_NO_COLUMNS: &'static str = " DEFAULT VALUES";
+
     /// What to put in a `LIMIT` when a query has an `OFFSET` and no limit.
     /// Postgres takes a bare `OFFSET`; SQLite and MySQL don't, and each
     /// spells "no limit" differently.
@@ -66,6 +71,7 @@ impl Dialect for MySql {
     const CAST_DOUBLE: &'static str = "DOUBLE";
     const OFFSET_WITHOUT_LIMIT: Option<&'static str> = Some("18446744073709551615");
     const IDENTIFIER_QUOTE: char = '`';
+    const INSERT_NO_COLUMNS: &'static str = " () VALUES ()";
     // Uses the default `?` placeholder.
 }
 

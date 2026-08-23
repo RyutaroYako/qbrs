@@ -32,6 +32,17 @@ pub trait IntoColumnValue<V> {
     fn into_column_value(self) -> V;
 }
 
+/// A table with at least one column a statement may insert into. Emitted by
+/// `#[derive(Table)]` unless every column is generated, which leaves an
+/// `INSERT` with nothing to name: SQL spells that `DEFAULT VALUES`, and
+/// spells it for exactly one row.
+#[diagnostic::on_unimplemented(
+    message = "every column of `{Self}`'s table is generated, so only one row at a time can be inserted",
+    label = "`DEFAULT VALUES` is what SQL calls a row with nothing in it, and it names no columns to repeat",
+    note = "insert them one statement at a time"
+)]
+pub trait Insertable {}
+
 /// Proof that a builder's slot for column `C` holds that column's value.
 /// Deliberately unsealed, unlike `scope::Find`: forging it buys nothing,
 /// because `*Insert`'s fields are public and a complete row with a value of
@@ -232,7 +243,7 @@ impl<D, T: Table> InsertSeed<D, T> {
     /// where the rows are already in a `Vec` and the first one isn't
     /// special. `INSERT` with no rows has no SQL form, so an empty
     /// collection is refused here rather than rendered.
-    pub fn values_all<R: InsertRow<Table = T>>(
+    pub fn values_all<R: InsertRow<Table = T> + Insertable>(
         self,
         rows: impl IntoIterator<Item = R>,
     ) -> Result<Insert<D, R>, NothingToInsert> {
@@ -269,6 +280,19 @@ fn render_values_clause<D: Dialect, R: InsertRow>(
     let mut sink = QuerySink::<D>::new();
     sink.text("INSERT INTO ");
     render_ident::<D>(&mut sink, <R::Table as Table>::NAME);
+
+    // A table whose every column is generated leaves nothing to name, and
+    // an empty column list is a syntax error in two of the three dialects.
+    // One such row is all SQL can express, which is why `values`/`values_all`
+    // take `Insertable`.
+    if R::COLUMNS.is_empty() {
+        sink.text(D::INSERT_NO_COLUMNS);
+        if let Some(clause) = on_conflict {
+            render_conflict_clause::<D, _>(clause, &mut sink);
+        }
+        return sink;
+    }
+
     sink.text(" (");
     for (i, c) in R::COLUMNS.iter().enumerate() {
         if i > 0 {
@@ -308,7 +332,7 @@ pub struct Insert<D, R: InsertRow> {
     _marker: PhantomData<fn() -> (D, R)>,
 }
 
-impl<D, R: InsertRow> Insert<D, R> {
+impl<D, R: InsertRow + Insertable> Insert<D, R> {
     /// Bulk insert: add another row to the same statement.
     pub fn values(mut self, row: R) -> Self {
         self.rows.push(row.into_values());
