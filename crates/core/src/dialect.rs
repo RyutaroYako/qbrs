@@ -98,10 +98,11 @@ impl SupportsOnConflict for Sqlite {}
 /// `RIGHT JOIN` support: Postgres and MySQL always, SQLite 3.39+. Kept
 /// separate from `SupportsFullOuterJoin` because MySQL has this one but not
 /// that one.
-#[diagnostic::on_unimplemented(
-    message = "`{Self}` has no `RIGHT JOIN`",
-    label = "SQLite gained it in 3.39; before that, swap the two tables and use `.left_join(..)`"
-)]
+/// Every dialect this crate speaks has it (SQLite since 3.39, the minimum
+/// this crate targets), so the gate is open for all three today. It stays
+/// separate from `SupportsFullOuterJoin` because that one is not, and
+/// because a dialect without `RIGHT JOIN` can be added without changing
+/// `right_join`'s signature.
 pub trait SupportsRightJoin: Dialect {}
 impl SupportsRightJoin for Postgres {}
 impl SupportsRightJoin for MySql {}

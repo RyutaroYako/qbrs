@@ -31,6 +31,7 @@ mod users {
         use qbrs_core::expr::ColumnKey;
         #[derive(Clone, Copy)]
         pub struct id;
+        impl qbrs_core::expr::Writable for id {}
         impl ColumnKey for id {
             type Table = UsersMarker;
             type Sql = Integer;
@@ -57,6 +58,7 @@ mod orders {
         use qbrs_core::expr::ColumnKey;
         #[derive(Clone, Copy)]
         pub struct user_id;
+        impl qbrs_core::expr::Writable for user_id {}
         impl ColumnKey for user_id {
             type Table = OrdersMarker;
             type Sql = Integer;

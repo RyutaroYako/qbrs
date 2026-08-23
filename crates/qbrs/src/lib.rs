@@ -38,7 +38,9 @@ pub mod prelude {
         sort_key,
     };
     pub use qbrs_core::statement::{Returning, Statement, WrittenTable};
-    pub use qbrs_core::update::{NothingToSet, Update, UpdateRow, update};
+    pub use qbrs_core::update::{
+        Assignments, IntoAssignments, NothingToSet, Update, UpdateRow, update,
+    };
     pub use qbrs_core::window::{
         DenseRank, HasDenseRank, HasRank, HasRowNumber, Rank, RowNumber, Window, WindowFunc,
         dense_rank, rank, row_number, window,

@@ -28,6 +28,7 @@ mod users {
         use qbrs_core::expr::ColumnKey;
         #[derive(Clone, Copy)]
         pub struct id;
+        impl qbrs_core::expr::Writable for id {}
         impl ColumnKey for id {
             type Table = UsersMarker;
             type Sql = Integer;
@@ -40,6 +41,7 @@ mod users {
         impl qbrs_core::row::Spelled for id {}
         #[derive(Clone, Copy)]
         pub struct email;
+        impl qbrs_core::expr::Writable for email {}
         impl ColumnKey for email {
             type Table = UsersMarker;
             type Sql = Text;
@@ -52,6 +54,7 @@ mod users {
         impl qbrs_core::row::Spelled for email {}
         #[derive(Clone, Copy)]
         pub struct display_name;
+        impl qbrs_core::expr::Writable for display_name {}
         impl ColumnKey for display_name {
             type Table = UsersMarker;
             type Sql = Text;
@@ -153,6 +156,25 @@ impl UpdateRow for UsersUpdate {
 }
 
 #[test]
+fn a_set_list_can_be_expressions_alone() {
+    use qbrs_core::update::Assignments;
+
+    let (sql, params) = update::<Postgres, _>(users::Table)
+        .set(Assignments::set_to(
+            users::email,
+            qbrs_core::sql!(qbrs_core::expr::Text, "lower(?)", users::email),
+        ))
+        .expect("one assignment")
+        .filter(users::id.eq(1))
+        .to_sql();
+    assert_eq!(
+        sql,
+        "UPDATE \"users\" SET \"email\" = (lower(\"users\".\"email\")) WHERE (\"users\".\"id\" = $1)"
+    );
+    assert_eq!(params.len(), 1);
+}
+
+#[test]
 fn set_to_assigns_an_expression_and_appends_to_the_row() {
     let (sql, params) = update::<Postgres, _>(users::Table)
         .set(UsersUpdate {
@@ -162,11 +184,7 @@ fn set_to_assigns_an_expression_and_appends_to_the_row() {
         .expect("email is set")
         .set_to(
             users::display_name,
-            qbrs_core::sql!(
-                qbrs_core::scope::Nullable<qbrs_core::expr::Text>,
-                "upper(?)",
-                users::email
-            ),
+            qbrs_core::sql!(qbrs_core::expr::Text, "upper(?)", users::email),
         )
         .filter(users::id.eq(1))
         .to_sql();

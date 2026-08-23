@@ -14,7 +14,7 @@ use crate::expr::{Column, ColumnKey, Value};
 use crate::render::{QuerySink, Sink, render_ident};
 use crate::scope::{BaseTable, Table};
 use crate::statement::Statement;
-use crate::update::{Assignments, NothingToSet, UpdateRow};
+use crate::update::{Assignments, IntoAssignments, NothingToSet};
 
 /// What a nullable column's setter takes: the value, or the `Option` a
 /// request struct already holds. `None` leaves the column NULL, which is
@@ -86,8 +86,20 @@ pub trait InsertRow: private::Sealed {
 /// the table being inserted into, where a raw `&[&str]` would let a typo
 /// through to the database. Implemented for a bare `Column<C>` and for
 /// tuples of up to three; add arities as real schemas need them.
-pub trait ConflictTarget<T: Table> {
+pub trait ConflictTarget<T: Table>: conflict_target::Sealed {
+    #[doc(hidden)]
     fn column_names(&self) -> Vec<&'static str>;
+}
+
+mod conflict_target {
+    /// Sealed for the reason `InsertRow` is: a hand-written impl could name
+    /// a column that isn't there, and the point of taking `Column<C>`s is
+    /// that it can't.
+    pub trait Sealed {}
+    impl<C: crate::expr::ColumnKey> Sealed for crate::expr::Column<C> {}
+    impl<A> Sealed for (A,) {}
+    impl<A, B> Sealed for (A, B) {}
+    impl<A, B, C> Sealed for (A, B, C) {}
 }
 
 impl<C: ColumnKey> ConflictTarget<C::Table> for Column<C> {
@@ -112,7 +124,7 @@ conflict_target_tuple!(A);
 conflict_target_tuple!(A, B);
 conflict_target_tuple!(A, B, C);
 
-enum ConflictAction {
+enum ConflictAction<T> {
     DoNothing,
     /// Reuses `UpdateRow`, so `.on_conflict_do_update(..)` takes the same
     /// `*Update` value `.set(..)` does.
@@ -120,15 +132,15 @@ enum ConflictAction {
     /// **Known limitation**: only literal/bound values, not
     /// `EXCLUDED.column` (`SET total = users.total + EXCLUDED.total`), which
     /// needs its own typed API.
-    DoUpdate(Assignments),
+    DoUpdate(Assignments<T>),
 }
 
-struct ConflictClause {
+struct ConflictClause<T> {
     target: Vec<&'static str>,
-    action: ConflictAction,
+    action: ConflictAction<T>,
 }
 
-fn render_conflict_clause<D: Dialect>(clause: &ConflictClause, sink: &mut dyn Sink) {
+fn render_conflict_clause<D: Dialect, T>(clause: &ConflictClause<T>, sink: &mut dyn Sink) {
     sink.text(" ON CONFLICT (");
     for (i, c) in clause.target.iter().enumerate() {
         if i > 0 {
@@ -211,7 +223,7 @@ impl std::error::Error for NothingToInsert {}
 
 fn render_values_clause<D: Dialect, R: InsertRow>(
     rows: &[Vec<InsertValue>],
-    on_conflict: &Option<ConflictClause>,
+    on_conflict: &Option<ConflictClause<R::Table>>,
 ) -> QuerySink<D> {
     let mut sink = QuerySink::<D>::new();
     sink.text("INSERT INTO ");
@@ -243,7 +255,7 @@ fn render_values_clause<D: Dialect, R: InsertRow>(
     }
 
     if let Some(clause) = on_conflict {
-        render_conflict_clause::<D>(clause, &mut sink);
+        render_conflict_clause::<D, _>(clause, &mut sink);
     }
 
     sink
@@ -251,7 +263,7 @@ fn render_values_clause<D: Dialect, R: InsertRow>(
 
 pub struct Insert<D, R: InsertRow> {
     rows: Vec<Vec<InsertValue>>,
-    on_conflict: Option<ConflictClause>,
+    on_conflict: Option<ConflictClause<R::Table>>,
     _marker: PhantomData<fn() -> (D, R)>,
 }
 
@@ -275,14 +287,14 @@ impl<D: SupportsOnConflict, R: InsertRow> Insert<D, R> {
 
     /// `ON CONFLICT (..) DO UPDATE SET ..`, reusing the same `*Update`
     /// struct `update().set(..)` takes.
-    pub fn on_conflict_do_update<U: UpdateRow<Table = R::Table>>(
+    pub fn on_conflict_do_update(
         mut self,
         target: impl ConflictTarget<R::Table>,
-        set: U,
+        set: impl IntoAssignments<R::Table>,
     ) -> Result<Self, NothingToSet> {
         self.on_conflict = Some(ConflictClause {
             target: target.column_names(),
-            action: ConflictAction::DoUpdate(Assignments::new(set)?),
+            action: ConflictAction::DoUpdate(set.into_assignments()?),
         });
         Ok(self)
     }

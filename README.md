@@ -203,7 +203,12 @@ A schema is a `#[derive(Table)]` struct, shown in the
   `Option<Option<T>>` (untouched / `NULL` / value), and a request struct's
   `Option<T>` converts into either. An assignment a value can't say —
   `updated_at = now()`, `version = version + 1` — goes in with
-  `.set_to(column, expression)`, checked against the table being written to. An `*Insert` is built by naming its
+  `.set_to(column, expression)` on the statement, or
+  `Assignments::set_to(..)` where the whole `SET` list is expressions, which
+  `UPDATE` and `ON CONFLICT DO UPDATE` both accept. Either way the column
+  has to be one a statement may write (not generated, not the primary key)
+  and the expression has to fit it — a nullable expression doesn't assign to
+  a NOT NULL column. An `*Insert` is built by naming its
   columns — `UsersInsert::builder().email(..).build()` — and `build()` is
   reachable only once every column that is neither nullable nor defaulted
   has a value, so no column can be dropped and no two of the same type
@@ -372,8 +377,9 @@ A schema is a `#[derive(Table)]` struct, shown in the
   rejected by the database.
 - Two selections are compared by column name, so a `UNION` of branches whose
   columns are named differently, or a CTE body with a computed column, needs
-  a `label!` label on one side. A `UNION` also needs both branches to be
-  tuple selections, and to agree on nullability.
+  a `label!` label on one side, and both sides have to agree on nullability.
+  Two one-column selections match on their value type alone; a CTE body is
+  always compared as a row, since a CTE declares column names by definition.
 - No table aliasing. A self-join is rejected, but by an inference ambiguity
   rather than by one of this crate's own diagnostics — and declaring the same
   SQL table twice as two Rust types, the workaround that suggests itself,

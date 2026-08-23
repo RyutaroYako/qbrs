@@ -255,6 +255,7 @@ where
 pub trait Condition<Scope, Idxs> {
     /// Discharged against this scope, which for an `Expr` is where its
     /// `Superset` proof is spent and for a `Predicate` already happened.
+    #[doc(hidden)]
     fn into_predicate(self) -> Predicate<Scope>;
 }
 
@@ -325,12 +326,12 @@ impl<Scope> Predicate<Scope> {
 
 /// Discharges a condition's scope requirement. `Scope` is inferred from the
 /// query the resulting predicates are eventually given to.
-pub fn predicate<Scope, Req, Idxs>(cond: Expr<Req, Bool>) -> Predicate<Scope>
+pub fn predicate<Scope, Req, Idxs>(cond: impl IntoExpr<Bool, Req = Req>) -> Predicate<Scope>
 where
     Scope: Superset<Req, Idxs>,
 {
     Predicate {
-        kind: cond.kind,
+        kind: cond.into_expr().kind,
         _marker: PhantomData,
     }
 }

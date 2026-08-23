@@ -244,6 +244,13 @@ fn gen_schema_mod(
         };
         let col_name_str = name.to_string();
         let type_name = type_level_name(&col_name_str);
+        // The same set `*Update` covers: a generated or primary-key column
+        // isn't something a statement assigns.
+        let writable = if c.generated || c.primary_key {
+            quote! {}
+        } else {
+            quote! { impl ::qbrs::expr::Writable for #name {} }
+        };
         keys.push(quote! {
             #[derive(Clone, Copy)]
             pub struct #name;
@@ -251,6 +258,7 @@ fn gen_schema_mod(
                 type Table = super::Table;
                 type Sql = #col_sql_ty;
             }
+            #writable
             #[doc(hidden)]
             impl ::qbrs::row::NamedSealed for #name {}
 

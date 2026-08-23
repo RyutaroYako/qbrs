@@ -94,6 +94,7 @@ impl<K, V, Tail> Field<K, Here> for RowCons<K, V, Tail> {
     }
 }
 
+#[diagnostic::do_not_recommend]
 impl<K, Other, V, Tail, I> Field<K, There<I>> for RowCons<Other, V, Tail>
 where
     Tail: Field<K, I>,
@@ -192,6 +193,7 @@ where
     }
 }
 
+#[diagnostic::do_not_recommend]
 impl<F, K, V, Tail, I> TakeNamed<F, There<I>> for RowCons<K, V, Tail>
 where
     Tail: TakeNamed<F, I>,
@@ -250,6 +252,7 @@ pub trait SameNames<Other> {}
 
 impl SameNames<Nil> for Nil {}
 
+#[diagnostic::do_not_recommend]
 impl<A, B, TailA, TailB> SameNames<Cons<B, TailB>> for Cons<A, TailA>
 where
     A: SameNameAs<B>,

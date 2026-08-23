@@ -32,6 +32,7 @@ mod users {
         use qbrs_core::expr::ColumnKey;
         #[derive(Clone, Copy)]
         pub struct id;
+        impl qbrs_core::expr::Writable for id {}
         impl ColumnKey for id {
             type Table = UsersMarker;
             type Sql = Integer;
@@ -44,6 +45,7 @@ mod users {
         impl qbrs_core::row::Spelled for id {}
         #[derive(Clone, Copy)]
         pub struct email;
+        impl qbrs_core::expr::Writable for email {}
         impl ColumnKey for email {
             type Table = UsersMarker;
             type Sql = Text;
@@ -72,6 +74,7 @@ mod archived_users {
         use qbrs_core::expr::ColumnKey;
         #[derive(Clone, Copy)]
         pub struct id;
+        impl qbrs_core::expr::Writable for id {}
         impl ColumnKey for id {
             type Table = ArchivedUsersMarker;
             type Sql = Integer;
@@ -84,6 +87,7 @@ mod archived_users {
         impl qbrs_core::row::Spelled for id {}
         #[derive(Clone, Copy)]
         pub struct email;
+        impl qbrs_core::expr::Writable for email {}
         impl ColumnKey for email {
             type Table = ArchivedUsersMarker;
             type Sql = Text;

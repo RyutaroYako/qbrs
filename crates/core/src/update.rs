@@ -3,7 +3,7 @@
 use std::marker::PhantomData;
 
 use crate::dialect::Dialect;
-use crate::expr::{Column, ColumnKey, Comparable, ExprKind, IntoExpr, SqlType, Value};
+use crate::expr::{Assignable, Column, ColumnKey, ExprKind, IntoExpr, SqlType, Value, Writable};
 use crate::render::{QuerySink, Sink, render_and_list, render_expr, render_ident};
 use crate::scope::{BaseTable, Superset, Table};
 use crate::select::{Condition, Predicate};
@@ -28,16 +28,74 @@ mod private {
 #[doc(hidden)]
 pub use private::Sealed as UpdateRowSealed;
 
+/// What a statement's `SET` list can be built from: the `*Update` struct a
+/// request maps onto, or `Assignments` of expressions — so `UPDATE` and
+/// `ON CONFLICT DO UPDATE` take the same two things.
+pub trait IntoAssignments<T> {
+    fn into_assignments(self) -> Result<Assignments<T>, NothingToSet>;
+}
+
+impl<T: Table, R: UpdateRow<Table = T>> IntoAssignments<T> for R {
+    fn into_assignments(self) -> Result<Assignments<T>, NothingToSet> {
+        Assignments::from_row(self)
+    }
+}
+
+impl<T> IntoAssignments<T> for Assignments<T> {
+    fn into_assignments(self) -> Result<Assignments<T>, NothingToSet> {
+        // Non-empty by construction: the only constructor assigns one.
+        Ok(self)
+    }
+}
+
 /// A `SET` list that is known non-empty, which is the only kind that has a
 /// SQL form. Every `*Update` derives `Default`, and that value — what a
 /// PATCH handler holds when the request changed nothing — has no
 /// assignments at all, so the check belongs where such a value enters a
 /// statement rather than at rendering time.
-pub struct Assignments {
+pub struct Assignments<T> {
     sets: Vec<(&'static str, ExprKind)>,
+    _marker: PhantomData<fn() -> T>,
 }
 
-impl Assignments {
+impl<T: Table> Assignments<T> {
+    /// `column = <expression>` — the assignments a value can't say:
+    /// `updated_at = now()`, `version = version + 1`. The expression is
+    /// checked against the table being written to, exactly as a `WHERE`
+    /// condition is.
+    pub fn set_to<C, S, Req, Idxs>(column: Column<C>, value: impl IntoExpr<S, Req = Req>) -> Self
+    where
+        C: ColumnKey<Table = T> + Writable,
+        C::Sql: Assignable<S>,
+        S: SqlType,
+        WrittenTable<T>: Superset<Req, Idxs>,
+    {
+        Assignments {
+            sets: Vec::new(),
+            _marker: PhantomData,
+        }
+        .and_set_to(column, value)
+    }
+
+    /// One more of them, so a statement can assign several expressions.
+    pub fn and_set_to<C, S, Req, Idxs>(
+        mut self,
+        _column: Column<C>,
+        value: impl IntoExpr<S, Req = Req>,
+    ) -> Self
+    where
+        C: ColumnKey<Table = T> + Writable,
+        C::Sql: Assignable<S>,
+        S: SqlType,
+        WrittenTable<T>: Superset<Req, Idxs>,
+    {
+        self.sets
+            .push((<C as crate::row::Named>::NAME, value.into_expr().kind));
+        self
+    }
+}
+
+impl<T> Assignments<T> {
     /// `col = $n, col = $n` — the one renderer for a `SET` list, shared by
     /// `UPDATE` and `ON CONFLICT DO UPDATE`.
     pub(crate) fn render_into<D: Dialect>(&self, sink: &mut dyn Sink) {
@@ -51,7 +109,7 @@ impl Assignments {
         }
     }
 
-    pub(crate) fn new<R: UpdateRow>(row: R) -> Result<Self, NothingToSet> {
+    fn from_row<R: UpdateRow<Table = T>>(row: R) -> Result<Self, NothingToSet> {
         let sets: Vec<_> = row
             .sets()
             .into_iter()
@@ -60,11 +118,14 @@ impl Assignments {
         if sets.is_empty() {
             return Err(NothingToSet);
         }
-        Ok(Assignments { sets })
+        Ok(Assignments {
+            sets,
+            _marker: PhantomData,
+        })
     }
 
-    fn push(&mut self, column: &'static str, value: ExprKind) {
-        self.sets.push((column, value));
+    fn extend(&mut self, other: Assignments<T>) {
+        self.sets.extend(other.sets);
     }
 }
 
@@ -92,9 +153,11 @@ pub fn update<D, T: BaseTable>(_table: T) -> UpdateSeed<D, T> {
 }
 
 impl<D, T: Table> UpdateSeed<D, T> {
-    pub fn set<R: UpdateRow<Table = T>>(self, row: R) -> Result<Update<D, T>, NothingToSet> {
+    /// The `SET` list, from an `*Update` struct or from `Assignments` of
+    /// expressions.
+    pub fn set(self, sets: impl IntoAssignments<T>) -> Result<Update<D, T>, NothingToSet> {
         Ok(Update {
-            sets: Assignments::new(row)?,
+            sets: sets.into_assignments()?,
             wheres: Vec::new(),
             _marker: PhantomData,
         })
@@ -102,7 +165,7 @@ impl<D, T: Table> UpdateSeed<D, T> {
 }
 
 fn render_set_clause<D: Dialect, T: Table>(
-    sets: &Assignments,
+    sets: &Assignments<T>,
     wheres: &[ExprKind],
 ) -> QuerySink<D> {
     let mut sink = QuerySink::<D>::new();
@@ -117,7 +180,7 @@ fn render_set_clause<D: Dialect, T: Table>(
 }
 
 pub struct Update<D, T: Table> {
-    sets: Assignments,
+    sets: Assignments<T>,
     wheres: Vec<ExprKind>,
     _marker: PhantomData<fn() -> (D, T)>,
 }
@@ -145,25 +208,20 @@ impl<D, T: Table> Update<D, T> {
 }
 
 impl<D, T: Table> Update<D, T> {
-    /// `SET column = <expression>`, for the assignments a value can't say:
-    /// `updated_at = now()`, `version = version + 1`. The expression is
-    /// checked against the table being written to, exactly as a `WHERE`
-    /// condition is, and appends to whatever `.set(..)` already assigned.
+    /// One more assignment, appended to whatever `.set(..)` already
+    /// assigned — see `Assignments::set_to`.
     pub fn set_to<C, S, Req, Idxs>(
         mut self,
-        _column: Column<C>,
+        column: Column<C>,
         value: impl IntoExpr<S, Req = Req>,
     ) -> Self
     where
-        C: ColumnKey<Table = T>,
-        // The same relation a comparison uses: a `Text` expression assigns
-        // to a `Nullable<Text>` column, and an `Integer` one to a `BigInt`.
-        C::Sql: Comparable<S>,
+        C: ColumnKey<Table = T> + Writable,
+        C::Sql: Assignable<S>,
         S: SqlType,
         WrittenTable<T>: Superset<Req, Idxs>,
     {
-        self.sets
-            .push(<C as crate::row::Named>::NAME, value.into_expr().kind);
+        self.sets.extend(Assignments::set_to(column, value));
         self
     }
 }

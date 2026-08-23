@@ -33,6 +33,7 @@ mod users {
         use qbrs_core::expr::ColumnKey;
         #[derive(Clone, Copy)]
         pub struct id;
+        impl qbrs_core::expr::Writable for id {}
         impl ColumnKey for id {
             type Table = UsersMarker;
             type Sql = Integer;
@@ -45,6 +46,7 @@ mod users {
         impl qbrs_core::row::Spelled for id {}
         #[derive(Clone, Copy)]
         pub struct name;
+        impl qbrs_core::expr::Writable for name {}
         impl ColumnKey for name {
             type Table = UsersMarker;
             type Sql = Text;
@@ -57,6 +59,7 @@ mod users {
         impl qbrs_core::row::Spelled for name {}
         #[derive(Clone, Copy)]
         pub struct active;
+        impl qbrs_core::expr::Writable for active {}
         impl ColumnKey for active {
             type Table = UsersMarker;
             type Sql = Bool;
@@ -69,6 +72,7 @@ mod users {
         impl qbrs_core::row::Spelled for active {}
         #[derive(Clone, Copy)]
         pub struct created_at;
+        impl qbrs_core::expr::Writable for created_at {}
         impl ColumnKey for created_at {
             type Table = UsersMarker;
             type Sql = Integer;
@@ -99,6 +103,7 @@ mod orders {
         use qbrs_core::expr::ColumnKey;
         #[derive(Clone, Copy)]
         pub struct user_id;
+        impl qbrs_core::expr::Writable for user_id {}
         impl ColumnKey for user_id {
             type Table = OrdersMarker;
             type Sql = Integer;
@@ -111,6 +116,7 @@ mod orders {
         impl qbrs_core::row::Spelled for user_id {}
         #[derive(Clone, Copy)]
         pub struct total;
+        impl qbrs_core::expr::Writable for total {}
         impl ColumnKey for total {
             type Table = OrdersMarker;
             type Sql = Integer;

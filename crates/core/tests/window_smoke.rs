@@ -32,6 +32,7 @@ mod employees {
         use qbrs_core::expr::ColumnKey;
         #[derive(Clone, Copy)]
         pub struct department;
+        impl qbrs_core::expr::Writable for department {}
         impl ColumnKey for department {
             type Table = EmployeesMarker;
             type Sql = Text;
@@ -44,6 +45,7 @@ mod employees {
         impl qbrs_core::row::Spelled for department {}
         #[derive(Clone, Copy)]
         pub struct salary;
+        impl qbrs_core::expr::Writable for salary {}
         impl ColumnKey for salary {
             type Table = EmployeesMarker;
             type Sql = Integer;
@@ -71,6 +73,7 @@ mod orders {
         use qbrs_core::expr::ColumnKey;
         #[derive(Clone, Copy)]
         pub struct total;
+        impl qbrs_core::expr::Writable for total {}
         impl ColumnKey for total {
             type Table = OrdersMarker;
             type Sql = Integer;
