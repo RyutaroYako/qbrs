@@ -405,8 +405,8 @@ A schema is a `#[derive(Table)]` struct, shown in the
   succeeded, and `avg` is `DOUBLE PRECISION` rather than exact.
 - Aggregates take a bare column: `sum(price * qty)`, `count(DISTINCT x)` and
   `sum(CASE WHEN ..)` need `sql!{}`. Nothing relates `GROUP BY` to the
-  selection list, and an aggregate or a window function in `WHERE` is
-  accepted by the builder and rejected by the database.
+  selection list, and an aggregate or a window function in `WHERE` — or in
+  `RETURNING` — is accepted by the builder and rejected by the database.
 - Nothing relates `ORDER BY` to the selection list either, which only shows
   under `.distinct()`: Postgres requires a `SELECT DISTINCT`'s sort keys to
   be selected, so `.distinct().order_by(users::id.asc())` on a query that

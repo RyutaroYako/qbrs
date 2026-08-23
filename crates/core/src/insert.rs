@@ -127,14 +127,67 @@ impl<T: Into<Value>> From<Defaultable<T>> for InsertValue {
 pub trait InsertRow: private::Sealed {
     type Table: Table;
 
-    /// The columns this row writes, as the same sealed `RowCons` chain a
-    /// CTE declares its shape with. A *type*, because the statement's
-    /// header is not one row's opinion: taking it from a value meant the
-    /// first row decided it, so an empty first row discarded the rest and a
-    /// later row's extra column vanished.
-    type Columns: crate::row::ColumnNames;
+    /// This row's columns *and* values as one chain: the keys spell the
+    /// statement's header, the cells carry what goes under them. One type,
+    /// because two lists reconciled at render time is the shape that made
+    /// every earlier version of this trait able to produce SQL malformed
+    /// for any table, or to drop a value silently — a `COLUMNS` const
+    /// beside positional values, then pairs matched against the first row's
+    /// names, then pairs matched against a declared header. A chain can
+    /// carry neither a surplus cell nor a missing one.
+    type Values: InsertValues;
 
-    fn into_values(self) -> Vec<(&'static str, InsertValue)>;
+    fn into_values(self) -> Self::Values;
+}
+
+mod insert_values {
+    /// Sealed to the two shapes a chain has, so `Values` is always a real
+    /// one — the reason `row::ColumnNames` is sealed.
+    pub trait Sealed {}
+}
+
+/// One row's cells, in the order its chain declares them.
+fn collect_values<R: InsertRow>(row: R) -> Vec<InsertValue> {
+    let mut out = Vec::new();
+    row.into_values().push_values(&mut out);
+    out
+}
+
+/// A chain of `(column, value)` cells: `RowCons<C, InsertValue, Tail>` down
+/// to `RowNil`. Walked once for the header and once for each row's values,
+/// so the two cannot disagree.
+pub trait InsertValues: insert_values::Sealed {
+    #[doc(hidden)]
+    fn push_names(out: &mut Vec<&'static str>);
+    #[doc(hidden)]
+    fn push_values(self, out: &mut Vec<InsertValue>);
+}
+
+impl insert_values::Sealed for crate::row::RowNil {}
+
+impl InsertValues for crate::row::RowNil {
+    fn push_names(_out: &mut Vec<&'static str>) {}
+    fn push_values(self, _out: &mut Vec<InsertValue>) {}
+}
+
+impl<C: crate::row::Named, Tail: InsertValues> insert_values::Sealed
+    for crate::row::RowCons<C, InsertValue, Tail>
+{
+}
+
+impl<C: crate::row::Named, Tail: InsertValues> InsertValues
+    for crate::row::RowCons<C, InsertValue, Tail>
+{
+    fn push_names(out: &mut Vec<&'static str>) {
+        out.push(<C as crate::row::Named>::NAME);
+        Tail::push_names(out);
+    }
+
+    fn push_values(self, out: &mut Vec<InsertValue>) {
+        let (value, tail) = self.into_cell();
+        out.push(value);
+        tail.push_values(out);
+    }
 }
 
 /// An `ON CONFLICT` target: one or more columns proven by `T` to belong to
@@ -255,7 +308,7 @@ pub fn insert<D, T: BaseTable>(_table: T) -> InsertSeed<D, T> {
 impl<D, T: Table> InsertSeed<D, T> {
     pub fn values<R: InsertRow<Table = T>>(self, row: R) -> Insert<D, R> {
         Insert {
-            rows: vec![row.into_values()],
+            rows: vec![collect_values(row)],
             on_conflict: None,
             _marker: PhantomData,
         }
@@ -269,7 +322,7 @@ impl<D, T: Table> InsertSeed<D, T> {
         self,
         rows: impl IntoIterator<Item = R>,
     ) -> Result<Insert<D, R>, NothingToInsert> {
-        let rows: Vec<_> = rows.into_iter().map(R::into_values).collect();
+        let rows: Vec<_> = rows.into_iter().map(collect_values).collect();
         if rows.is_empty() {
             return Err(NothingToInsert);
         }
@@ -296,16 +349,17 @@ impl std::fmt::Display for NothingToInsert {
 impl std::error::Error for NothingToInsert {}
 
 fn render_values_clause<D: Dialect, R: InsertRow>(
-    rows: &[Vec<(&'static str, InsertValue)>],
+    rows: &[Vec<InsertValue>],
     on_conflict: &Option<ConflictClause<R::Table>>,
 ) -> QuerySink<D> {
     let mut sink = QuerySink::<D>::new();
     sink.text("INSERT INTO ");
     render_ident::<D>(&mut sink, <R::Table as Table>::NAME);
 
-    // The header is the row type's declared columns, so every row is
-    // written against the same list however many pairs it happens to bring.
-    let header = <R::Columns as crate::row::ColumnNames>::names();
+    // Header and values come from one chain, so a row has exactly one cell
+    // per column named — no reconciliation, nothing to drop.
+    let mut header = Vec::new();
+    <R::Values as InsertValues>::push_names(&mut header);
 
     // A table whose every column is generated leaves nothing to name, and
     // an empty column list is a syntax error in two of the three dialects.
@@ -333,15 +387,13 @@ fn render_values_clause<D: Dialect, R: InsertRow>(
             sink.text(", ");
         }
         sink.ch('(');
-        for (i, name) in header.iter().enumerate() {
+        for (i, v) in row.iter().enumerate() {
             if i > 0 {
                 sink.text(", ");
             }
-            match row.iter().find(|(n, _)| n == name).map(|(_, v)| v) {
-                Some(InsertValue::Value(v)) => sink.bind(v),
-                // A column this row didn't mention is one the database
-                // fills, which is what a missing pair means.
-                Some(InsertValue::Default) | None => sink.text("DEFAULT"),
+            match v {
+                InsertValue::Default => sink.text("DEFAULT"),
+                InsertValue::Value(v) => sink.bind(v),
             }
         }
         sink.ch(')');
@@ -355,7 +407,7 @@ fn render_values_clause<D: Dialect, R: InsertRow>(
 }
 
 pub struct Insert<D, R: InsertRow> {
-    rows: Vec<Vec<(&'static str, InsertValue)>>,
+    rows: Vec<Vec<InsertValue>>,
     on_conflict: Option<ConflictClause<R::Table>>,
     _marker: PhantomData<fn() -> (D, R)>,
 }
@@ -363,7 +415,7 @@ pub struct Insert<D, R: InsertRow> {
 impl<D, R: InsertRow + Insertable> Insert<D, R> {
     /// Bulk insert: add another row to the same statement.
     pub fn values(mut self, row: R) -> Self {
-        self.rows.push(row.into_values());
+        self.rows.push(collect_values(row));
         self
     }
 
@@ -371,7 +423,7 @@ impl<D, R: InsertRow + Insertable> Insert<D, R> {
     /// statement already has a row, so an empty collection adds nothing
     /// rather than describing an `INSERT` with nothing in it.
     pub fn values_all(mut self, rows: impl IntoIterator<Item = R>) -> Self {
-        self.rows.extend(rows.into_iter().map(R::into_values));
+        self.rows.extend(rows.into_iter().map(collect_values));
         self
     }
 }

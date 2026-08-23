@@ -1015,18 +1015,24 @@ fn gen_insert_struct(
             impl ::qbrs::insert::Insertable for #insert_ident {}
         }
     };
-    // The declared column list, as the row chain `ColumnNames` walks —
-    // the same shape a CTE declares, and the reason the statement's header
-    // is a type rather than the first row's opinion.
-    let insert_columns = insertable
-        .iter()
-        .rev()
-        .fold(quote! { ::qbrs::row::RowNil }, |tail, c| {
-            let name = &c.field_name;
-            quote! { ::qbrs::row::RowCons<#mod_ident::columns::#name, (), #tail> }
-        });
-    let columns_arr = insertable.iter().map(|c| sql_name(&c.field_name));
-    let into_values = insertable.iter().map(|c| {
+    // The row's columns and values as one chain: the keys spell the header,
+    // the cells carry the values, and neither can outnumber the other.
+    // `insert::InsertValues` walks it for both.
+    let insert_values_ty =
+        insertable
+            .iter()
+            .rev()
+            .fold(quote! { ::qbrs::row::RowNil }, |tail, c| {
+                let name = &c.field_name;
+                quote! {
+                    ::qbrs::row::RowCons<
+                        #mod_ident::columns::#name,
+                        ::qbrs::insert::InsertValue,
+                        #tail,
+                    >
+                }
+            });
+    let cell_values: Vec<TokenStream2> = insertable.iter().map(|c| {
         let name = &c.field_name;
         let sql_ty = &c.sql_type;
         match (c.nullable, c.has_default) {
@@ -1050,7 +1056,13 @@ fn gen_insert_struct(
                 }
             },
         }
-    });
+    }).collect();
+
+    // Built from the tail up, so the chain nests the way its type does.
+    let insert_values_expr = cell_values.iter().rev().fold(
+        quote! { ::qbrs::row::RowNil },
+        |tail, value| quote! { ::qbrs::row::RowCons::new(#value, #tail) },
+    );
 
     quote! {
         #[derive(::std::fmt::Debug, ::std::clone::Clone)]
@@ -1114,12 +1126,10 @@ fn gen_insert_struct(
 
         impl ::qbrs::insert::InsertRow for #insert_ident {
             type Table = #mod_ident::Table;
-            type Columns = #insert_columns;
+            type Values = #insert_values_ty;
 
-            fn into_values(
-                self,
-            ) -> ::std::vec::Vec<(&'static str, ::qbrs::insert::InsertValue)> {
-                ::std::vec![#((#columns_arr, #into_values)),*]
+            fn into_values(self) -> Self::Values {
+                #insert_values_expr
             }
         }
     }

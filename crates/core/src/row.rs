@@ -61,6 +61,13 @@ impl<K, V, Tail> RowCons<K, V, Tail> {
             _key: PhantomData,
         }
     }
+
+    /// This cell's value and the rest, by value — what a walk that consumes
+    /// the chain needs (`insert::InsertValues`).
+    #[doc(hidden)]
+    pub fn into_cell(self) -> (V, Tail) {
+        (self.value, self.tail)
+    }
 }
 
 mod field {

@@ -293,12 +293,15 @@ spells `DEFAULT VALUES` (`() VALUES ()` in MySQL) and spells for exactly one row
 bulk paths take `insert::Insertable`, which the derive emits only when there is a column to
 repeat.
 
-`InsertRow` declares `type Columns` — the same sealed `RowCons` chain a CTE declares its
-shape with — and `into_values` returns `(column, value)` pairs that `render_values_clause`
-writes *by name* into that header, `DEFAULT` for a column a row doesn't mention. The header
-has to be a type: while it came from a value it was one row's opinion, so an empty first row
-discarded every later row and a row's extra column vanished, and before that a `COLUMNS`
-const beside a positional value list produced `VALUES ($1, $2), ($3)`. This is for the reason `AllColumns` carries one list: its seal is a `#[doc(hidden)]`
+`InsertRow::Values` is one chain carrying both halves — `RowCons<C, InsertValue, Tail>`,
+sealed like every other chain — so the header is its keys and a row is its cells, walked
+once each. Every earlier shape kept them as two lists that met at render time, and each in
+turn produced SQL malformed for any table or dropped a value: a `COLUMNS` const beside
+positional values (`VALUES ($1, $2), ($3)`), then pairs reconciled against the first row's
+names (an empty first row discarded the rest), then pairs reconciled against a declared
+header (a surplus pair vanished). A chain can carry neither a surplus cell nor a missing one.
+A chain whose keys repeat a column is still a lie a hand-written impl can tell — the derive
+can't, since Rust field names are unique — and the database rejects it. This is for the reason `AllColumns` carries one list: its seal is a `#[doc(hidden)]`
 door the derive must write in the schema's crate, and two lists that have to line up could
 be made not to — `INSERT INTO t (a, b, c) VALUES ($1)` is malformed whatever the table is.
 
