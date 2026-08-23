@@ -435,7 +435,9 @@ pub trait PreparedExt<Params> {
     ) -> impl std::future::Future<Output = Result<Option<Self::Output>>>;
 }
 
-impl<Params: PreparedParams, Output: DecodeRow> PreparedExt<Params> for Prepared<Params, Output> {
+impl<Params: PreparedParams, Output: DecodeRow> PreparedExt<Params>
+    for Prepared<Postgres, Params, Output>
+{
     type Output = Output;
 
     async fn load<'e, E: sqlx::PgExecutor<'e>>(
@@ -471,7 +473,7 @@ pub trait PreparedCountExt<Params> {
     ) -> impl std::future::Future<Output = Result<i64>>;
 }
 
-impl<Params: PreparedParams> PreparedCountExt<Params> for Prepared<Params, Total> {
+impl<Params: PreparedParams> PreparedCountExt<Params> for Prepared<Postgres, Params, Total> {
     async fn count<'e, E: sqlx::PgExecutor<'e>>(&self, executor: E, params: Params) -> Result<i64> {
         count_rows(executor, self.resolve(params)?).await
     }

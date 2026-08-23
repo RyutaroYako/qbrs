@@ -9,11 +9,14 @@
 //! query's scope like any other expression. Only the text between the slots
 //! is unchecked.
 //!
-//! That text is a *constant*, so a fragment's SQL shape is always a
-//! compile-time constant of the calling crate — runtime-assembled text
-//! cannot become SQL here. Every `?` in it is a slot; a literal `?` belongs
-//! in a slot's value, since MySQL and SQLite spell their own bind
-//! parameters the same way.
+//! `sql!` binds that text to a `const` first, so text assembled at runtime
+//! cannot reach SQL through this macro. The primitive it expands to,
+//! `expr::raw_expr`, takes a bare `&'static str` and has no such guard —
+//! `String::leak` reaches it. It is `#[doc(hidden)]` because `sql!` is the
+//! door; a caller who walks around it is writing the unchecked SQL
+//! themselves. Every `?` in the text is a slot; a literal `?` belongs in a
+//! slot's value, since MySQL and SQLite spell their own bind parameters the
+//! same way.
 
 /// `sql!(Bool, "lower(?) = ?", users::email, "dan")` -> an `Expr` over
 /// whatever tables its slots name. Slots are filled positionally, left to

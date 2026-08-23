@@ -138,8 +138,8 @@ of a schema puts them in that relation.
 `FromRow` is its own trait rather than `From`: the per-field lookup indices have nowhere to
 live in a foreign trait's fixed shape. Hence `into_struct`/`into_structs`.
 
-Two selections are compared by `row::SameShape` — same values *and* same names, in order, walked cell by cell so a
-selection wider than the positional view's 16 fields still compares.
+Two selections are compared by `row::SameShape` — one cell-by-cell walk checking name and
+value together, so a selection wider than the positional view's 16 fields still compares.
 Values alone would let a `UNION` branch or a CTE body whose columns merely happen to be
 type-compatible splice in transposed, and the result is then read by key. `SameNameAs`
 carries `#[diagnostic::do_not_recommend]` so the reported obligation is the two columns,
@@ -175,15 +175,21 @@ fine-grained: they were split precisely because MySQL has `RIGHT JOIN` but not `
 
 ### Embedded SQL goes through `Fragment`
 
-A subquery, a CTE body and a `UNION` branch are all the same thing: SQL rendered before its
-final placeholder numbering is known, because that depends on how much of the host query has
-been rendered. (`sql!{}` is *not* one of these — it stays an `ExprKind::Template`, so its
-slots render with everything else.) That's `render::Fragment` — carrying the text and its bind values
-together, spliced with `Fragment::splice_into`, which assigns the numbering.
+A CTE body and a `UNION` branch are the same thing: SQL rendered before its final
+placeholder numbering is known, because that depends on how much of the host query has been
+rendered. That's `render::Fragment` — text and bind values together, spliced with
+`Fragment::splice_into`, which assigns the numbering. `Select::fragment` is the only way to
+make one from a query, so no call site has to remember that an embedded query's placeholders
+are written by position and numbered later. Both carriers — `Cte<D, _>` and `SetOp<D, _>` —
+keep the dialect they were rendered in, which is what makes a fragment safe to hold.
 
-`Select::fragment` is the only way to make one from a query, so no call site has to remember
-that an embedded query's placeholders are written by position and numbered later. If you add another place that embeds SQL in a
-larger query, take a `Fragment`; don't reintroduce a bare `(String, Vec<Value>)` pair.
+An `EXISTS` subquery is deliberately *not* one: an `Expr` carries no dialect, so a rendered
+fragment inside one could be filtered onto a statement of another dialect. `ExprKind::Exists`
+holds the `SelectBody` and its selection unrendered, and `render_expr` writes it in the
+host statement's dialect. `sql!{}` is likewise an `ExprKind::Template`, its slots rendered
+with everything else. If you add another place that embeds a *query* in an expression, hold
+the query; if you add one that embeds SQL in a dialect-tagged builder, take a `Fragment` —
+don't reintroduce a bare `(String, Vec<Value>)` pair.
 
 Every clause that takes a condition goes through `select::Condition` and comes out a
 `Predicate<Scope>` — `.filter`, `.having`, and all four joins' `ON`, where the scope

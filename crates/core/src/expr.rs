@@ -8,7 +8,6 @@
 
 use std::marker::PhantomData;
 
-use crate::render::Fragment;
 use crate::scope::{Concat, Cons, MaybeNull, Nil, Table, WrapNullable};
 
 /// A SQL scalar type. Implemented only by the closed set of leaf types
@@ -50,9 +49,14 @@ pub(crate) enum ExprKind {
         expr: Box<ExprKind>,
         values: Vec<ExprKind>,
     },
-    /// An already-rendered piece of SQL embedded in this one: a subquery,
-    /// a CTE body, a set-operation branch.
-    Raw(Fragment),
+    /// `EXISTS (<subquery>)`. Held unrendered, because an `Expr` carries
+    /// no dialect: rendering it here would let a subquery written for one
+    /// dialect be filtered onto a statement of another.
+    Exists {
+        body: Box<crate::select::SelectBody>,
+        selection: Vec<crate::render::SelectItem>,
+        negated: bool,
+    },
     /// `sql!{}`: authored text with a hole at each `?`, each hole holding an
     /// expression the renderer recurses into — so a column in a hole is
     /// quoted by the same code that quotes it anywhere else, and counts

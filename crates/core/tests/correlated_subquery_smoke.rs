@@ -2,7 +2,7 @@
 //! reference outer columns with no machinery beyond what `Find`/`Superset`
 //! already do for ordinary joins?
 
-use qbrs_core::dialect::Postgres;
+use qbrs_core::dialect::{MySql, Postgres};
 use qbrs_core::expr::ExprMethods;
 use qbrs_core::scope::Table as TableTrait;
 use qbrs_core::select::select;
@@ -97,8 +97,8 @@ fn correlated_exists_references_outer_column() {
 #[test]
 fn correlated_subquery_with_bound_value_renumbers_correctly() {
     // The outer query also binds a literal value — proving the subquery's
-    // own `?`-then-renumber placeholder doesn't collide with the outer
-    // query's `$N` sequence (`Fragment`'s whole reason to exist).
+    // parameters take their numbers from the statement they end up in,
+    // rather than from the query they were written in.
     let outer = select((users::id,))
         .from::<Postgres, _>(users::Table)
         .filter(users::id.gt(0));
@@ -127,3 +127,29 @@ fn correlated_subquery_with_bound_value_renumbers_correctly() {
 //     let subquery = outer.correlated(orders::Table, (orders::user_id,));
 //     let _cond = subquery.filter(payments_amount.eq(1)).exists(); // error: Payments not in scope
 // }
+
+#[test]
+fn a_subquery_is_written_in_the_dialect_of_the_statement_it_lands_in() {
+    // An `Expr` carries no dialect, so an `EXISTS` is rendered by whoever
+    // renders the statement — never in the dialect its own builder had.
+    let inner = select((orders::user_id,)).from::<MySql, _>(orders::Table);
+
+    let (sql, _) = select((users::id,))
+        .from::<Postgres, _>(users::Table)
+        .filter(inner.exists())
+        .to_sql();
+    assert_eq!(
+        sql,
+        "SELECT \"users\".\"id\" FROM \"users\" WHERE (EXISTS (SELECT \"orders\".\"user_id\" FROM \"orders\"))"
+    );
+
+    let inner = select((orders::user_id,)).from::<Postgres, _>(orders::Table);
+    let (sql, _) = select((users::id,))
+        .from::<MySql, _>(users::Table)
+        .filter(inner.exists())
+        .to_sql();
+    assert_eq!(
+        sql,
+        "SELECT `users`.`id` FROM `users` WHERE (EXISTS (SELECT `orders`.`user_id` FROM `orders`))"
+    );
+}

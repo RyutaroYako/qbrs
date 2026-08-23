@@ -96,10 +96,11 @@ impl SupportsOnConflict for Postgres {}
 impl SupportsOnConflict for Sqlite {}
 
 /// `RIGHT JOIN` support. Every dialect this crate speaks has it (SQLite
-/// since 3.39, the minimum this crate targets), so the gate is open for all
-/// three today. It stays separate from `SupportsFullOuterJoin`, which MySQL
-/// genuinely lacks, and so that a dialect without `RIGHT JOIN` can be added
-/// without changing `right_join`'s signature.
+/// since 3.39, the minimum this crate targets), so this gate excludes
+/// nothing today — it is here so that `SupportsFullOuterJoin`, which MySQL
+/// genuinely lacks, is one capability rather than a pair of joins lumped
+/// together, and so that adding a dialect without `RIGHT JOIN` is a new
+/// impl rather than a change to `right_join`'s signature.
 #[diagnostic::on_unimplemented(
     message = "`{Self}` has no `RIGHT JOIN`",
     label = "swap the tables and use `.left_join(..)`, which every dialect has"

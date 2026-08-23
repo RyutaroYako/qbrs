@@ -16,16 +16,18 @@ pub trait PreparedParams {
 /// A query rendered once, with its `Value::Placeholder(name)` slots left
 /// unresolved, reusable across many `.load(executor, params)` calls. `load`
 /// takes the exact `Params` struct `prepare!{}` generated for this query, so
-/// a missing or mistyped value is a compile error.
+/// a missing or mistyped value is a compile error. The dialect it was
+/// rendered in stays in its type, so it can only be run by an executor of
+/// that dialect — the same rule `Select` and `DynSelect` follow.
 ///
 /// That holds as long as every placeholder came from `Params::field()`
 /// accessors of the same `prepare!{}` invocation, which is why the
 /// lower-level `expr::placeholder` is `#[doc(hidden)]`: a hand-written name
 /// that matches nothing fails at `.load()` time instead.
-pub struct Prepared<Params, Output> {
+pub struct Prepared<D, Params, Output> {
     sql: String,
     template: Vec<Value>,
-    _marker: PhantomData<fn() -> (Params, Output)>,
+    _marker: PhantomData<fn() -> (D, Params, Output)>,
 }
 
 impl<D, Scope, Sel> Select<D, Scope, Sel> {
@@ -33,7 +35,7 @@ impl<D, Scope, Sel> Select<D, Scope, Sel> {
     /// unresolved. `Output` is captured here, as `.erase()` does for
     /// `DynSelect`, so the execution layer can decode rows without `Sel`
     /// (and therefore `Scope`) still being around.
-    pub fn prepare<Params, Idx>(&self) -> Prepared<Params, Sel::Output>
+    pub fn prepare<Params, Idx>(&self) -> Prepared<D, Params, Sel::Output>
     where
         D: Dialect,
         Sel: Selection<Scope, Idx>,
@@ -51,7 +53,7 @@ impl<D, Scope, Sel> Select<D, Scope, Sel> {
     /// rendering for the page and one for the count. `Total` rather than
     /// `i64`: what a statement produces is what decides how it is run, and a
     /// total is a number, not a row.
-    pub fn prepare_count<Params, Idx>(&self) -> Prepared<Params, Total>
+    pub fn prepare_count<Params, Idx>(&self) -> Prepared<D, Params, Total>
     where
         D: Dialect,
         Sel: Selection<Scope, Idx>,
@@ -84,7 +86,7 @@ impl std::fmt::Display for UnresolvedPlaceholder {
 }
 impl std::error::Error for UnresolvedPlaceholder {}
 
-impl<Params: PreparedParams, Output> Prepared<Params, Output> {
+impl<D, Params: PreparedParams, Output> Prepared<D, Params, Output> {
     /// Substitutes every named placeholder with the matching value from
     /// `params`, producing the same `(String, Vec<Value>)` shape `to_sql()`
     /// returns.

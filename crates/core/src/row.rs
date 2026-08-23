@@ -27,7 +27,7 @@
 use std::marker::PhantomData;
 
 use crate::expr::{Column, ColumnKey, Keyed, Labeled, SqlType};
-use crate::scope::{Cons, Here, Nil, There};
+use crate::scope::{Here, There};
 
 /// The empty row.
 pub struct RowNil;
@@ -206,25 +206,6 @@ where
     }
 }
 
-/// A row's keys as a type-level list, so two rows can be checked against
-/// each other where only their shape is in play — a CTE body against its
-/// declared columns, or one `UNION` branch against another.
-pub trait RowKeys {
-    type Keys;
-}
-
-impl RowKeys for RowNil {
-    type Keys = Nil;
-}
-
-impl<K, V, Tail: RowKeys> RowKeys for RowCons<K, V, Tail> {
-    type Keys = Cons<K, Tail::Keys>;
-}
-
-impl<L: RowKeys> RowKeys for Row<L> {
-    type Keys = L::Keys;
-}
-
 /// One column can stand in for another: they are called the same thing.
 #[diagnostic::on_unimplemented(
     message = "column `{Self}` can't stand in for `{Other}`",
@@ -241,24 +222,6 @@ where
 {
 }
 
-/// Two key lists name the same columns, in the same order. Values are
-/// checked separately, by `RowValues`; this is what stops a body whose
-/// columns are merely type-compatible from being spliced in transposed.
-#[diagnostic::on_unimplemented(
-    message = "these columns don't line up by name",
-    label = "each column must have the same name, in the same order, as the one it stands in for"
-)]
-pub trait SameNames<Other> {}
-
-impl SameNames<Nil> for Nil {}
-
-impl<A, B, TailA, TailB> SameNames<Cons<B, TailB>> for Cons<A, TailA>
-where
-    A: SameNameAs<B>,
-    TailA: SameNames<TailB>,
-{
-}
-
 /// Two selections produce the same row: the same column names, in the same
 /// order, decoding to the same types. A one-column selection decodes to a
 /// bare value rather than a `Row`, and two of those match when the value
@@ -271,35 +234,20 @@ where
 )]
 pub trait SameShape<Other> {}
 
-/// The values half of `SameShape`, split out so a mismatch reports itself
-/// rather than surfacing as an associated-type equality failure inside the
-/// blanket impl below.
-#[diagnostic::on_unimplemented(
-    message = "these two selections don't decode to the same values",
-    label = "the same types, in the same order, are needed on both sides"
-)]
-pub trait SameValues<Other> {}
-
 // Walked cell by cell rather than compared as tuples: the positional view
 // stops at 16 fields, and two selections agree or don't regardless of how
-// wide they are.
-impl SameValues<RowNil> for RowNil {}
+// wide they are. No `do_not_recommend` on the cons impl — it is what keeps
+// the `SameNameAs` obligation the one that gets reported.
+impl SameShape<RowNil> for RowNil {}
 
-#[diagnostic::do_not_recommend]
-impl<K1, K2, V, Tail1, Tail2> SameValues<RowCons<K2, V, Tail2>> for RowCons<K1, V, Tail1> where
-    Tail1: SameValues<Tail2>
-{
-}
-
-impl<A, B> SameValues<Row<B>> for Row<A> where A: SameValues<B> {}
-
-impl<A, B> SameShape<Row<B>> for Row<A>
+impl<K1, K2, V, Tail1, Tail2> SameShape<RowCons<K2, V, Tail2>> for RowCons<K1, V, Tail1>
 where
-    Row<A>: SameValues<Row<B>> + RowKeys,
-    Row<B>: RowKeys,
-    <Row<A> as RowKeys>::Keys: SameNames<<Row<B> as RowKeys>::Keys>,
+    K1: SameNameAs<K2>,
+    Tail1: SameShape<Tail2>,
 {
 }
+
+impl<A, B> SameShape<Row<B>> for Row<A> where A: SameShape<B> {}
 
 /// Maps a value written in a selection list to the type its field is filed
 /// under, so a field is read back with the same value that selected it.
@@ -329,7 +277,9 @@ impl<K, Inner> RowKey for Labeled<K, Inner> {
 /// A value that can name a field at a `.get()`/`.take()` call. Every
 /// `RowKey` can *file* a field; only these can find one again, which is what
 /// keeps an unlabelled expression's `Anon` field out of reach of any other
-/// unlabelled expression.
+/// unlabelled expression. `RowKey where Key: Spelled` would say the same
+/// rule — this exists to carry the message below, which that bound reports
+/// as a bare missing `Spelled` impl on `Anon`.
 #[diagnostic::on_unimplemented(
     message = "`{Self}` doesn't name a field",
     label = "an unlabelled expression has no name to look up",

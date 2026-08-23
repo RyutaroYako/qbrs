@@ -28,14 +28,14 @@ pub use set_op::{Ordinal, OrdinalKey, SetOp, nth};
 
 /// One `name AS (body)` binding, carried in by the `Cte` a query was
 /// entered through.
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 struct CteDef {
     name: &'static str,
     column_names: &'static [&'static str],
     body: Fragment,
 }
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 enum JoinKind {
     Inner,
     Left,
@@ -43,7 +43,7 @@ enum JoinKind {
     Full,
 }
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 struct JoinClause {
     kind: JoinKind,
     table: &'static str,
@@ -373,8 +373,8 @@ impl<Sel> SelectSeed<Sel> {
 /// keeps typed and `DynSelect` keeps rendered. Held whole by both, so a new
 /// clause is added here once instead of being threaded through each of them
 /// and through rendering by hand.
-#[derive(Clone)]
-pub(super) struct SelectBody {
+#[derive(Debug, Clone)]
+pub(crate) struct SelectBody {
     ctes: Vec<CteDef>,
     distinct: bool,
     from_table: &'static str,
@@ -693,7 +693,7 @@ impl<D: Dialect, Scope, Sel, Outer> Select<D, Scope, Sel, Outer> {
 }
 
 impl SelectBody {
-    pub(super) fn render_into<D: Dialect>(&self, selection: &[SelectItem], sink: &mut dyn Sink) {
+    pub(crate) fn render_into<D: Dialect>(&self, selection: &[SelectItem], sink: &mut dyn Sink) {
         let SelectBody {
             ctes,
             distinct,
@@ -798,18 +798,22 @@ impl<D: Dialect, Scope, Sel, Outer: ScopeTables> Select<D, Scope, Sel, Outer> {
     where
         Sel: Selection<Scope, Idx>,
     {
-        Expr::from_kind(ExprKind::Raw(
-            self.fragment::<Idx>().enclosed_in("EXISTS (", ")"),
-        ))
+        Expr::from_kind(ExprKind::Exists {
+            body: Box::new(self.body.clone()),
+            selection: self.selection.items(),
+            negated: false,
+        })
     }
 
     pub fn not_exists<Idx>(&self) -> Expr<Outer::Tables, Bool>
     where
         Sel: Selection<Scope, Idx>,
     {
-        Expr::from_kind(ExprKind::Raw(
-            self.fragment::<Idx>().enclosed_in("NOT EXISTS (", ")"),
-        ))
+        Expr::from_kind(ExprKind::Exists {
+            body: Box::new(self.body.clone()),
+            selection: self.selection.items(),
+            negated: true,
+        })
     }
 }
 
@@ -830,10 +834,10 @@ pub trait IntoRowCount {
 
 /// What a `LIMIT`/`OFFSET` clause holds. Opaque: the `IntoRowCount` impls
 /// are the only way to make one.
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct RowCount(RowCountKind);
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 enum RowCountKind {
     /// Written into the SQL text: a page size is not a value the plan
     /// should be reused across.

@@ -149,13 +149,18 @@ pub(crate) fn render_expr<D: Dialect>(expr: &ExprKind, sink: &mut dyn Sink) {
             }
             sink.text("))");
         }
-        ExprKind::Raw(fragment) => {
-            // A fragment's internal precedence is unknown (it may be `a OR
-            // b`), so parenthesize: it must not change meaning when spliced
-            // into a larger AND/OR chain.
-            sink.ch('(');
-            fragment.splice_into(sink);
-            sink.ch(')');
+        ExprKind::Exists {
+            body,
+            selection,
+            negated,
+        } => {
+            sink.text(if *negated {
+                "(NOT EXISTS ("
+            } else {
+                "(EXISTS ("
+            });
+            body.render_into::<D>(selection, sink);
+            sink.text("))");
         }
         ExprKind::Template { head, rest } => {
             // Same defensive parentheses as an embedded fragment: authored
@@ -191,6 +196,7 @@ pub(crate) fn render_expr<D: Dialect>(expr: &ExprKind, sink: &mut dyn Sink) {
 }
 
 #[doc(hidden)]
+#[derive(Debug, Clone)]
 /// One item in a rendered `SELECT`/`RETURNING` list. `label` is `Some` only
 /// for an item given a `expr::LabelKey` label, which is the only thing that
 /// emits `AS`.
@@ -255,13 +261,6 @@ impl Fragment {
             Some((_, text)) => text,
             None => &mut self.head,
         }
-    }
-
-    /// Wraps the fragment in surrounding SQL, e.g. `EXISTS (`..`)`.
-    pub(crate) fn enclosed_in(mut self, before: &str, after: &str) -> Self {
-        self.head.insert_str(0, before);
-        self.tail().push_str(after);
-        self
     }
 
     /// Appends this fragment to whatever is being rendered, handing each of
