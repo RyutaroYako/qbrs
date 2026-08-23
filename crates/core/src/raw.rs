@@ -18,8 +18,9 @@
 //! slot's value, since MySQL and SQLite spell their own bind parameters the
 //! same way.
 
-/// `sql!(Bool, "lower(?) = ?", users::email, "dan")` -> an `Expr` over
-/// whatever tables its slots name. Slots are filled positionally, left to
+/// `sql!(Bool, "lower(?) = ?", users::email, "dan")` -> a `Declared`
+/// expression over whatever tables its slots name — keyed as `row::Anon`,
+/// so it is selectable but not readable by name until `.label(..)`. Slots are filled positionally, left to
 /// right.
 ///
 /// Every `?` in the text is a slot: there is no escape for a literal one,

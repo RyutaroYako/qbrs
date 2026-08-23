@@ -241,7 +241,7 @@ where
     type Output = Sel::Output;
 
     fn rendered(&self) -> (String, Vec<Value>) {
-        self.to_sql::<Idx>()
+        self.to_sql::<Idx>(Postgres)
     }
 }
 
@@ -282,7 +282,7 @@ impl<D, T: qbrs_core::scope::Table> CountExt for Delete<D, T> {}
 
 impl<Scope, Sel: Selection<Scope, Idx>, Idx> CountQuery<Idx> for Select<Postgres, Scope, Sel> {
     fn count_rendered(&self) -> (String, Vec<Value>) {
-        self.count_sql::<Idx>()
+        self.count_sql::<Idx>(Postgres)
     }
 }
 
@@ -291,13 +291,13 @@ impl<Scope, Sel: Selection<Scope, Idx>, Idx> CountQuery<Idx> for Select<Postgres
 /// goes for a set-operation chain.
 impl<Output> CountQuery<()> for DynSelect<Postgres, Output> {
     fn count_rendered(&self) -> (String, Vec<Value>) {
-        self.count_sql()
+        self.count_sql(Postgres)
     }
 }
 
 impl<Output> CountQuery<()> for SetOp<Postgres, Output> {
     fn count_rendered(&self) -> (String, Vec<Value>) {
-        self.count_sql()
+        self.count_sql(Postgres)
     }
 }
 
@@ -325,7 +325,7 @@ pub trait WriteStatement {
 #[diagnostic::do_not_recommend]
 impl<S: Statement<Dialect = Postgres>> WriteStatement for S {
     fn write_rendered(&self) -> (String, Vec<Value>) {
-        self.to_sql()
+        self.to_sql(Postgres)
     }
 }
 
@@ -361,7 +361,7 @@ where
 {
     type Output = Sel::Output;
     fn rendered(&self) -> (String, Vec<Value>) {
-        self.to_sql()
+        self.to_sql(Postgres)
     }
 }
 
@@ -438,14 +438,14 @@ impl<L: DecodeRow> DecodeRow for Row<L> {
 impl<Output: DecodeRow> RowQuery<()> for DynSelect<Postgres, Output> {
     type Output = Output;
     fn rendered(&self) -> (String, Vec<Value>) {
-        self.to_sql()
+        self.to_sql(Postgres)
     }
 }
 
 impl<Output: DecodeRow> RowQuery<()> for SetOp<Postgres, Output> {
     type Output = Output;
     fn rendered(&self) -> (String, Vec<Value>) {
-        self.to_sql()
+        self.to_sql(Postgres)
     }
 }
 
@@ -456,7 +456,7 @@ impl<Output: DecodeRow> RowQuery<()> for SetOp<Postgres, Output> {
 /// re-rendering it.
 #[diagnostic::on_unimplemented(
     message = "`{Self}` isn't a prepared query this crate can run",
-    label = "a `.prepare()`-built query is, and its `Params` have to be the ones it declared"
+    label = "a `.prepare()`-built query is — `Prepared<D, Params, Output>`, params before output — and its `Params` have to be the ones it declared"
 )]
 pub trait PreparedQuery<Params> {
     type Output: DecodeRow;

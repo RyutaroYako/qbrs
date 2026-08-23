@@ -28,6 +28,7 @@ mod users {
         use qbrs_core::expr::ColumnKey;
         #[derive(Clone, Copy)]
         pub struct id;
+        impl qbrs_core::expr::WritableSealed for id {}
         impl qbrs_core::expr::Writable for id {}
         impl ColumnKey for id {
             type Table = UsersMarker;
@@ -41,6 +42,7 @@ mod users {
         impl qbrs_core::row::Spelled for id {}
         #[derive(Clone, Copy)]
         pub struct email;
+        impl qbrs_core::expr::WritableSealed for email {}
         impl qbrs_core::expr::Writable for email {}
         impl ColumnKey for email {
             type Table = UsersMarker;
@@ -54,6 +56,7 @@ mod users {
         impl qbrs_core::row::Spelled for email {}
         #[derive(Clone, Copy)]
         pub struct display_name;
+        impl qbrs_core::expr::WritableSealed for display_name {}
         impl qbrs_core::expr::Writable for display_name {}
         impl ColumnKey for display_name {
             type Table = UsersMarker;
@@ -157,13 +160,13 @@ impl UpdateRow for UsersUpdate {
 
 #[test]
 fn a_set_list_can_be_expressions_alone() {
-    let (sql, params) = update::<Postgres, _>(users::Table)
+    let (sql, params) = update(users::Table)
         .set(Assignments::set_to(
             users::email,
             qbrs_core::sql!(qbrs_core::expr::Text, "lower(?)", users::email),
         ))
         .filter(users::id.eq(1))
-        .to_sql();
+        .to_sql(Postgres);
     assert_eq!(
         sql,
         "UPDATE \"users\" SET \"email\" = (lower(\"users\".\"email\")) WHERE (\"users\".\"id\" = $1)"
@@ -173,7 +176,7 @@ fn a_set_list_can_be_expressions_alone() {
 
 #[test]
 fn set_to_assigns_an_expression_and_appends_to_the_row() {
-    let (sql, params) = update::<Postgres, _>(users::Table)
+    let (sql, params) = update(users::Table)
         .set(
             Assignments::from_row(UsersUpdate {
                 email: Some("new@example.com".into()),
@@ -186,7 +189,7 @@ fn set_to_assigns_an_expression_and_appends_to_the_row() {
             qbrs_core::sql!(qbrs_core::expr::Text, "upper(?)", users::email),
         )
         .filter(users::id.eq(1))
-        .to_sql();
+        .to_sql(Postgres);
     assert_eq!(
         sql,
         "UPDATE \"users\" SET \"email\" = $1, \"display_name\" = (upper(\"users\".\"email\")) \
@@ -197,9 +200,9 @@ fn set_to_assigns_an_expression_and_appends_to_the_row() {
 
 #[test]
 fn insert_omits_default_as_the_default_keyword() {
-    let (sql, params) = insert::<Postgres, _>(users::Table)
+    let (sql, params) = insert(users::Table)
         .values(UsersInsert::builder().email("a@example.com").build())
-        .to_sql();
+        .to_sql(Postgres);
     assert_eq!(
         sql,
         "INSERT INTO \"users\" (\"email\", \"display_name\", \"created_at\") VALUES ($1, $2, DEFAULT)"
@@ -212,11 +215,11 @@ fn insert_omits_default_as_the_default_keyword() {
 
 #[test]
 fn insert_bulk_and_returning() {
-    let (sql, _params) = insert::<Postgres, _>(users::Table)
+    let (sql, _params) = insert(users::Table)
         .values(UsersInsert::builder().email("a@example.com").build())
         .values(UsersInsert::builder().email("b@example.com").build())
         .returning(users::id)
-        .to_sql();
+        .to_sql(Postgres);
     assert_eq!(
         sql,
         "INSERT INTO \"users\" (\"email\", \"display_name\", \"created_at\") VALUES ($1, $2, DEFAULT), ($3, $4, DEFAULT) RETURNING \"users\".\"id\""
@@ -225,14 +228,14 @@ fn insert_bulk_and_returning() {
 
 #[test]
 fn values_all_appends_to_a_statement_that_already_has_a_row() {
-    let (sql, params) = insert::<Postgres, _>(users::Table)
+    let (sql, params) = insert(users::Table)
         .values(UsersInsert::builder().email("a@example.com").build())
         .values_all(
             ["b@example.com", "c@example.com"]
                 .into_iter()
                 .map(|email| UsersInsert::builder().email(email).build()),
         )
-        .to_sql();
+        .to_sql(Postgres);
     assert_eq!(
         sql,
         "INSERT INTO \"users\" (\"email\", \"display_name\", \"created_at\") VALUES ($1, $2, DEFAULT), ($3, $4, DEFAULT), ($5, $6, DEFAULT)"
@@ -248,7 +251,7 @@ fn an_update_that_sets_nothing_is_an_error_not_a_panic() {
 
 #[test]
 fn update_only_touches_set_fields() {
-    let (sql, params) = update::<Postgres, _>(users::Table)
+    let (sql, params) = update(users::Table)
         .set(
             Assignments::from_row(UsersUpdate {
                 email: Some("new@example.com".into()),
@@ -257,7 +260,7 @@ fn update_only_touches_set_fields() {
             .expect("email is set"),
         )
         .filter(users::id.eq(1))
-        .to_sql();
+        .to_sql(Postgres);
     assert_eq!(
         sql,
         "UPDATE \"users\" SET \"email\" = $1 WHERE (\"users\".\"id\" = $2)"
@@ -270,10 +273,10 @@ fn update_only_touches_set_fields() {
 
 #[test]
 fn upsert_do_nothing_renders_conflict_target() {
-    let (sql, params) = insert::<Postgres, _>(users::Table)
+    let (sql, params) = insert(users::Table)
         .values(UsersInsert::builder().email("a@example.com").build())
         .on_conflict_do_nothing(users::email)
-        .to_sql();
+        .to_sql(Postgres);
     assert_eq!(
         sql,
         "INSERT INTO \"users\" (\"email\", \"display_name\", \"created_at\") VALUES ($1, $2, DEFAULT) ON CONFLICT (\"email\") DO NOTHING"
@@ -286,7 +289,7 @@ fn upsert_do_nothing_renders_conflict_target() {
 
 #[test]
 fn upsert_do_update_reuses_update_row_and_supports_returning() {
-    let (sql, params) = insert::<Postgres, _>(users::Table)
+    let (sql, params) = insert(users::Table)
         .values(UsersInsert::builder().email("a@example.com").build())
         .on_conflict_do_update(
             users::email,
@@ -297,7 +300,7 @@ fn upsert_do_update_reuses_update_row_and_supports_returning() {
             .expect("display_name is set"),
         )
         .returning(users::id)
-        .to_sql();
+        .to_sql(Postgres);
     assert_eq!(
         sql,
         "INSERT INTO \"users\" (\"email\", \"display_name\", \"created_at\") VALUES ($1, $2, DEFAULT) \
@@ -315,9 +318,9 @@ fn upsert_do_update_reuses_update_row_and_supports_returning() {
 
 #[test]
 fn delete_renders_where() {
-    let (sql, params) = delete::<Postgres, _>(users::Table)
+    let (sql, params) = delete(users::Table)
         .filter(users::id.eq(1))
-        .to_sql();
+        .to_sql(Postgres);
     assert_eq!(sql, "DELETE FROM \"users\" WHERE (\"users\".\"id\" = $1)");
     assert_eq!(params, vec![Value::I32(1)]);
 }

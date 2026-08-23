@@ -32,6 +32,7 @@ mod users {
         use qbrs_core::expr::ColumnKey;
         #[derive(Clone, Copy)]
         pub struct id;
+        impl qbrs_core::expr::WritableSealed for id {}
         impl qbrs_core::expr::Writable for id {}
         impl ColumnKey for id {
             type Table = UsersMarker;
@@ -45,6 +46,7 @@ mod users {
         impl qbrs_core::row::Spelled for id {}
         #[derive(Clone, Copy)]
         pub struct email;
+        impl qbrs_core::expr::WritableSealed for email {}
         impl qbrs_core::expr::Writable for email {}
         impl ColumnKey for email {
             type Table = UsersMarker;
@@ -74,6 +76,7 @@ mod archived_users {
         use qbrs_core::expr::ColumnKey;
         #[derive(Clone, Copy)]
         pub struct id;
+        impl qbrs_core::expr::WritableSealed for id {}
         impl qbrs_core::expr::Writable for id {}
         impl ColumnKey for id {
             type Table = ArchivedUsersMarker;
@@ -87,6 +90,7 @@ mod archived_users {
         impl qbrs_core::row::Spelled for id {}
         #[derive(Clone, Copy)]
         pub struct email;
+        impl qbrs_core::expr::WritableSealed for email {}
         impl qbrs_core::expr::Writable for email {}
         impl ColumnKey for email {
             type Table = ArchivedUsersMarker;
@@ -110,13 +114,13 @@ fn union_combines_two_different_scopes_and_renumbers_params() {
     // renumbered across the splice, not just copied verbatim (which would
     // collide on `$1` twice).
     let live = select((users::id, users::email))
-        .from::<Postgres, _>(users::Table)
+        .from(users::Table)
         .filter(users::id.gt(10));
     let archived = select((archived_users::id, archived_users::email))
-        .from::<Postgres, _>(archived_users::Table)
+        .from(archived_users::Table)
         .filter(archived_users::id.gt(20));
 
-    let (sql, params) = live.union(&archived).to_sql();
+    let (sql, params) = live.union(&archived).to_sql(Postgres);
     assert_eq!(
         sql,
         "(SELECT \"users\".\"id\", \"users\".\"email\" FROM \"users\" WHERE (\"users\".\"id\" > $1)) \
@@ -134,12 +138,14 @@ fn union_combines_two_different_scopes_and_renumbers_params() {
 
 #[test]
 fn counting_a_set_op_drops_its_own_paging_but_not_its_branches() {
-    let live = select((users::id,))
-        .from::<Postgres, _>(users::Table)
-        .limit(5);
-    let archived = select((archived_users::id,)).from::<Postgres, _>(archived_users::Table);
+    let live = select((users::id,)).from(users::Table).limit(5);
+    let archived = select((archived_users::id,)).from(archived_users::Table);
 
-    let (sql, _params) = live.union(&archived).limit(10).offset(20).count_sql();
+    let (sql, _params) = live
+        .union(&archived)
+        .limit(10)
+        .offset(20)
+        .count_sql(Postgres);
     assert_eq!(
         sql,
         "SELECT count(*) FROM ((SELECT \"users\".\"id\" FROM \"users\" LIMIT 5) \
@@ -170,19 +176,19 @@ fn a_wide_selection_can_still_be_a_branch() {
         users::id,
         users::email,
     ))
-    .from::<Postgres, _>(users::Table);
+    .from(users::Table);
     let right = left.clone();
 
-    let (sql, _params) = left.union(&right).to_sql();
+    let (sql, _params) = left.union(&right).to_sql(Postgres);
     assert!(sql.contains(" UNION "), "{sql}");
 }
 
 #[test]
 fn one_column_branches_match_on_their_value_type_alone() {
-    let live = select(users::email).from::<Postgres, _>(users::Table);
-    let archived = select(archived_users::email).from::<Postgres, _>(archived_users::Table);
+    let live = select(users::email).from(users::Table);
+    let archived = select(archived_users::email).from(archived_users::Table);
 
-    let (sql, _params) = live.union(&archived).to_sql();
+    let (sql, _params) = live.union(&archived).to_sql(Postgres);
     assert_eq!(
         sql,
         "(SELECT \"users\".\"email\" FROM \"users\") \
@@ -193,29 +199,29 @@ fn one_column_branches_match_on_their_value_type_alone() {
 
 #[test]
 fn union_all_intersect_except_use_their_own_keywords() {
-    let a = select((users::id,)).from::<Postgres, _>(users::Table);
-    let b = select((archived_users::id,)).from::<Postgres, _>(archived_users::Table);
+    let a = select((users::id,)).from(users::Table);
+    let b = select((archived_users::id,)).from(archived_users::Table);
 
     assert_eq!(
-        a.union_all(&b).to_sql().0,
+        a.union_all(&b).to_sql(Postgres).0,
         "(SELECT \"users\".\"id\" FROM \"users\") UNION ALL (SELECT \"archived_users\".\"id\" FROM \"archived_users\")"
     );
     assert_eq!(
-        a.intersect(&b).to_sql().0,
+        a.intersect(&b).to_sql(Postgres).0,
         "(SELECT \"users\".\"id\" FROM \"users\") INTERSECT (SELECT \"archived_users\".\"id\" FROM \"archived_users\")"
     );
     assert_eq!(
-        a.except(&b).to_sql().0,
+        a.except(&b).to_sql(Postgres).0,
         "(SELECT \"users\".\"id\" FROM \"users\") EXCEPT (SELECT \"archived_users\".\"id\" FROM \"archived_users\")"
     );
 }
 
 #[test]
 fn chained_set_ops_and_ordinal_order_by_limit_offset() {
-    let a = select((users::id,)).from::<Postgres, _>(users::Table);
-    let b = select((archived_users::id,)).from::<Postgres, _>(archived_users::Table);
+    let a = select((users::id,)).from(users::Table);
+    let b = select((archived_users::id,)).from(archived_users::Table);
     let c = select((users::id,))
-        .from::<Postgres, _>(users::Table)
+        .from(users::Table)
         .filter(users::id.eq(1));
 
     let (sql, params) = a
@@ -224,7 +230,7 @@ fn chained_set_ops_and_ordinal_order_by_limit_offset() {
         .order_by(qbrs_core::select::nth(1).desc())
         .limit(5)
         .offset(2)
-        .to_sql();
+        .to_sql(Postgres);
     assert_eq!(
         sql,
         "(SELECT \"users\".\"id\" FROM \"users\") \
@@ -239,15 +245,14 @@ fn chained_set_ops_and_ordinal_order_by_limit_offset() {
 fn a_set_operation_can_be_ordered_by_a_column_instead_of_a_number() {
     // The position is the row's own index for that key, so a column the
     // combined result doesn't select can't be named here.
-    let a = select((users::id, users::email)).from::<Postgres, _>(users::Table);
-    let b = select((archived_users::id, archived_users::email))
-        .from::<Postgres, _>(archived_users::Table);
+    let a = select((users::id, users::email)).from(users::Table);
+    let b = select((archived_users::id, archived_users::email)).from(archived_users::Table);
 
     let (sql, _) = a
         .union(&b)
         .order_by_column(users::email, qbrs_core::expr::SortDir::Desc)
         .order_by_column(users::id, qbrs_core::expr::SortDir::Asc)
-        .to_sql();
+        .to_sql(Postgres);
     assert_eq!(
         sql,
         "(SELECT \"users\".\"id\", \"users\".\"email\" FROM \"users\") \
@@ -264,7 +269,7 @@ fn a_set_operation_can_be_ordered_by_a_column_instead_of_a_number() {
 //
 // #[test]
 // fn mismatched_output_shape_is_a_compile_error() {
-//     let a = select((users::email,)).from::<Postgres, _>(users::Table);
-//     let b = select((archived_users::id,)).from::<Postgres, _>(archived_users::Table);
+//     let a = select((users::email,)).from(users::Table);
+//     let b = select((archived_users::id,)).from(archived_users::Table);
 //     let _ = a.union(&b); // error[E0271]: type mismatch resolving `<... as Selection<...>>::Output == (String,)`
 // }

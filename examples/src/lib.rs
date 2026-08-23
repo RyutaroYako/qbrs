@@ -5,7 +5,6 @@ use qbrs::Table;
 
 #[derive(Table)]
 #[table(name = "users")]
-#[allow(dead_code)]
 pub struct Users {
     #[column(primary_key, generated)]
     pub id: i64,
@@ -17,7 +16,6 @@ pub struct Users {
 
 #[derive(Table)]
 #[table(name = "orders")]
-#[allow(dead_code)]
 pub struct Orders {
     #[column(primary_key, generated)]
     pub id: i64,

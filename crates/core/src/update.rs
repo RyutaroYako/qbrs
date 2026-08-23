@@ -188,6 +188,28 @@ impl<D, T: Table> Update<D, T> {
     /// Only columns of the table being updated are ever in scope for the
     /// `WHERE` clause here, so the `Superset` check is against a
     /// single-table scope rather than a full query `Scope`.
+    /// A correlated subquery over the table this statement writes — the
+    /// same `EXISTS` a `SELECT` builds with `Select::correlated`, against
+    /// the one-table scope a write statement has.
+    pub fn correlated<S, InnerSel>(
+        &self,
+        source: S,
+        selection: InnerSel,
+    ) -> crate::select::Select<
+        D,
+        crate::scope::Cons<
+            crate::scope::TableSlot<S::Table, crate::scope::NotNull>,
+            WrittenTable<T>,
+        >,
+        InnerSel,
+        WrittenTable<T>,
+    >
+    where
+        S: crate::select::JoinSource<D>,
+    {
+        crate::select::correlated_with(source, selection)
+    }
+
     pub fn filter<C: Condition<D, WrittenTable<T>, Idxs>, Idxs>(mut self, cond: C) -> Self {
         self.wheres.push(cond.into_predicate().into_kind());
         self

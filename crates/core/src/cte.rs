@@ -32,6 +32,11 @@ use crate::select::{Select, Selection};
 /// (`WITH name (col1, col2) AS (..)`), so the outer query refers to the
 /// declared names rather than to whatever Postgres would have called the
 /// body's columns.
+#[diagnostic::on_unimplemented(
+    message = "`{Self}` isn't a `with!{{}}` pseudo-table",
+    label = "only a `with!{{}}`-declared name can be bound as a CTE",
+    note = "a schema table is already a table — it is selected from directly, with no `WITH` clause to bind"
+)]
 pub trait CteShape: Table + crate::select::SelectableSealed {
     /// The declared columns as a row — the same `RowCons` chain a selection
     /// produces, so a body is checked against it by the one comparison

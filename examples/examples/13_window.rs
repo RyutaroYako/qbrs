@@ -79,13 +79,14 @@ async fn main() {
         );
     }
 
-    // `rank()` leaves a gap after ties (unlike `row_number()`, which never
-    // ties) — not demonstrated with real ties here since the seed data has
-    // none, but the same query shape applies.
+    // `rank()` leaves a gap after ties where `dense_rank()` doesn't — with
+    // no ties in the seed data the two agree, but they are different
+    // functions and both are selectable in the same row.
     let overall = select((
         users::email,
         orders::total,
         rank().over(window().order_by(orders::total.desc())),
+        dense_rank().over(window().order_by(orders::total.desc())),
     ))
     .from(users::Table)
     .inner_join(orders::Table, orders::user_id.eq(users::id))
@@ -94,6 +95,12 @@ async fn main() {
     .expect("overall rank");
     println!("\noverall order rank across all users:");
     for row in &overall {
-        println!("  {} {} {}", row.email(), row.total(), row.rank());
+        println!(
+            "  {} {} rank={} dense_rank={}",
+            row.email(),
+            row.total(),
+            row.rank(),
+            row.dense_rank()
+        );
     }
 }

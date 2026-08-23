@@ -43,7 +43,7 @@ async fn prepared_query_reused_across_different_params() {
     .await
     .expect("create table");
 
-    let ids: Vec<i64> = qbrs::insert::insert::<Postgres, _>(users::Table)
+    let ids: Vec<i64> = qbrs::insert::insert(users::Table)
         .values(UsersInsert::builder().email("ada@example.com").build())
         .values(UsersInsert::builder().email("dan@example.com").build())
         .returning(users::id)
@@ -53,9 +53,9 @@ async fn prepared_query_reused_across_different_params() {
     assert_eq!(ids.len(), 2);
 
     let query = select(users::id)
-        .from::<Postgres, _>(users::Table)
+        .from(users::Table)
         .filter(users::email.eq(ByEmail::email()))
-        .prepare::<ByEmail, _>();
+        .prepare::<ByEmail, _>(Postgres);
 
     let ada: Vec<i64> = query
         .load(

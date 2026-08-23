@@ -154,7 +154,8 @@ impl<D, Marker: crate::cte::CteShape> JoinSource<D> for Cte<D, Marker> {
 /// pair `Condition` makes for `.filter`.
 #[diagnostic::on_unimplemented(
     message = "`{Self}` isn't a sort key",
-    label = "a column or expression with `.asc()`/`.desc()`/`.sort(dir)` on it, or a `sort_key(..)`"
+    label = "a column or expression with `.asc()`/`.desc()`/`.sort(dir)` on it, or a `sort_key(..)`",
+    note = "a `SortKey` also has to have been discharged against *this* scope — a scope lists its tables most-recently-joined first, so two that look alike can still differ in order"
 )]
 pub trait SortBy<Scope, Idxs> {
     #[doc(hidden)]
@@ -181,7 +182,8 @@ impl<Scope> SortBy<Scope, ()> for SortKey<Scope> {
 /// `grouping(..)` already discharged against it.
 #[diagnostic::on_unimplemented(
     message = "`{Self}` isn't a grouping key",
-    label = "a column or expression, or a `grouping(..)`"
+    label = "a column or expression, or a `grouping(..)`",
+    note = "a `Grouping` also has to have been discharged against *this* scope — a scope lists its tables most-recently-joined first, so two that look alike can still differ in order"
 )]
 pub trait GroupBy<Scope, Idxs> {
     #[doc(hidden)]
@@ -381,7 +383,7 @@ pub fn predicate<D, Scope, Idxs, C: Condition<D, Scope, Idxs>>(cond: C) -> Predi
 /// than requiring `Scope` be known at `.select(..)` time) is what lets the
 /// builder read in `SELECT -> FROM -> ...` order while still validating
 /// every selected column against the *final* scope only once, at the
-/// query's terminal method (`.to_sql()`/`.load()`).
+/// query's terminal method (`.to_sql(Postgres)`/`.load()`).
 pub struct SelectSeed<Sel> {
     selection: Sel,
 }
@@ -684,7 +686,12 @@ impl<D: Dialect, Scope, Sel> Select<D, Scope, Sel> {
     /// The terminal step, and the *only* point each selected column's
     /// scope-membership is checked — proven as a side effect of
     /// `Sel: Selection<Scope, Idx>` type-checking at all.
-    pub fn to_sql<Idx>(&self) -> (String, Vec<Value>)
+    ///
+    /// The dialect is an argument rather than a turbofish, so a query that
+    /// is rendered instead of executed says which SQL it wants in the one
+    /// place that decides — and everything before it infers, the way a
+    /// table or a column does.
+    pub fn to_sql<Idx>(&self, _dialect: D) -> (String, Vec<Value>)
     where
         Sel: Selection<Scope, Idx>,
     {
@@ -699,7 +706,7 @@ impl<D: Dialect, Scope, Sel> Select<D, Scope, Sel> {
     /// A grouped query counts its *groups*, since that is what a page of it
     /// would show, so the body becomes a subquery rather than having its
     /// `GROUP BY` dropped or kept.
-    pub fn count_sql<Idx>(&self) -> (String, Vec<Value>)
+    pub fn count_sql<Idx>(&self, _dialect: D) -> (String, Vec<Value>)
     where
         Sel: Selection<Scope, Idx>,
     {
@@ -803,6 +810,23 @@ impl SelectBody {
     }
 }
 
+/// Starts a correlated subquery against a scope, rather than against a
+/// query — so `UPDATE`/`DELETE`, whose scope is the one table they write,
+/// reach the same `EXISTS` a `SELECT` does without conjuring a `Select`
+/// they don't otherwise need.
+pub fn correlated_with<D, Scope, S: JoinSource<D>, InnerSel>(
+    source: S,
+    selection: InnerSel,
+) -> Select<D, Cons<TableSlot<S::Table, NotNull>, Scope>, InnerSel, Scope> {
+    let mut body = SelectBody::new(<S::Table as Table>::NAME);
+    body.bind(source);
+    Select {
+        body,
+        selection,
+        _marker: PhantomData,
+    }
+}
+
 impl<D, Scope, Sel, Outer> Select<D, Scope, Sel, Outer> {
     /// Starts a correlated subquery: a fresh `SELECT` whose scope is
     /// `Cons<TableSlot<T, NotNull>, Scope>` — the new table, prepended onto
@@ -821,13 +845,7 @@ impl<D, Scope, Sel, Outer> Select<D, Scope, Sel, Outer> {
         source: S,
         selection: InnerSel,
     ) -> Select<D, Cons<TableSlot<S::Table, NotNull>, Scope>, InnerSel, Scope> {
-        let mut body = SelectBody::new(<S::Table as Table>::NAME);
-        body.bind(source);
-        Select {
-            body,
-            selection,
-            _marker: PhantomData,
-        }
+        correlated_with(source, selection)
     }
 }
 
@@ -911,7 +929,7 @@ macro_rules! into_row_count {
 }
 into_row_count!(i8, i16, i32, i64, isize ; u8, u16, u32, u64, usize);
 
-/// A `prepare!{}` placeholder, or any other scope-free integer expression:
+/// A `prepare!{}` placeholder, or any other scope-free `Expr` of an integer type:
 /// bound rather than written, so one prepared query serves every page. Only
 /// the two integer types — a page is a number.
 impl IntoRowCount for Expr<Nil, crate::expr::Integer> {

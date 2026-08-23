@@ -22,14 +22,14 @@ async fn main() {
     let query = select((users::id, users::display_name))
         .from(users::Table)
         .filter(users::email.eq(ByEmail::email()))
-        .prepare::<ByEmail, _>();
+        .prepare::<ByEmail, _>(Postgres);
 
     // The same query prepared as its own total: one rendering for the page,
     // one for the count, and the page size bound rather than baked in.
     let total = select((users::id,))
         .from(users::Table)
         .filter(users::email.eq(ByEmail::email()))
-        .prepare_count::<ByEmail, _>();
+        .prepare_count::<ByEmail, _>(Postgres);
 
     for email in [
         "ada@example.com",

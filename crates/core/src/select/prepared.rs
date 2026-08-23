@@ -37,7 +37,7 @@ impl<D, Scope, Sel> Select<D, Scope, Sel> {
     /// unresolved. `Output` is captured here, as `.erase()` does for
     /// `DynSelect`, so the execution layer can decode rows without `Sel`
     /// (and therefore `Scope`) still being around.
-    pub fn prepare<Params, Idx>(&self) -> Prepared<D, Params, Sel::Output>
+    pub fn prepare<Params, Idx>(&self, _dialect: D) -> Prepared<D, Params, Sel::Output>
     where
         D: Dialect,
         Sel: Selection<Scope, Idx>,
@@ -55,12 +55,12 @@ impl<D, Scope, Sel> Select<D, Scope, Sel> {
     /// rendering for the page and one for the count. `Total` rather than
     /// `i64`: what a statement produces is what decides how it is run, and a
     /// total is a number, not a row.
-    pub fn prepare_count<Params, Idx>(&self) -> Prepared<D, Params, Total>
+    pub fn prepare_count<Params, Idx>(&self, _dialect: D) -> Prepared<D, Params, Total>
     where
         D: Dialect,
         Sel: Selection<Scope, Idx>,
     {
-        let (sql, template) = self.count_sql::<Idx>();
+        let (sql, template) = self.count_sql::<Idx>(D::default());
         Prepared {
             sql,
             template,

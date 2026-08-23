@@ -93,6 +93,26 @@ impl<I: Position> Position for There<I> {
     const POSITION: u32 = I::POSITION + 1;
 }
 
+/// What a proof trait's `Proof` associated type must be, and only this
+/// crate can name it. Sealing by supertrait would not work here: the lying
+/// impl's `Self` is `Cons`, which any seal on `Self` already admits. What
+/// has to be unnameable is the proof itself.
+///
+/// This matters because `Find<T, _>`/`row::Field<K, _>` take the *caller's*
+/// table or column marker as a bare trait parameter, so the orphan rule
+/// licenses a schema crate to write `impl Find<orders::Table, Here> for
+/// <a scope without orders>` — and with it, the compile error this crate
+/// exists to produce.
+pub(crate) mod proof {
+    pub trait Sealed {}
+
+    /// The one inhabitant, constructible nowhere: a proof is a type-level
+    /// fact, never a value.
+    pub enum Proof {}
+
+    impl Sealed for Proof {}
+}
+
 /// Proof that table `T` appears somewhere in a scope list, found at
 /// compile-time-inferred position `Index`. `Index` is never spelled out by
 /// callers — it's inferred, exactly like frunk's `Plucker` — and it's what
@@ -103,12 +123,16 @@ impl<I: Position> Position for There<I> {
     note = "columns can only be referenced once their table has been joined into the current FROM/JOIN scope — and in a generic helper give each table its own `Idx` parameter, since one shared index matches no scope"
 )]
 pub trait Find<T: Table, Index> {
+    #[doc(hidden)]
+    type Proof: proof::Sealed;
+
     /// The nullability `T` has in this scope (derived from how it was
     /// joined, not asserted manually).
     type Nullability: Nullability;
 }
 
 impl<T: Table, N: Nullability, Tail> Find<T, Here> for Cons<TableSlot<T, N>, Tail> {
+    type Proof = proof::Proof;
     type Nullability = N;
 }
 
@@ -117,6 +141,7 @@ impl<T: Table, Head, Tail, I> Find<T, There<I>> for Cons<Head, Tail>
 where
     Tail: Find<T, I>,
 {
+    type Proof = proof::Proof;
     type Nullability = <Tail as Find<T, I>>::Nullability;
 }
 

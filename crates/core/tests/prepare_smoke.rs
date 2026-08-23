@@ -25,6 +25,7 @@ mod users {
         use qbrs_core::expr::ColumnKey;
         #[derive(Clone, Copy)]
         pub struct email;
+        impl qbrs_core::expr::WritableSealed for email {}
         impl qbrs_core::expr::Writable for email {}
         impl ColumnKey for email {
             type Table = UsersMarker;
@@ -48,9 +49,9 @@ prepare! {
 #[test]
 fn prepared_query_resolves_named_placeholder() {
     let query = select((users::email,))
-        .from::<Postgres, _>(users::Table)
+        .from(users::Table)
         .filter(users::email.eq(ByEmail::email()))
-        .prepare::<ByEmail, _>();
+        .prepare::<ByEmail, _>(Postgres);
 
     let (sql, params) = query
         .resolve(ByEmail {
@@ -88,9 +89,9 @@ fn missing_placeholder_is_a_typed_error_not_a_panic() {
     // mismatch is a recoverable `Result::Err`, not a panic.
     let bogus = qbrs_core::expr::placeholder::<Text>("not_email");
     let query = select((users::email,))
-        .from::<Postgres, _>(users::Table)
+        .from(users::Table)
         .filter(users::email.eq(bogus))
-        .prepare::<ByEmail, _>();
+        .prepare::<ByEmail, _>(Postgres);
 
     let err = query
         .resolve(ByEmail {
@@ -110,9 +111,9 @@ fn a_query_run_with_another_prepare_structs_params_is_refused() {
     // the placeholder names carry where they were declared, so it can't
     // bind one struct's value into another's slot.
     let query = select((users::email,))
-        .from::<Postgres, _>(users::Table)
+        .from(users::Table)
         .filter(users::email.eq(ByEmail::email()))
-        .prepare::<ByOtherEmail, _>();
+        .prepare::<ByOtherEmail, _>(Postgres);
 
     let resolved = query.resolve(ByOtherEmail {
         email: "a@example.com".into(),

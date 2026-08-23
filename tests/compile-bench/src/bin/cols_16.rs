@@ -35,8 +35,8 @@ fn main() {
     let (sql, _) = select((
         c00, c01, c02, c03, c04, c05, c06, c07, c08, c09, c10, c11, c12, c13, c14, c15,
     ))
-    .from::<Postgres, _>(T00)
-    .to_sql();
+    .from(T00)
+    .to_sql(Postgres);
     assert!(sql.starts_with("SELECT "));
 
     assert_field::<Fields, columns::c00, _>(); // best case: head of the list

@@ -10,7 +10,6 @@
 mod common;
 
 use qbrs::Table;
-use qbrs::dialect::Postgres;
 use qbrs::expr::ExprMethods;
 use qbrs::row::{IntoStructs, IntoTuples};
 use qbrs::select::{OrderExt, select};
@@ -89,7 +88,7 @@ async fn full_crud_roundtrip_against_real_postgres() {
     .expect("create orders table");
 
     // INSERT .. RETURNING
-    let inserted_ids: Vec<i64> = qbrs::insert::insert::<Postgres, _>(users::Table)
+    let inserted_ids: Vec<i64> = qbrs::insert::insert(users::Table)
         .values(
             UsersInsert::builder()
                 .email("ada@example.com")
@@ -105,7 +104,7 @@ async fn full_crud_roundtrip_against_real_postgres() {
     let ada_id = inserted_ids[0];
     let dan_id = inserted_ids[1];
 
-    qbrs::insert::insert::<Postgres, _>(orders::Table)
+    qbrs::insert::insert(orders::Table)
         .values(OrdersInsert::builder().user_id(ada_id).total(1000).build())
         .values(OrdersInsert::builder().user_id(ada_id).total(2500).build())
         .execute(&pool)
@@ -114,7 +113,7 @@ async fn full_crud_roundtrip_against_real_postgres() {
 
     // Plain SELECT with WHERE + ORDER BY + LIMIT
     let names: Vec<String> = select(users::email)
-        .from::<Postgres, _>(users::Table)
+        .from(users::Table)
         .filter(users::active.eq(true))
         .order_by(users::id.asc())
         .limit(10)
@@ -129,7 +128,7 @@ async fn full_crud_roundtrip_against_real_postgres() {
     // LEFT JOIN — dan has no orders, so his row's total must come back NULL,
     // proving the join actually reaches Postgres and NULL round-trips.
     let mut rows: Vec<(String, Option<i64>)> = select((users::email, orders::total))
-        .from::<Postgres, _>(users::Table)
+        .from(users::Table)
         .left_join(orders::Table, orders::user_id.eq(users::id))
         .order_by(users::id.asc())
         .load(&pool)
@@ -142,7 +141,7 @@ async fn full_crud_roundtrip_against_real_postgres() {
     assert!(rows.contains(&("ada@example.com".to_string(), Some(2500))));
 
     // UPDATE
-    let affected = qbrs::update::update::<Postgres, _>(users::Table)
+    let affected = qbrs::update::update(users::Table)
         .set(
             Assignments::from_row(UsersUpdate {
                 display_name: Some(Some("Ada Lovelace".into())),
@@ -157,7 +156,7 @@ async fn full_crud_roundtrip_against_real_postgres() {
     assert_eq!(affected, 1);
 
     let updated_name: Option<Option<String>> = select(users::display_name)
-        .from::<Postgres, _>(users::Table)
+        .from(users::Table)
         .filter(users::id.eq(ada_id))
         .load_one(&pool)
         .await
@@ -167,7 +166,7 @@ async fn full_crud_roundtrip_against_real_postgres() {
     // Whole-table selection, decoded into the schema struct itself: the
     // column list is the derive's, so it cannot drift from the table.
     let whole: Vec<UserRow> = select(users::All)
-        .from::<Postgres, _>(users::Table)
+        .from(users::Table)
         .filter(users::id.eq(ada_id))
         .load(&pool)
         .await
@@ -180,7 +179,7 @@ async fn full_crud_roundtrip_against_real_postgres() {
     // The nullable side of a LEFT JOIN reaches the row as `Option`, one
     // whole table at a time.
     let joined = select((users::email, orders::All))
-        .from::<Postgres, _>(users::Table)
+        .from(users::Table)
         .left_join(orders::Table, orders::user_id.eq(users::id))
         .filter(users::id.eq(dan_id))
         .load_one(&pool)
@@ -191,7 +190,7 @@ async fn full_crud_roundtrip_against_real_postgres() {
     assert_eq!(joined.get(orders::total), &None);
 
     // DELETE
-    let deleted = qbrs::delete::delete::<Postgres, _>(users::Table)
+    let deleted = qbrs::delete::delete(users::Table)
         .filter(users::id.eq(dan_id))
         .execute(&pool)
         .await
@@ -199,7 +198,7 @@ async fn full_crud_roundtrip_against_real_postgres() {
     assert_eq!(deleted, 1);
 
     let remaining: Vec<i64> = select(users::id)
-        .from::<Postgres, _>(users::Table)
+        .from(users::Table)
         .load(&pool)
         .await
         .expect("select remaining users");
@@ -209,7 +208,7 @@ async fn full_crud_roundtrip_against_real_postgres() {
     // and the rest wrapped — so Postgres runs it here rather than a string
     // assertion standing in for it.
     let total = select((users::id,))
-        .from::<Postgres, _>(users::Table)
+        .from(users::Table)
         .order_by(users::id.desc())
         .limit(1)
         .count(&pool)

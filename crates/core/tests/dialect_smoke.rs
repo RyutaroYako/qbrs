@@ -2,7 +2,7 @@
 //! dialect, not just Postgres? Checked at the SQL-rendering level; execution
 //! is Postgres-only so far.
 
-use qbrs_core::dialect::{MySql, Sqlite};
+use qbrs_core::dialect::{MySql, Postgres, Sqlite};
 use qbrs_core::expr::ExprMethods;
 use qbrs_core::insert::{Defaultable, InsertRow, InsertValue, insert};
 use qbrs_core::scope::Table as TableTrait;
@@ -35,6 +35,7 @@ mod quoted {
         use qbrs_core::expr::ColumnKey;
         #[derive(Clone, Copy)]
         pub struct id;
+        impl qbrs_core::expr::WritableSealed for id {}
         impl qbrs_core::expr::Writable for id {}
         impl ColumnKey for id {
             type Table = QuotedMarker;
@@ -63,6 +64,7 @@ mod users {
         use qbrs_core::expr::ColumnKey;
         #[derive(Clone, Copy)]
         pub struct id;
+        impl qbrs_core::expr::WritableSealed for id {}
         impl qbrs_core::expr::Writable for id {}
         impl ColumnKey for id {
             type Table = UsersMarker;
@@ -76,6 +78,7 @@ mod users {
         impl qbrs_core::row::Spelled for id {}
         #[derive(Clone, Copy)]
         pub struct email;
+        impl qbrs_core::expr::WritableSealed for email {}
         impl qbrs_core::expr::Writable for email {}
         impl ColumnKey for email {
             type Table = UsersMarker;
@@ -109,9 +112,9 @@ impl InsertRow for UsersInsert {
 #[test]
 fn mysql_uses_backtick_quoting_and_positional_placeholders() {
     let (sql, params) = select((users::id,))
-        .from::<MySql, _>(users::Table)
+        .from(users::Table)
         .filter(users::email.eq("a@example.com"))
-        .to_sql();
+        .to_sql(MySql);
     assert_eq!(
         sql,
         "SELECT `users`.`id` FROM `users` WHERE (`users`.`email` = ?)"
@@ -121,20 +124,20 @@ fn mysql_uses_backtick_quoting_and_positional_placeholders() {
         vec![qbrs_core::expr::Value::Text("a@example.com".into())]
     );
 
-    let (sql, _) = insert::<MySql, _>(users::Table)
+    let (sql, _) = insert(users::Table)
         .values(UsersInsert {
             email: "a@example.com".into(),
         })
-        .to_sql();
+        .to_sql(MySql);
     assert_eq!(sql, "INSERT INTO `users` (`email`) VALUES (?)");
 }
 
 #[test]
 fn sqlite_uses_double_quote_and_positional_placeholders() {
     let (sql, params) = select((users::id,))
-        .from::<Sqlite, _>(users::Table)
+        .from(users::Table)
         .filter(users::email.eq("a@example.com"))
-        .to_sql();
+        .to_sql(Sqlite);
     assert_eq!(
         sql,
         "SELECT \"users\".\"id\" FROM \"users\" WHERE (\"users\".\"email\" = ?)"
@@ -148,10 +151,10 @@ fn sqlite_uses_double_quote_and_positional_placeholders() {
 #[test]
 fn sqlite_supports_returning_mysql_does_not() {
     // SQLite 3.35+ has RETURNING, same as Postgres.
-    let (sql, _) = qbrs_core::delete::delete::<Sqlite, _>(users::Table)
+    let (sql, _) = qbrs_core::delete::delete(users::Table)
         .filter(users::id.eq(1))
         .returning(users::id)
-        .to_sql();
+        .to_sql(Sqlite);
     assert_eq!(
         sql,
         "DELETE FROM \"users\" WHERE (\"users\".\"id\" = ?) RETURNING \"users\".\"id\""
@@ -161,7 +164,7 @@ fn sqlite_supports_returning_mysql_does_not() {
     // MySql-backed Delete/Insert/Update. Uncomment to confirm the compile
     // error (kept commented since this test file otherwise compiles/runs):
     //
-    // let _ = qbrs_core::delete::delete::<MySql, _>(users::Table)
+    // let _ = qbrs_core::delete::delete(users::Table)
     //     .filter(users::id.eq(1))
     //     .returning(users::id); // error[E0599]: no method named `returning`
 }
@@ -173,18 +176,18 @@ fn mysql_supports_right_join_but_not_full_join() {
     // by the commented-out snippet below failing to compile if uncommented.)
     //
     // qbrs_core::select::select((users::id,))
-    //     .from::<MySql, _>(users::Table)
+    //     .from(users::Table)
     //     .full_join(users::Table, users::id.eq(users::id)); // error[E0277]: `MySql` doesn't implement `SupportsFullOuterJoin`
 }
 
 #[test]
 fn sqlite_supports_on_conflict_mysql_does_not() {
-    let (sql, _) = insert::<Sqlite, _>(users::Table)
+    let (sql, _) = insert(users::Table)
         .values(UsersInsert {
             email: "a@example.com".into(),
         })
         .on_conflict_do_nothing(users::email)
-        .to_sql();
+        .to_sql(Sqlite);
     assert_eq!(
         sql,
         "INSERT INTO \"users\" (\"email\") VALUES (?) ON CONFLICT (\"email\") DO NOTHING"
@@ -195,7 +198,7 @@ fn sqlite_supports_on_conflict_mysql_does_not() {
     // `.on_conflict_do_nothing(..)` must not exist on a MySql-backed
     // Insert. Uncomment to confirm the compile error:
     //
-    // let _ = insert::<MySql, _>(users::Table)
+    // let _ = insert(users::Table)
     //     .values(UsersInsert { email: "a@example.com".into() })
     //     .on_conflict_do_nothing(users::email); // error[E0599]: no method named `on_conflict_do_nothing`
 }
@@ -203,12 +206,12 @@ fn sqlite_supports_on_conflict_mysql_does_not() {
 #[test]
 fn each_dialect_spells_an_aggregate_cast_its_own_way() {
     let pg = select((qbrs_core::expr::avg(users::id),))
-        .from::<qbrs_core::dialect::Postgres, _>(users::Table)
-        .to_sql()
+        .from(users::Table)
+        .to_sql(Postgres)
         .0;
     let my = select((qbrs_core::expr::avg(users::id),))
-        .from::<qbrs_core::dialect::MySql, _>(users::Table)
-        .to_sql()
+        .from(users::Table)
+        .to_sql(MySql)
         .0;
     assert!(
         pg.contains("CAST(avg(\"users\".\"id\") AS DOUBLE PRECISION)"),
@@ -221,28 +224,26 @@ fn each_dialect_spells_an_aggregate_cast_its_own_way() {
 fn a_quote_inside_an_identifier_is_doubled() {
     // `#[table(name = "..")]` takes an arbitrary string, so the renderer has
     // to close the identifier itself rather than trusting the input.
-    let (sql, _) = select((quoted::id,))
-        .from::<qbrs_core::dialect::Postgres, _>(quoted::Table)
-        .to_sql();
+    let (sql, _) = select((quoted::id,)).from(quoted::Table).to_sql(Postgres);
     assert_eq!(sql, "SELECT \"a\"\"b\".\"id\" FROM \"a\"\"b\"");
 }
 
 #[test]
 fn a_bare_offset_gets_the_filler_limit_its_dialect_needs() {
     let pg = select((users::id,))
-        .from::<qbrs_core::dialect::Postgres, _>(users::Table)
+        .from(users::Table)
         .offset(5)
-        .to_sql()
+        .to_sql(Postgres)
         .0;
     let lite = select((users::id,))
-        .from::<Sqlite, _>(users::Table)
+        .from(users::Table)
         .offset(5)
-        .to_sql()
+        .to_sql(Sqlite)
         .0;
     let my = select((users::id,))
-        .from::<MySql, _>(users::Table)
+        .from(users::Table)
         .offset(5)
-        .to_sql()
+        .to_sql(MySql)
         .0;
     assert!(pg.ends_with("OFFSET 5"), "{pg}");
     assert!(lite.ends_with("LIMIT -1 OFFSET 5"), "{lite}");
@@ -251,17 +252,17 @@ fn a_bare_offset_gets_the_filler_limit_its_dialect_needs() {
 
 #[test]
 fn sqlite_takes_its_union_branches_as_derived_tables() {
-    let a = select((users::id,)).from::<Sqlite, _>(users::Table);
-    let b = select((users::id,)).from::<Sqlite, _>(users::Table);
-    let (sql, _) = a.union(&b).to_sql();
+    let a = select((users::id,)).from(users::Table);
+    let b = select((users::id,)).from(users::Table);
+    let (sql, _) = a.union(&b).to_sql(Sqlite);
     assert_eq!(
         sql,
         "SELECT * FROM (SELECT \"users\".\"id\" FROM \"users\") \
          UNION SELECT * FROM (SELECT \"users\".\"id\" FROM \"users\")"
     );
 
-    let c = select((users::id,)).from::<qbrs_core::dialect::Postgres, _>(users::Table);
-    let d = select((users::id,)).from::<qbrs_core::dialect::Postgres, _>(users::Table);
-    let (pg, _) = c.union(&d).to_sql();
+    let c = select((users::id,)).from(users::Table);
+    let d = select((users::id,)).from(users::Table);
+    let (pg, _) = c.union(&d).to_sql(Postgres);
     assert!(pg.starts_with('('), "{pg}");
 }

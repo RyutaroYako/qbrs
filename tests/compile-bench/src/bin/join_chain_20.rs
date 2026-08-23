@@ -92,7 +92,7 @@ pub mod t19 {
 
 fn main() {
     let (sql, _) = select((t00::id, t19::id))
-        .from::<Postgres, _>(T00)
+        .from(T00)
         .inner_join(T01, t01::ref_id.eq(t00::id))
         .inner_join(T02, t02::ref_id.eq(t01::id))
         .inner_join(T03, t03::ref_id.eq(t02::id))
@@ -113,6 +113,6 @@ fn main() {
         .inner_join(T18, t18::ref_id.eq(t17::id))
         .inner_join(T19, t19::ref_id.eq(t18::id))
         .filter(t00::id.gt(0i64))
-        .to_sql();
+        .to_sql(Postgres);
     assert!(sql.starts_with("SELECT "));
 }

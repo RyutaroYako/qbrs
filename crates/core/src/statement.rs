@@ -19,7 +19,8 @@ pub trait Statement: private::Sealed {
     #[doc(hidden)]
     fn render(&self) -> QuerySink<Self::Dialect>;
 
-    fn to_sql(&self) -> (String, Vec<Value>) {
+    /// The dialect is an argument for the reason `Select::to_sql`'s is.
+    fn to_sql(&self, _dialect: Self::Dialect) -> (String, Vec<Value>) {
         self.render().finish()
     }
 
@@ -60,7 +61,7 @@ pub struct Returning<S, Sel> {
 }
 
 impl<S: Statement, Sel> Returning<S, Sel> {
-    pub fn to_sql(&self) -> (String, Vec<Value>) {
+    pub fn to_sql(&self, _dialect: S::Dialect) -> (String, Vec<Value>) {
         let mut sink = self.statement.render();
         sink.text(" RETURNING ");
         render_select_list::<S::Dialect>(&self.returning, &mut sink);

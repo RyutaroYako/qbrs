@@ -115,9 +115,22 @@ mod conflict_target {
     /// that it can't.
     pub trait Sealed {}
     impl<C: crate::expr::ColumnKey> Sealed for crate::expr::Column<C> {}
-    impl<A> Sealed for (A,) {}
-    impl<A, B> Sealed for (A, B) {}
-    impl<A, B, C> Sealed for (A, B, C) {}
+    // Elements constrained, or the seal admits a tuple of anything — and a
+    // hand-written `ConflictTarget` for it could name a column that isn't
+    // there, which is what this seal is for.
+    impl<A: crate::expr::ColumnKey> Sealed for (crate::expr::Column<A>,) {}
+    impl<A: crate::expr::ColumnKey, B: crate::expr::ColumnKey> Sealed
+        for (crate::expr::Column<A>, crate::expr::Column<B>)
+    {
+    }
+    impl<A: crate::expr::ColumnKey, B: crate::expr::ColumnKey, C: crate::expr::ColumnKey> Sealed
+        for (
+            crate::expr::Column<A>,
+            crate::expr::Column<B>,
+            crate::expr::Column<C>,
+        )
+    {
+    }
 }
 
 impl<C: ColumnKey> ConflictTarget<C::Table> for Column<C> {

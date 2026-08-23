@@ -323,7 +323,12 @@ A schema is a `#[derive(Table)]` struct, shown in the
       .await?;
   tx.commit().await?;
   ```
-- **Errors** — every `.load()`/`.execute()` returns `qbrs_sqlx::Result<T>`
+- **Errors** — `Assignments::from_row(..)` and `.values_all(..)` return
+  `NothingToSet`/`NothingToInsert`, which are `qbrs-core` types: a service
+  with its own error enum needs a `#[from]` for each, or one
+  `.map_err(qbrs_sqlx::Error::from)?`, since `?` converts through
+  `qbrs_sqlx::Error` only in a function that returns it.
+  Every `.load()`/`.execute()` returns `qbrs_sqlx::Result<T>`
   (`= Result<T, qbrs_sqlx::Error>`), not a raw `sqlx::Result`. `Error`
   separates a real driver/database error (`Sqlx`) from the qbrs-level
   misuses: `UnresolvedPlaceholder`, `NothingToSet`, `NothingToInsert`, and
@@ -371,12 +376,10 @@ A schema is a `#[derive(Table)]` struct, shown in the
   insert of exactly one.
 - The dialect is part of a query's type, because what a dialect supports is
   checked while the query is being built, not when it renders — but it is
-  inferred from the executor the query is eventually given to, so
-  `.from(users::Table)` is the usual spelling and `.from::<Postgres, _>(..)`
-  is only needed where nothing pins it: a query rendered with `.to_sql()`,
-  or one stored before it is run. (A project that would rather write it once
-  can wrap the entry points; `SelectSeed`/`InsertSeed`/`UpdateSeed` and
-  `BaseTable` are in the prelude so that wrapper needs no other import.)
+  never spelled as a turbofish: `.load(&pool)` infers it from the executor,
+  and `.to_sql(Postgres)` takes it as a value, the way every other builder
+  argument is one. `.from::<Postgres, _>(..)` remains available for a query
+  stored before either happens.
 - `ORDER BY` takes an expression, not an output label: sort by
   `sum(orders::total).desc()`, not by the `label!` it was labelled to.
 - One `label!` per scope — it declares a `label` module, and a scope holds

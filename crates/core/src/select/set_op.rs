@@ -189,13 +189,13 @@ impl<D: Dialect, Output> SetOp<D, Output> {
     /// How many rows the combination returns, its own `ORDER BY`/paging
     /// dropped. The branches keep theirs: a `UNION` of two `LIMIT`ed queries
     /// is a different set from a `UNION` of the whole ones.
-    pub fn count_sql(&self) -> (String, Vec<Value>) {
+    pub fn count_sql(&self, _dialect: D) -> (String, Vec<Value>) {
         let mut sink = QuerySink::<D>::new();
         crate::render::render_count_wrapped::<D>(&mut sink, |sink| self.render_branches(sink));
         sink.finish()
     }
 
-    pub fn to_sql(&self) -> (String, Vec<Value>) {
+    pub fn to_sql(&self, _dialect: D) -> (String, Vec<Value>) {
         let mut sink = QuerySink::<D>::new();
         self.render_branches(&mut sink);
         self.render_ordering(&mut sink);

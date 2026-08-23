@@ -263,7 +263,11 @@ fn gen_schema_mod(
         let writable = if c.generated || c.primary_key {
             quote! {}
         } else {
-            quote! { impl ::qbrs::expr::Writable for #name {} }
+            quote! {
+                #[doc(hidden)]
+                impl ::qbrs::expr::WritableSealed for #name {}
+                impl ::qbrs::expr::Writable for #name {}
+            }
         };
         keys.push(quote! {
             #[derive(Clone, Copy)]

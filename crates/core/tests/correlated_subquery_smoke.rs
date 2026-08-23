@@ -31,6 +31,7 @@ mod users {
         use qbrs_core::expr::ColumnKey;
         #[derive(Clone, Copy)]
         pub struct id;
+        impl qbrs_core::expr::WritableSealed for id {}
         impl qbrs_core::expr::Writable for id {}
         impl ColumnKey for id {
             type Table = UsersMarker;
@@ -58,6 +59,7 @@ mod orders {
         use qbrs_core::expr::ColumnKey;
         #[derive(Clone, Copy)]
         pub struct user_id;
+        impl qbrs_core::expr::WritableSealed for user_id {}
         impl qbrs_core::expr::Writable for user_id {}
         impl ColumnKey for user_id {
             type Table = OrdersMarker;
@@ -76,7 +78,7 @@ mod orders {
 
 #[test]
 fn correlated_exists_references_outer_column() {
-    let outer = select((users::id,)).from::<Postgres, _>(users::Table);
+    let outer = select((users::id,)).from(users::Table);
 
     // The subquery's `.filter()` references `orders::user_id` (its own
     // FROM) *and* `users::id` (the outer query's FROM) in the same
@@ -86,7 +88,7 @@ fn correlated_exists_references_outer_column() {
     let subquery = outer.correlated(orders::Table, (orders::user_id,));
     let cond = subquery.filter(orders::user_id.eq(users::id)).exists();
 
-    let (sql, params) = outer.filter(cond).to_sql();
+    let (sql, params) = outer.filter(cond).to_sql(Postgres);
     assert_eq!(
         sql,
         "SELECT \"users\".\"id\" FROM \"users\" WHERE (EXISTS (SELECT \"orders\".\"user_id\" FROM \"orders\" WHERE (\"orders\".\"user_id\" = \"users\".\"id\")))"
@@ -100,12 +102,12 @@ fn correlated_subquery_with_bound_value_renumbers_correctly() {
     // parameters take their numbers from the statement they end up in,
     // rather than from the query they were written in.
     let outer = select((users::id,))
-        .from::<Postgres, _>(users::Table)
+        .from(users::Table)
         .filter(users::id.gt(0));
     let subquery = outer.correlated(orders::Table, (orders::user_id,));
     let cond = subquery.filter(orders::user_id.eq(users::id)).exists();
 
-    let (sql, params) = outer.filter(cond).to_sql();
+    let (sql, params) = outer.filter(cond).to_sql(Postgres);
     assert_eq!(
         sql,
         "SELECT \"users\".\"id\" FROM \"users\" WHERE (\"users\".\"id\" > $1) AND (EXISTS (SELECT \"orders\".\"user_id\" FROM \"orders\" WHERE (\"orders\".\"user_id\" = \"users\".\"id\")))"
@@ -123,7 +125,7 @@ fn correlated_subquery_with_bound_value_renumbers_correctly() {
 //         const NAME: &'static str = "payments";
 //     }
 //     let payments_amount = qbrs_core::expr::Column::<PaymentsMarker, qbrs_core::expr::Integer>::new("amount");
-//     let outer = select((users::id,)).from::<Postgres, _>(users::Table);
+//     let outer = select((users::id,)).from(users::Table);
 //     let subquery = outer.correlated(orders::Table, (orders::user_id,));
 //     let _cond = subquery.filter(payments_amount.eq(1)).exists(); // error: Payments not in scope
 // }
@@ -135,11 +137,11 @@ fn an_exists_is_a_condition_of_its_own_dialect() {
     // in that dialect, so it can only be filtered onto a statement of the
     // same one. The cross-dialect version is a compile error — see
     // `tests/compile-bench/trybuild-drafts/exists_across_dialects.rs.draft`.
-    let inner = select((orders::user_id,)).from::<MySql, _>(orders::Table);
+    let inner = select((orders::user_id,)).from(orders::Table);
     let (sql, _) = select((users::id,))
-        .from::<MySql, _>(users::Table)
+        .from(users::Table)
         .filter(inner.exists())
-        .to_sql();
+        .to_sql(MySql);
     assert_eq!(
         sql,
         "SELECT `users`.`id` FROM `users` WHERE (EXISTS (SELECT `orders`.`user_id` FROM `orders`))"

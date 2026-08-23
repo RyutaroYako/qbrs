@@ -1,5 +1,5 @@
-//! `UNION`/`UNION ALL`/`INTERSECT`/`EXCEPT` between two `SELECT`s that read
-//! from different tables — only their *output shape* has to match, not
+//! `UNION`/`UNION ALL`/`INTERSECT`/`EXCEPT` between two `SELECT`s with
+//! different scopes — only their *output shape* has to match, not
 //! their `Scope`. Ordering the combined result uses ordinal position
 //! (`ORDER BY 1`), the only reference SQL itself allows once branches with
 //! different scopes have been combined.
@@ -14,12 +14,11 @@ async fn main() {
     let (pool, _db) = setup_db().await;
     seed(&pool).await;
 
-    // Two structurally unrelated queries — one over `users`, one over
-    // `orders` — unioned into a single "activity feed" of labeled emails
-    // and amounts. There is no single `Scope` that contains both `users`
-    // and `orders` here (no join at all), yet this still type-checks: the
-    // only requirement is that both sides decode to the same
-    // `(String, i64)` shape.
+    // Two queries with different scopes — one over `users` alone, one over
+    // `users` joined to `orders` — unioned into a single "activity feed" of
+    // labelled emails and amounts. Neither branch's `Scope` is the other's,
+    // yet this type-checks: the only requirement is that both sides decode
+    // to the same `(String, i64)` shape.
     // Branches must agree on column *names* as well as types, since the
     // combined result is read by key. A literal has no name of its own.
     label!(total);
@@ -62,4 +61,15 @@ async fn main() {
         .expect("intersect")
         .into_tuples();
     println!("active users who also ordered: {both:?}");
+
+    // `EXCEPT`: active users who have *not* ordered — the same two branches,
+    // subtracted rather than intersected.
+    let neither: Vec<(String,)> = active_emails
+        .except(&ordering_emails)
+        .order_by_column(users::email, SortDir::Asc)
+        .load(&pool)
+        .await
+        .expect("except")
+        .into_tuples();
+    println!("active users who never ordered: {neither:?}");
 }

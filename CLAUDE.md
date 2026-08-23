@@ -47,7 +47,8 @@ the child process outlives the test binary.
 ## Workspace layout
 
 - `crates/core` (`qbrs-core`) — all the type-level machinery and SQL rendering. No I/O, no
-  async, no driver dependency, **zero dependencies**.
+  async, no driver dependency, and no dependency at all unless a schema asks for one (the
+  `chrono`/`uuid`/`decimal` features).
 - `crates/macros` (`qbrs-macros`) — `#[derive(Table)]`, `#[derive(FromRow)]`, `label!`,
   and `with!`. All four synthesize identifiers (`HasEmail` from `email`) or a name's
   type-level spelling, which is why none can be `macro_rules!`; `sql!` and `prepare!`, which
@@ -206,7 +207,11 @@ which is what keeps `select::Exists` pinned once it becomes one.
 ### Builder shape
 
 Builders read in SQL keyword order and take tables as **values**, not turbofish:
-`select((users::email,)).from::<Postgres, _>(users::Table).left_join(orders::Table, ..)`.
+`select((users::email,)).from(users::Table).left_join(orders::Table, ..)`. The dialect is a
+value too, at whichever terminal decides it: `.to_sql(Postgres)`/`.count_sql(Postgres)`/
+`.prepare::<Params, _>(Postgres)` take one, and `.load(&pool)` infers it from the executor,
+so `D` is never a turbofish. `Dialect: Default` exists for the generic call sites inside the
+crate, which have the type but no value.
 `SelectSeed` holds just the selection until `.from()` supplies the initial `Scope`; the
 selection is validated against the *final* scope once, at the terminal method
 (`.to_sql()` / `.load()`). Every builder carries `PhantomData<fn() -> (D, Scope, ...)>`;
@@ -328,8 +333,9 @@ transactional API. Everything returns `qbrs_sqlx::Result<T>`; keep `UnresolvedPl
   (plus its row in `examples/README.md`), and the status/feature lists in the root `README.md`.
   A new *selectable* also needs a `select::RowField` impl (deciding its row key) and a
   matching `qbrs_sqlx::DecodeRow` impl if it decodes to a type nothing else does.
-- Core tests are pure string-rendering assertions with `#[test]`; DB behavior is tested only
-  in `qbrs-sqlx` with `#[tokio::test]`. Test names are full sentences
+- Core tests are pure string-rendering assertions with `#[test]`. Anything a database has to
+  agree with runs against one: Postgres in `qbrs-sqlx`, every rendered shape in
+  `tests/dialect-exec` against SQLite, both with `#[tokio::test]`. Test names are full sentences
   (`right_join_flips_previously_joined_tables_to_nullable`).
 - `tests/compile-bench/trybuild-drafts/*.draft` are deliberately-broken snippets kept out of
   the build; copy one into `tests/compile-bench/examples/` to eyeball the

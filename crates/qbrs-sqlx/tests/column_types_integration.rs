@@ -45,7 +45,7 @@ async fn timestamp_uuid_and_numeric_columns_survive_a_round_trip() {
     let on_day = chrono::NaiveDate::from_ymd_opt(2024, 5, 17).expect("a date");
     let amount = "12.34".parse::<rust_decimal::Decimal>().expect("a decimal");
 
-    let inserted = insert::<Postgres, _>(events::Table)
+    let inserted = insert(events::Table)
         .values(
             EventsInsert::builder()
                 .id(id)
@@ -67,7 +67,7 @@ async fn timestamp_uuid_and_numeric_columns_survive_a_round_trip() {
 
     // And they are ordinary values to the builder: comparable, bindable.
     let found: Vec<uuid::Uuid> = select(events::id)
-        .from::<Postgres, _>(events::Table)
+        .from(events::Table)
         .filter(events::happened_at.lte(happened_at))
         .filter(events::amount.gt("1.00".parse::<rust_decimal::Decimal>().unwrap()))
         .load(&pool)
@@ -79,7 +79,7 @@ async fn timestamp_uuid_and_numeric_columns_survive_a_round_trip() {
     // the row declares in each case.
     let (total, mean): (Option<rust_decimal::Decimal>, Option<f64>) =
         select((sum(events::amount), avg(events::amount)))
-            .from::<Postgres, _>(events::Table)
+            .from(events::Table)
             .load_one(&pool)
             .await
             .expect("aggregate a numeric column")

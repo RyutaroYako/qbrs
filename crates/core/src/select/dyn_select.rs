@@ -76,11 +76,11 @@ impl<D, Output> DynSelect<D, Output> {
 impl<D: Dialect, Output> DynSelect<D, Output> {
     /// The same total `Select::count_sql` renders. Paging is the reason
     /// `LIMIT`/`OFFSET` survive erasure, and a page needs a total.
-    pub fn count_sql(&self) -> (String, Vec<Value>) {
+    pub fn count_sql(&self, _dialect: D) -> (String, Vec<Value>) {
         self.body.count_sql::<D>(&self.selection)
     }
 
-    pub fn to_sql(&self) -> (String, Vec<Value>) {
+    pub fn to_sql(&self, _dialect: D) -> (String, Vec<Value>) {
         let mut sink = QuerySink::<D>::new();
         self.body.render_into::<D>(&self.selection, &mut sink);
         sink.finish()

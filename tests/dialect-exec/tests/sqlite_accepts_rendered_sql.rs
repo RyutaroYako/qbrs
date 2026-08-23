@@ -3,7 +3,7 @@
 //! says SQLite agrees.
 
 use qbrs::cte::with;
-use qbrs::expr::{Value, avg, count, max, min, sum};
+use qbrs::expr::{Expr, Value, all_of, any_of, avg, count, count_of, max, min, sum};
 use qbrs::prelude::*;
 use qbrs::sql;
 use sqlx::{Row, SqlitePool};
@@ -86,7 +86,7 @@ async fn sqlite_executes_every_rendered_statement_shape() {
 
     run(
         &pool,
-        insert::<Sqlite, _>(users::Table)
+        insert(users::Table)
             .values(
                 UsersInsert::builder()
                     .email("ada@example.com")
@@ -94,25 +94,25 @@ async fn sqlite_executes_every_rendered_statement_shape() {
                     .build(),
             )
             .values(UsersInsert::builder().email("dan@example.com").build())
-            .to_sql(),
+            .to_sql(Sqlite),
     )
     .await;
 
     let ids = run(
         &pool,
-        insert::<Sqlite, _>(orders::Table)
+        insert(orders::Table)
             .values(OrdersInsert::builder().user_id(1).total(100).build())
             .values(OrdersInsert::builder().user_id(1).total(2000).build())
             .values(OrdersInsert::builder().user_id(2).total(30).build())
             .returning(orders::id)
-            .to_sql(),
+            .to_sql(Sqlite),
     )
     .await;
     assert_eq!(ids.len(), 3);
 
     run(
         &pool,
-        insert::<Sqlite, _>(users::Table)
+        insert(users::Table)
             .values(
                 UsersInsert::builder()
                     .email("ada@example.com")
@@ -127,13 +127,13 @@ async fn sqlite_executes_every_rendered_statement_shape() {
                 })
                 .expect("display_name is set"),
             )
-            .to_sql(),
+            .to_sql(Sqlite),
     )
     .await;
 
     run(
         &pool,
-        update::<Sqlite, _>(users::Table)
+        update(users::Table)
             .set(
                 Assignments::from_row(UsersUpdate {
                     display_name: Some(None),
@@ -142,19 +142,19 @@ async fn sqlite_executes_every_rendered_statement_shape() {
                 .expect("display_name is set"),
             )
             .filter(users::email.eq("dan@example.com"))
-            .to_sql(),
+            .to_sql(Sqlite),
     )
     .await;
 
     let joined = run(
         &pool,
         select((users::email, orders::total))
-            .from::<Sqlite, _>(users::Table)
+            .from(users::Table)
             .left_join(orders::Table, orders::user_id.eq(users::id))
             .filter(users::email.eq("ada@example.com"))
             .order_by(orders::total.desc())
             .limit(10)
-            .to_sql(),
+            .to_sql(Sqlite),
     )
     .await;
     assert_eq!(joined.len(), 2);
@@ -162,10 +162,10 @@ async fn sqlite_executes_every_rendered_statement_shape() {
     let grouped = run(
         &pool,
         select((orders::user_id, sum(orders::total), count()))
-            .from::<Sqlite, _>(orders::Table)
+            .from(orders::Table)
             .group_by(orders::user_id)
             .having(sum(orders::total).gt(50i64))
-            .to_sql(),
+            .to_sql(Sqlite),
     )
     .await;
     // Only user 1 clears the HAVING threshold.
@@ -176,10 +176,10 @@ async fn sqlite_executes_every_rendered_statement_shape() {
     let offset_only = run(
         &pool,
         select(users::email)
-            .from::<Sqlite, _>(users::Table)
+            .from(users::Table)
             .order_by(users::id.asc())
             .offset(1)
-            .to_sql(),
+            .to_sql(Sqlite),
     )
     .await;
     assert_eq!(offset_only.len(), 1);
@@ -190,11 +190,11 @@ async fn sqlite_executes_every_rendered_statement_shape() {
     let paged_union = run(
         &pool,
         select((users::email,))
-            .from::<Sqlite, _>(users::Table)
+            .from(users::Table)
             .order_by(users::id.asc())
             .limit(1)
-            .union(&select((users::email,)).from::<Sqlite, _>(users::Table))
-            .to_sql(),
+            .union(&select((users::email,)).from(users::Table))
+            .to_sql(Sqlite),
     )
     .await;
     assert_eq!(paged_union.len(), 2);
@@ -202,10 +202,10 @@ async fn sqlite_executes_every_rendered_statement_shape() {
     let ordered_union = run(
         &pool,
         select((users::email,))
-            .from::<Sqlite, _>(users::Table)
+            .from(users::Table)
             .order_by(users::id.asc())
-            .union(&select((users::email,)).from::<Sqlite, _>(users::Table))
-            .to_sql(),
+            .union(&select((users::email,)).from(users::Table))
+            .to_sql(Sqlite),
     )
     .await;
     assert_eq!(ordered_union.len(), 2);
@@ -213,18 +213,18 @@ async fn sqlite_executes_every_rendered_statement_shape() {
     let cte_branch = run(
         &pool,
         select((big_orders::user_id,))
-            .from::<Sqlite, _>(users::Table)
+            .from(users::Table)
             .inner_join(
                 with(
                     big_orders::Table,
                     &select((orders::user_id, sum(orders::total)))
-                        .from::<Sqlite, _>(orders::Table)
+                        .from(orders::Table)
                         .group_by(orders::user_id),
                 ),
                 big_orders::user_id.eq(users::id),
             )
-            .union(&select((orders::user_id,)).from::<Sqlite, _>(orders::Table))
-            .to_sql(),
+            .union(&select((orders::user_id,)).from(orders::Table))
+            .to_sql(Sqlite),
     )
     .await;
     assert!(!cte_branch.is_empty());
@@ -232,40 +232,40 @@ async fn sqlite_executes_every_rendered_statement_shape() {
     let union = run(
         &pool,
         select((users::email,))
-            .from::<Sqlite, _>(users::Table)
+            .from(users::Table)
             .filter(users::email.eq("ada@example.com"))
             .union(
                 &select((users::email,))
-                    .from::<Sqlite, _>(users::Table)
+                    .from(users::Table)
                     .filter(users::email.eq("dan@example.com")),
             )
-            .to_sql(),
+            .to_sql(Sqlite),
     )
     .await;
     assert_eq!(union.len(), 2);
 
     let totals = select((orders::user_id, sum(orders::total)))
-        .from::<Sqlite, _>(orders::Table)
+        .from(orders::Table)
         .group_by(orders::user_id);
     let cte = run(
         &pool,
         select((users::email, big_orders::total))
-            .from::<Sqlite, _>(users::Table)
+            .from(users::Table)
             .inner_join(
                 with(big_orders::Table, &totals),
                 big_orders::user_id.eq(users::id),
             )
-            .to_sql(),
+            .to_sql(Sqlite),
     )
     .await;
     assert_eq!(cte.len(), 2);
 
-    let exists_q = select(users::email).from::<Sqlite, _>(users::Table);
+    let exists_q = select(users::email).from(users::Table);
     let correlated = exists_q
         .correlated(orders::Table, orders::id)
         .filter(orders::user_id.eq(users::id))
         .exists();
-    let rows = run(&pool, exists_q.filter(correlated).to_sql()).await;
+    let rows = run(&pool, exists_q.filter(correlated).to_sql(Sqlite)).await;
     assert_eq!(rows.len(), 2);
 
     qbrs::label!(rank_in_user);
@@ -282,8 +282,8 @@ async fn sqlite_executes_every_rendered_statement_shape() {
                 )
                 .label(label::rank_in_user),
         ))
-        .from::<Sqlite, _>(orders::Table)
-        .to_sql(),
+        .from(orders::Table)
+        .to_sql(Sqlite),
     )
     .await;
     assert_eq!(ranked.len(), 3);
@@ -291,9 +291,9 @@ async fn sqlite_executes_every_rendered_statement_shape() {
     let right = run(
         &pool,
         select((users::email, orders::total))
-            .from::<Sqlite, _>(orders::Table)
+            .from(orders::Table)
             .right_join(users::Table, orders::user_id.eq(users::id))
-            .to_sql(),
+            .to_sql(Sqlite),
     )
     .await;
     assert_eq!(right.len(), 3);
@@ -301,9 +301,9 @@ async fn sqlite_executes_every_rendered_statement_shape() {
     let raw = run(
         &pool,
         select((users::email,))
-            .from::<Sqlite, _>(users::Table)
+            .from(users::Table)
             .filter(sql!(Bool, "length(email) > ?", 3i64))
-            .to_sql(),
+            .to_sql(Sqlite),
     )
     .await;
     assert_eq!(raw.len(), 2);
@@ -311,40 +311,36 @@ async fn sqlite_executes_every_rendered_statement_shape() {
     let distinct = run(
         &pool,
         select((users::email,))
-            .from::<Sqlite, _>(users::Table)
+            .from(users::Table)
             .inner_join(orders::Table, orders::user_id.eq(users::id))
             .distinct()
-            .to_sql(),
+            .to_sql(Sqlite),
     )
     .await;
     assert_eq!(distinct.len(), 2);
 
     let bulk = run(
         &pool,
-        insert::<Sqlite, _>(orders::Table)
+        insert(orders::Table)
             .values_all((10..13).map(|n| OrdersInsert::builder().user_id(1).total(n).build()))
             .expect("three rows")
             .returning(orders::id)
-            .to_sql(),
+            .to_sql(Sqlite),
     )
     .await;
     assert_eq!(bulk.len(), 3);
 
     let deleted = run(
         &pool,
-        delete::<Sqlite, _>(orders::Table)
+        delete(orders::Table)
             .filter(orders::total.lt(50i64))
             .returning(orders::id)
-            .to_sql(),
+            .to_sql(Sqlite),
     )
     .await;
     assert_eq!(deleted.len(), 4);
 
-    let remaining = run(
-        &pool,
-        select(count()).from::<Sqlite, _>(orders::Table).to_sql(),
-    )
-    .await;
+    let remaining = run(&pool, select(count()).from(orders::Table).to_sql(Sqlite)).await;
     assert_eq!(remaining[0].get::<i64, _>(0), 2);
 
     // `count_sql` is its own rendering — the query wrapped in a total, with
@@ -353,11 +349,11 @@ async fn sqlite_executes_every_rendered_statement_shape() {
     let total = run(
         &pool,
         select((orders::id,))
-            .from::<Sqlite, _>(orders::Table)
+            .from(orders::Table)
             .filter(orders::total.gt(0i64))
             .order_by(orders::id.desc())
             .limit(1)
-            .count_sql(),
+            .count_sql(Sqlite),
     )
     .await;
     assert_eq!(total[0].get::<i64, _>(0), 2);
@@ -365,10 +361,10 @@ async fn sqlite_executes_every_rendered_statement_shape() {
     let grouped_total = run(
         &pool,
         select((orders::user_id, count()))
-            .from::<Sqlite, _>(orders::Table)
+            .from(orders::Table)
             .group_by(orders::user_id)
             .having_all(vec![predicate(count().gte(1i64))])
-            .count_sql(),
+            .count_sql(Sqlite),
     )
     .await;
     assert_eq!(grouped_total[0].get::<i64, _>(0), 1);
@@ -376,9 +372,9 @@ async fn sqlite_executes_every_rendered_statement_shape() {
     let full = run(
         &pool,
         select((users::email, orders::total))
-            .from::<Sqlite, _>(users::Table)
+            .from(users::Table)
             .full_join(orders::Table, orders::user_id.eq(users::id))
-            .to_sql(),
+            .to_sql(Sqlite),
     )
     .await;
     assert!(!full.is_empty());
@@ -386,13 +382,13 @@ async fn sqlite_executes_every_rendered_statement_shape() {
     let intersected = run(
         &pool,
         select((users::email,))
-            .from::<Sqlite, _>(users::Table)
+            .from(users::Table)
             .intersect(
                 &select((users::email,))
-                    .from::<Sqlite, _>(users::Table)
+                    .from(users::Table)
                     .filter(users::email.like("ada%")),
             )
-            .to_sql(),
+            .to_sql(Sqlite),
     )
     .await;
     assert_eq!(intersected.len(), 1);
@@ -400,13 +396,13 @@ async fn sqlite_executes_every_rendered_statement_shape() {
     let excepted = run(
         &pool,
         select((users::email,))
-            .from::<Sqlite, _>(users::Table)
+            .from(users::Table)
             .except(
                 &select((users::email,))
-                    .from::<Sqlite, _>(users::Table)
+                    .from(users::Table)
                     .filter(users::email.like("ada%")),
             )
-            .to_sql(),
+            .to_sql(Sqlite),
     )
     .await;
     assert_eq!(excepted.len(), 1);
@@ -414,29 +410,94 @@ async fn sqlite_executes_every_rendered_statement_shape() {
     let erased = run(
         &pool,
         select((users::email,))
-            .from::<Sqlite, _>(users::Table)
+            .from(users::Table)
             .erase()
             .limit(1)
-            .to_sql(),
+            .to_sql(Sqlite),
     )
     .await;
     assert_eq!(erased.len(), 1);
+
+    // The expression arms a single `.filter()` never reaches: `AND`/`OR`
+    // between two conditions, `NOT`, `IS NULL`, `!=`, `<=`, and the
+    // `TRUE`/`FALSE` an empty `all_of`/`any_of` folds to.
+    let combined = run(
+        &pool,
+        select((users::email,))
+            .from(users::Table)
+            .filter(
+                users::display_name
+                    .is_not_null()
+                    .and(users::email.ne("nobody@example.com"))
+                    .or(users::id.lte(0i64)),
+            )
+            .filter(!users::display_name.is_null())
+            .filter(all_of(Vec::<Expr<Nil, Bool>>::new()))
+            .filter(any_of([users::id.gte(1i64)]))
+            .to_sql(Sqlite),
+    )
+    .await;
+    assert!(!combined.is_empty());
+
+    // `UPDATE .. SET <column> = <expression>` and `ON CONFLICT DO NOTHING`.
+    run(
+        &pool,
+        qbrs::update::update(users::Table)
+            .set_to(users::email, sql!(Text, "lower(?)", users::email))
+            .filter(users::id.eq(1i64))
+            .to_sql(Sqlite),
+    )
+    .await;
+
+    run(
+        &pool,
+        insert(users::Table)
+            .values(UsersInsert::builder().email("ada@example.com").build())
+            .on_conflict_do_nothing(users::email)
+            .to_sql(Sqlite),
+    )
+    .await;
+
+    // `count(<column>)` counts non-NULLs, unlike `count(*)`.
+    let counted = run(
+        &pool,
+        select((count(), count_of(users::display_name)))
+            .from(users::Table)
+            .to_sql(Sqlite),
+    )
+    .await;
+    assert!(counted[0].get::<i64, _>(0) >= counted[0].get::<i64, _>(1));
+
+    // A set operation's own total.
+    let union_total = run(
+        &pool,
+        select((users::email,))
+            .from(users::Table)
+            .union(
+                &select((users::email,))
+                    .from(users::Table)
+                    .filter(users::email.like("ada%")),
+            )
+            .count_sql(Sqlite),
+    )
+    .await;
+    assert!(union_total[0].get::<i64, _>(0) >= 1);
 
     // `ORDER BY <ordinal>` + paging on a set operation is the one place
     // SQLite's derived-table branch wrapping and its ordinal ordering meet.
     let paged_union = run(
         &pool,
         select((users::email,))
-            .from::<Sqlite, _>(users::Table)
+            .from(users::Table)
             .union_all(
                 &select((users::email,))
-                    .from::<Sqlite, _>(users::Table)
+                    .from(users::Table)
                     .filter(users::email.like("ada%")),
             )
             .order_by(nth(1).desc())
             .limit(2)
             .offset(1)
-            .to_sql(),
+            .to_sql(Sqlite),
     )
     .await;
     assert_eq!(paged_union.len(), 2);
@@ -445,14 +506,14 @@ async fn sqlite_executes_every_rendered_statement_shape() {
     let stats = run(
         &pool,
         select((avg(orders::total), min(orders::total), max(orders::total)))
-            .from::<Sqlite, _>(orders::Table)
+            .from(orders::Table)
             .filter(
                 select((orders::id,))
-                    .from::<Sqlite, _>(orders::Table)
+                    .from(orders::Table)
                     .filter(orders::total.lt(0i64))
                     .not_exists(),
             )
-            .to_sql(),
+            .to_sql(Sqlite),
     )
     .await;
     assert_eq!(stats.len(), 1);
@@ -460,10 +521,10 @@ async fn sqlite_executes_every_rendered_statement_shape() {
     let in_list = run(
         &pool,
         select((users::email,))
-            .from::<Sqlite, _>(users::Table)
+            .from(users::Table)
             .filter(users::email.is_in(["ada@example.com".to_string()]))
             .filter(users::id.is_in(Vec::<i64>::new()))
-            .to_sql(),
+            .to_sql(Sqlite),
     )
     .await;
     assert!(in_list.is_empty());

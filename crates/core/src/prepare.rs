@@ -8,7 +8,7 @@
 /// }
 ///
 /// let query = select((users::id,))
-///     .from::<Postgres, _>(users::Table)
+///     .from(users::Table)
 ///     .filter(users::email.eq(ByEmail::email()))
 ///     .prepare();
 ///

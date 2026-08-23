@@ -14,7 +14,10 @@ mod private {
     pub trait Sealed {}
 }
 
-pub trait Dialect: 'static + private::Sealed {
+/// `Default` so a dialect can be produced where only its type is known:
+/// the render terminals take one as a value (`.to_sql(Postgres)`), which is
+/// what lets every builder before them infer it instead of being told.
+pub trait Dialect: 'static + Copy + Default + private::Sealed {
     /// SQL identifier quote character, e.g. `"` for Postgres/SQLite, `` ` ``
     /// for MySQL.
     const IDENTIFIER_QUOTE: char;
@@ -44,6 +47,7 @@ pub trait Dialect: 'static + private::Sealed {
     }
 }
 
+#[derive(Debug, Clone, Copy, Default)]
 pub struct Postgres;
 impl private::Sealed for Postgres {}
 impl Dialect for Postgres {
@@ -54,6 +58,7 @@ impl Dialect for Postgres {
     }
 }
 
+#[derive(Debug, Clone, Copy, Default)]
 pub struct MySql;
 impl private::Sealed for MySql {}
 impl Dialect for MySql {
@@ -64,6 +69,7 @@ impl Dialect for MySql {
     // Uses the default `?` placeholder.
 }
 
+#[derive(Debug, Clone, Copy, Default)]
 pub struct Sqlite;
 impl private::Sealed for Sqlite {}
 impl Dialect for Sqlite {

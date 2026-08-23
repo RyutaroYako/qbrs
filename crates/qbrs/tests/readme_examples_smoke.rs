@@ -35,10 +35,10 @@ struct Orders {
 #[test]
 fn readme_quick_example_matches_actual_output() {
     let (sql, _params) = select((users::email, orders::total))
-        .from::<Postgres, _>(users::Table)
+        .from(users::Table)
         .left_join(orders::Table, orders::user_id.eq(users::id))
         .order_by(users::id.asc())
-        .to_sql();
+        .to_sql(Postgres);
     assert_eq!(
         sql,
         "SELECT \"users\".\"email\", \"orders\".\"total\" FROM \"users\" LEFT JOIN \"orders\" ON (\"orders\".\"user_id\" = \"users\".\"id\") ORDER BY \"users\".\"id\" ASC"

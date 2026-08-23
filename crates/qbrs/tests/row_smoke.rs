@@ -52,10 +52,10 @@ where
 #[test]
 fn all_selects_every_column_and_takes_its_nullability_from_the_join() {
     let query = select((users::email, orders::All))
-        .from::<Postgres, _>(users::Table)
+        .from(users::Table)
         .left_join(orders::Table, orders::user_id.eq(users::id));
 
-    let (sql, _params) = query.to_sql();
+    let (sql, _params) = query.to_sql(Postgres);
     assert_eq!(
         sql,
         "SELECT \"users\".\"email\", \"orders\".\"id\", \"orders\".\"user_id\", \"orders\".\"total\" \
@@ -86,11 +86,11 @@ fn a_sql_fragment_decodes_as_the_type_it_declares() {
         users::email,
         sql!(Nullable<BigInt>, "max(?)", orders::total).label(label::biggest),
     ))
-    .from::<Postgres, _>(users::Table)
+    .from(users::Table)
     .inner_join(orders::Table, orders::user_id.eq(users::id))
     .group_by(users::email);
 
-    let (sql, _params) = query.to_sql();
+    let (sql, _params) = query.to_sql(Postgres);
     assert_eq!(
         sql,
         "SELECT \"users\".\"email\", (max(\"orders\".\"total\")) AS \"biggest\" FROM \"users\" \
@@ -154,9 +154,7 @@ fn into_tuple_recovers_the_positional_view() {
 
 #[test]
 fn an_untupled_selection_stays_a_bare_value() {
-    let (sql, _) = select(users::email)
-        .from::<Postgres, _>(users::Table)
-        .to_sql();
+    let (sql, _) = select(users::email).from(users::Table).to_sql(Postgres);
     assert_eq!(sql, "SELECT \"users\".\"email\" FROM \"users\"");
 }
 
@@ -171,8 +169,8 @@ fn a_label_renders_as_and_keys_the_row() {
             .label(label::within_user),
         row_number().over(window()).label(label::overall),
     ))
-    .from::<Postgres, _>(users::Table)
-    .to_sql();
+    .from(users::Table)
+    .to_sql(Postgres);
     assert_eq!(
         sql,
         "SELECT \"users\".\"email\", row_number() OVER (PARTITION BY \"users\".\"id\") AS \"within_user\", row_number() OVER () AS \"overall\" FROM \"users\""
@@ -189,9 +187,9 @@ fn a_label_renders_as_and_keys_the_row() {
 #[test]
 fn an_unlabelled_expression_is_keyed_by_the_function_that_made_it() {
     let (sql, _) = select((users::email, count()))
-        .from::<Postgres, _>(users::Table)
+        .from(users::Table)
         .group_by(users::email)
-        .to_sql();
+        .to_sql(Postgres);
     assert_eq!(
         sql,
         "SELECT \"users\".\"email\", count(*) FROM \"users\" GROUP BY \"users\".\"email\""
@@ -298,9 +296,9 @@ fn a_row_can_be_walked_by_a_downstream_trait() {
 #[test]
 fn a_grouped_count_counts_groups_not_the_first_group() {
     let (sql, _) = select((users::id, count()))
-        .from::<Postgres, _>(users::Table)
+        .from(users::Table)
         .group_by(users::id)
-        .count_sql();
+        .count_sql(Postgres);
     assert_eq!(
         sql,
         "SELECT count(*) FROM (SELECT \"users\".\"id\", count(*) FROM \"users\" \
@@ -311,10 +309,10 @@ fn a_grouped_count_counts_groups_not_the_first_group() {
 #[test]
 fn counting_a_distinct_query_counts_its_distinct_rows() {
     let (sql, _params) = select((users::id,))
-        .from::<Postgres, _>(users::Table)
+        .from(users::Table)
         .inner_join(orders::Table, orders::user_id.eq(users::id))
         .distinct()
-        .count_sql();
+        .count_sql(Postgres);
     assert_eq!(
         sql,
         "SELECT count(*) FROM (SELECT DISTINCT \"users\".\"id\" FROM \"users\" \
@@ -325,7 +323,7 @@ fn counting_a_distinct_query_counts_its_distinct_rows() {
 #[test]
 fn a_count_drops_the_paging_the_page_needed() {
     let base = select((users::email,))
-        .from::<Postgres, _>(users::Table)
+        .from(users::Table)
         .filter(users::active.eq(true));
     let page = base
         .clone()
@@ -333,7 +331,7 @@ fn a_count_drops_the_paging_the_page_needed() {
         .limit(20u32)
         .offset(40u32);
     assert_eq!(
-        page.count_sql().0,
+        page.count_sql(Postgres).0,
         "SELECT count(*) FROM \"users\" WHERE (\"users\".\"active\" = $1)"
     );
 }
@@ -350,7 +348,7 @@ fn a_named_expression_over_a_column_states_what_it_decodes_to() {
             .decodes_as::<qbrs::expr::Bool>()
             .label(label::flagged),
     ))
-    .from::<Postgres, _>(users::Table)
-    .to_sql();
+    .from(users::Table)
+    .to_sql(Postgres);
     assert!(sql.contains("AS \"flagged\""), "{sql}");
 }

@@ -77,6 +77,13 @@ impl<K, V, Tail> RowCons<K, V, Tail> {
     note = "add `{K}` to the query's selection list, or `.label(label::..)` the expression you meant — and in a generic helper give each column its own `Idx` parameter, since one shared index matches no row"
 )]
 pub trait Field<K, Idx> {
+    /// Unnameable outside this crate, for the reason `scope::proof`
+    /// explains: a column marker is the caller's own type, so the orphan
+    /// rule would otherwise license a schema crate to prove its column is
+    /// in a row that doesn't hold it.
+    #[doc(hidden)]
+    type Proof: crate::scope::proof::Sealed;
+
     type Value;
     type Rest;
     fn peek(&self) -> &Self::Value;
@@ -84,6 +91,7 @@ pub trait Field<K, Idx> {
 }
 
 impl<K, V, Tail> Field<K, Here> for RowCons<K, V, Tail> {
+    type Proof = crate::scope::proof::Proof;
     type Value = V;
     type Rest = Tail;
     fn peek(&self) -> &V {
@@ -99,6 +107,7 @@ impl<K, Other, V, Tail, I> Field<K, There<I>> for RowCons<Other, V, Tail>
 where
     Tail: Field<K, I>,
 {
+    type Proof = crate::scope::proof::Proof;
     type Value = <Tail as Field<K, I>>::Value;
     type Rest = RowCons<Other, V, <Tail as Field<K, I>>::Rest>;
     fn peek(&self) -> &Self::Value {
@@ -185,6 +194,9 @@ pub trait FieldValue {
     note = "a computed expression is matched by name only once `.label(label::..)` gives it one, and a LEFT/RIGHT/FULL JOIN makes a column decode as `Option<T>`, so a struct filled from one declares `Option<T>`"
 )]
 pub trait TakeNamed<F, Idx> {
+    #[doc(hidden)]
+    type Proof: crate::scope::proof::Sealed;
+
     type Value;
     type Rest;
     fn take_named(self) -> (Self::Value, Self::Rest);
@@ -195,6 +207,7 @@ where
     K: Spelled,
     F: Spelled<Name = <K as Named>::Name> + FieldValue<Value = V>,
 {
+    type Proof = crate::scope::proof::Proof;
     type Value = V;
     type Rest = Tail;
     fn take_named(self) -> (V, Tail) {
@@ -207,6 +220,7 @@ impl<F, K, V, Tail, I> TakeNamed<F, There<I>> for RowCons<K, V, Tail>
 where
     Tail: TakeNamed<F, I>,
 {
+    type Proof = crate::scope::proof::Proof;
     type Value = <Tail as TakeNamed<F, I>>::Value;
     type Rest = RowCons<K, V, <Tail as TakeNamed<F, I>>::Rest>;
     fn take_named(self) -> (Self::Value, Self::Rest) {

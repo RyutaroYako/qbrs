@@ -31,6 +31,7 @@ mod users {
         use qbrs_core::expr::ColumnKey;
         #[derive(Clone, Copy)]
         pub struct id;
+        impl qbrs_core::expr::WritableSealed for id {}
         impl qbrs_core::expr::Writable for id {}
         impl ColumnKey for id {
             type Table = UsersMarker;
@@ -58,6 +59,7 @@ mod orders {
         use qbrs_core::expr::ColumnKey;
         #[derive(Clone, Copy)]
         pub struct user_id;
+        impl qbrs_core::expr::WritableSealed for user_id {}
         impl qbrs_core::expr::Writable for user_id {}
         impl ColumnKey for user_id {
             type Table = OrdersMarker;
@@ -75,7 +77,7 @@ mod orders {
 }
 
 fn build(with_orders: bool) -> DynSelect<Postgres, i32> {
-    let base = select(users::id).from::<Postgres, _>(users::Table);
+    let base = select(users::id).from(users::Table);
     if with_orders {
         base.inner_join(orders::Table, orders::user_id.eq(users::id))
             .erase()
@@ -86,10 +88,10 @@ fn build(with_orders: bool) -> DynSelect<Postgres, i32> {
 
 #[test]
 fn both_branches_unify_into_the_same_type() {
-    let (sql_without, _) = build(false).to_sql();
+    let (sql_without, _) = build(false).to_sql(Postgres);
     assert_eq!(sql_without, "SELECT \"users\".\"id\" FROM \"users\"");
 
-    let (sql_with, _) = build(true).to_sql();
+    let (sql_with, _) = build(true).to_sql(Postgres);
     assert_eq!(
         sql_with,
         "SELECT \"users\".\"id\" FROM \"users\" INNER JOIN \"orders\" ON (\"orders\".\"user_id\" = \"users\".\"id\")"
@@ -98,7 +100,7 @@ fn both_branches_unify_into_the_same_type() {
 
 #[test]
 fn an_erased_query_still_counts_its_rows_without_its_page() {
-    let (sql, _) = build(true).limit(10).offset(20).count_sql();
+    let (sql, _) = build(true).limit(10).offset(20).count_sql(Postgres);
     assert_eq!(
         sql,
         "SELECT count(*) FROM \"users\" INNER JOIN \"orders\" ON (\"orders\".\"user_id\" = \"users\".\"id\")"
@@ -109,7 +111,7 @@ fn an_erased_query_still_counts_its_rows_without_its_page() {
 // here, commented, as a record of exactly what `.erase()` buys:
 //
 // fn build_without_erase(with_orders: bool) -> impl std::fmt::Debug {
-//     let base = select((users::id,)).from::<Postgres, _>(users::Table);
+//     let base = select((users::id,)).from(users::Table);
 //     if with_orders {
 //         base.inner_join(orders::Table, orders::user_id.eq(users::id)) // Select<Postgres, Cons<Orders,...>, _>
 //     } else {
