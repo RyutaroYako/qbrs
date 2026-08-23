@@ -16,7 +16,7 @@ use qbrs::row::{IntoStructs, IntoTuples};
 use qbrs::select::{OrderExt, select};
 use qbrs::statement::Statement;
 use qbrs::update::Assignments;
-use qbrs_sqlx::{ExecuteExt, LoadExt};
+use qbrs_sqlx::{CountExt, ExecuteExt, LoadExt};
 
 #[derive(Table)]
 #[table(name = "users")]
@@ -204,6 +204,18 @@ async fn full_crud_roundtrip_against_real_postgres() {
         .await
         .expect("select remaining users");
     assert_eq!(remaining, vec![ada_id]);
+
+    // A total is its own rendering — the page's `ORDER BY`/`LIMIT` dropped
+    // and the rest wrapped — so Postgres runs it here rather than a string
+    // assertion standing in for it.
+    let total = select((users::id,))
+        .from::<Postgres, _>(users::Table)
+        .order_by(users::id.desc())
+        .limit(1)
+        .count(&pool)
+        .await
+        .expect("count users");
+    assert_eq!(total, 1);
 
     common::shutdown(pool, guard).await;
 }

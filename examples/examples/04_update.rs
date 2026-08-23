@@ -1,5 +1,6 @@
-//! UPDATE: only explicitly-`Some(..)` fields are sent, and nullable columns
-//! distinguish "leave alone" from "set to NULL" via `Option<Option<T>>`.
+//! UPDATE: only the fields a request actually set are sent, and a nullable
+//! column tells "leave alone" apart from "set to NULL" — the builder's
+//! `.column(value)` vs `.column_null()`.
 //! Run: `cargo run -p qbrs-examples --example 04_update`
 
 use qbrs::prelude::*;
@@ -19,15 +20,19 @@ async fn main() {
         .expect("query ada")
         .expect("ada exists");
 
-    // Only `display_name` is sent in the SET clause — `email`/`active`
-    // are entirely absent from the rendered SQL, not just left unchanged
-    // via a redundant `email = email` self-assignment.
+    // A request's fields, mapped across one for one: `email` was not sent,
+    // so it is absent from the rendered SQL — not set to NULL, and not
+    // left unchanged via a redundant `email = email` self-assignment.
+    let requested_email: Option<String> = None;
+    let requested_name: Option<String> = Some("Ada, Countess of Lovelace".into());
     let affected = update::<Postgres, _>(users::Table)
         .set(
-            Assignments::from_row(UsersUpdate {
-                display_name: Some(Some("Ada, Countess of Lovelace".into())),
-                ..Default::default()
-            })
+            Assignments::from_row(
+                UsersUpdate::builder()
+                    .email(requested_email)
+                    .display_name(requested_name)
+                    .build(),
+            )
             .expect("display_name is set"),
         )
         .filter(users::id.eq(ada_id))
@@ -54,15 +59,13 @@ async fn main() {
         .expect("stamp");
     println!("normalised {stamped} row(s)");
 
-    // `Some(None)` means "set this nullable column to NULL", distinct from
-    // `None` ("don't touch it") — clearing the display name explicitly.
+    // Clearing the column is its own call, distinct from having nothing to
+    // say about it — the struct literal spells the same two states
+    // `Some(None)` and `None`.
     let cleared = update::<Postgres, _>(users::Table)
         .set(
-            Assignments::from_row(UsersUpdate {
-                display_name: Some(None),
-                ..Default::default()
-            })
-            .expect("display_name is set"),
+            Assignments::from_row(UsersUpdate::builder().display_name_null().build())
+                .expect("display_name is set"),
         )
         .filter(users::id.eq(ada_id))
         .returning(users::display_name)

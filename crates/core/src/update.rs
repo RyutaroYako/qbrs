@@ -188,7 +188,7 @@ impl<D, T: Table> Update<D, T> {
     /// Only columns of the table being updated are ever in scope for the
     /// `WHERE` clause here, so the `Superset` check is against a
     /// single-table scope rather than a full query `Scope`.
-    pub fn filter<C: Condition<WrittenTable<T>, Idxs>, Idxs>(mut self, cond: C) -> Self {
+    pub fn filter<C: Condition<D, WrittenTable<T>, Idxs>, Idxs>(mut self, cond: C) -> Self {
         self.wheres.push(cond.into_predicate().into_kind());
         self
     }

@@ -41,7 +41,7 @@ DATABASE_URL=postgres://postgres:postgres@localhost:5432/qbrs_test \
 | [`01_select_basic`](examples/01_select_basic.rs) | `SELECT ... WHERE ... ORDER BY ... LIMIT` |
 | [`02_select_join`](examples/02_select_join.rs) | LEFT vs. INNER JOIN — automatically-derived `Option<T>` nullability |
 | [`03_insert`](examples/03_insert.rs) | `Defaultable<T>`, bulk insert, `RETURNING` |
-| [`04_update`](examples/04_update.rs) | partial updates, `Option<Option<T>>` for "set NULL" vs. "don't touch", `null::<Text>()` as an assignment |
+| [`04_update`](examples/04_update.rs) | partial updates from a request, `.column_null()` for "set NULL" vs. an absent field for "don't touch", `null::<Text>()` as an assignment |
 | [`05_delete`](examples/05_delete.rs) | `DELETE ... RETURNING` |
 | [`06_raw_sql`](examples/06_raw_sql.rs) | the `sql!{}` escape hatch |
 | [`07_dynamic_filters`](examples/07_dynamic_filters.rs) | dynamic query composition without a `.$dynamic()`-style escape hatch |

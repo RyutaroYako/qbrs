@@ -6,7 +6,7 @@ use std::marker::PhantomData;
 
 use crate::cte::Cte;
 use crate::dialect::{Dialect, SupportsFullOuterJoin, SupportsRightJoin};
-use crate::expr::{Bool, BoolLike, Expr, ExprKind, IntoExpr, Value};
+use crate::expr::{BoolLike, Expr, ExprKind, IntoExpr, Value};
 use crate::render::{
     Fragment, FragmentSink, QuerySink, SelectItem, Sink, render_and_list, render_expr,
     render_expr_list, render_order_by, render_select_list,
@@ -248,17 +248,18 @@ where
 /// applied.
 #[diagnostic::on_unimplemented(
     message = "`{Self}` isn't a condition",
-    label = "a comparison (`.eq(..)`, `.gt(..)`, `.is_null()`), an `any_of`/`all_of` of them, a `sql!` fragment of type `Bool`, or a `predicate(..)`",
+    label = "a comparison (`.eq(..)`, `.gt(..)`, `.is_null()`), an `any_of`/`all_of` of them, a `sql!` fragment of type `Bool`, a `predicate(..)`, or an `EXISTS` of a subquery in *this* dialect",
     note = "a `Predicate` also has to have been discharged against *this* scope — a scope lists its tables most-recently-joined first, so two that look alike can still differ in order"
 )]
-pub trait Condition<Scope, Idxs> {
+pub trait Condition<D, Scope, Idxs> {
     /// Discharged against this scope, which for an `Expr` is where its
     /// `Superset` proof is spent and for a `Predicate` already happened.
     #[doc(hidden)]
     fn into_predicate(self) -> Predicate<Scope>;
 }
 
-impl<Scope: Superset<Req, Idxs>, Req, Idxs, T: IntoExpr<Req = Req>> Condition<Scope, Idxs> for T
+impl<D, Scope: Superset<Req, Idxs>, Req, Idxs, T: IntoExpr<Req = Req>> Condition<D, Scope, Idxs>
+    for T
 where
     T::Sql: BoolLike,
 {
@@ -270,9 +271,30 @@ where
     }
 }
 
-impl<Scope> Condition<Scope, ()> for Predicate<Scope> {
+impl<D, Scope> Condition<D, Scope, ()> for Predicate<Scope> {
     fn into_predicate(self) -> Predicate<Scope> {
         self
+    }
+}
+
+/// `EXISTS (<subquery>)`. Not an `Expr`, because unlike every other
+/// expression this one is dialect-pinned: the subquery it holds was
+/// capability-checked against its own dialect, and any CTE it binds is
+/// already rendered in that dialect. It is therefore a condition and only a
+/// condition — `.filter(..)` it onto a query of the same dialect, which
+/// still composes conditionally, since `.filter` returns `Self`. It has no
+/// `predicate(..)`, which would trade the dialect away.
+pub struct Exists<D, Req> {
+    kind: ExprKind,
+    _marker: PhantomData<fn() -> (D, Req)>,
+}
+
+impl<D, Scope: Superset<Req, Idxs>, Req, Idxs> Condition<D, Scope, Idxs> for Exists<D, Req> {
+    fn into_predicate(self) -> Predicate<Scope> {
+        Predicate {
+            kind: self.kind,
+            _marker: PhantomData,
+        }
     }
 }
 
@@ -483,7 +505,7 @@ impl<D, Scope, Sel, Outer> Select<D, Scope, Sel, Outer> {
     /// AND-folded, and callable any number of times — conditionally, in a
     /// loop, from a helper — without changing `Self`'s type, so the most
     /// common kind of dynamic query needs no escape hatch.
-    pub fn filter<C: Condition<Scope, Idxs>, Idxs>(mut self, cond: C) -> Self {
+    pub fn filter<C: Condition<D, Scope, Idxs>, Idxs>(mut self, cond: C) -> Self {
         self.body.wheres.push(cond.into_predicate().into_kind());
         self
     }
@@ -540,8 +562,17 @@ impl<D, Scope, Sel, Outer> Select<D, Scope, Sel, Outer> {
 
     /// A `WHERE`-shaped filter applied after grouping (aggregate
     /// conditions) — AND-folded across calls exactly like `.filter()`.
-    pub fn having<C: Condition<Scope, Idxs>, Idxs>(mut self, cond: C) -> Self {
+    pub fn having<C: Condition<D, Scope, Idxs>, Idxs>(mut self, cond: C) -> Self {
         self.body.having.push(cond.into_predicate().into_kind());
+        self
+    }
+
+    /// The same for a runtime-length collection of discharged conditions,
+    /// as `filter_all` is to `filter`.
+    pub fn having_all(mut self, conds: impl IntoIterator<Item = Predicate<Scope>>) -> Self {
+        self.body
+            .having
+            .extend(conds.into_iter().map(Predicate::into_kind));
         self
     }
 
@@ -564,7 +595,7 @@ impl<D, Scope, Sel, Outer> Select<D, Scope, Sel, Outer> {
         on: C,
     ) -> Select<D, Cons<TableSlot<S::Table, NotNull>, Scope>, Sel, Outer>
     where
-        C: Condition<Cons<TableSlot<S::Table, NotNull>, Scope>, Idxs>,
+        C: Condition<D, Cons<TableSlot<S::Table, NotNull>, Scope>, Idxs>,
     {
         self.body.bind(source);
         self.body.joins.push(JoinClause {
@@ -581,7 +612,7 @@ impl<D, Scope, Sel, Outer> Select<D, Scope, Sel, Outer> {
         on: C,
     ) -> Select<D, Cons<TableSlot<S::Table, MaybeNull>, Scope>, Sel, Outer>
     where
-        C: Condition<Cons<TableSlot<S::Table, MaybeNull>, Scope>, Idxs>,
+        C: Condition<D, Cons<TableSlot<S::Table, MaybeNull>, Scope>, Idxs>,
     {
         self.body.bind(source);
         self.body.joins.push(JoinClause {
@@ -603,7 +634,7 @@ impl<D, Scope, Sel, Outer> Select<D, Scope, Sel, Outer> {
     where
         D: SupportsRightJoin,
         Scope: MapNullable,
-        C: Condition<Cons<TableSlot<S::Table, NotNull>, Scope::Output>, Idxs>,
+        C: Condition<D, Cons<TableSlot<S::Table, NotNull>, Scope::Output>, Idxs>,
     {
         self.body.bind(source);
         self.body.joins.push(JoinClause {
@@ -622,7 +653,7 @@ impl<D, Scope, Sel, Outer> Select<D, Scope, Sel, Outer> {
     where
         D: SupportsFullOuterJoin,
         Scope: MapNullable,
-        C: Condition<Cons<TableSlot<S::Table, MaybeNull>, Scope::Output>, Idxs>,
+        C: Condition<D, Cons<TableSlot<S::Table, MaybeNull>, Scope::Output>, Idxs>,
     {
         self.body.bind(source);
         self.body.joins.push(JoinClause {
@@ -794,26 +825,32 @@ impl<D: Dialect, Scope, Sel, Outer: ScopeTables> Select<D, Scope, Sel, Outer> {
     /// own column references were already checked against `Scope` when it
     /// was built. On a query that isn't a subquery, `Outer` is `Nil` and
     /// this is an uncorrelated `EXISTS`.
-    pub fn exists<Idx>(&self) -> Expr<Outer::Tables, Bool>
+    pub fn exists<Idx>(&self) -> Exists<D, Outer::Tables>
     where
         Sel: Selection<Scope, Idx>,
     {
-        Expr::from_kind(ExprKind::Exists {
-            body: Box::new(self.body.clone()),
-            selection: self.selection.items(),
-            negated: false,
-        })
+        self.exists_kind::<Idx>(false)
     }
 
-    pub fn not_exists<Idx>(&self) -> Expr<Outer::Tables, Bool>
+    pub fn not_exists<Idx>(&self) -> Exists<D, Outer::Tables>
     where
         Sel: Selection<Scope, Idx>,
     {
-        Expr::from_kind(ExprKind::Exists {
-            body: Box::new(self.body.clone()),
-            selection: self.selection.items(),
-            negated: true,
-        })
+        self.exists_kind::<Idx>(true)
+    }
+
+    fn exists_kind<Idx>(&self, negated: bool) -> Exists<D, Outer::Tables>
+    where
+        Sel: Selection<Scope, Idx>,
+    {
+        Exists {
+            kind: ExprKind::Exists {
+                body: Box::new(self.body.clone()),
+                selection: self.selection.items(),
+                negated,
+            },
+            _marker: PhantomData,
+        }
     }
 }
 

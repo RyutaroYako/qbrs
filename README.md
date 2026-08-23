@@ -180,7 +180,9 @@ A schema is a `#[derive(Table)]` struct, shown in the
   recently joined table first, and a `Row`'s fields are in selection order;
   both spell out long enough to want a `type` alias and an
   `#[allow(clippy::type_complexity)]`. Inference covers every use that stays
-  inside a function.
+  inside a function; where one doesn't — a `Prepared` or a `DynSelect` kept
+  in a struct field — `select(users::All)` decodes to `users::AllRow`, which
+  `#[derive(Table)]` names for you.
 - **Rows into your own structs** —
   [`17_from_row`](examples/examples/17_from_row.rs). `#[derive(FromRow)]`
   fills a plain struct by matching field *names* — or the name given by
@@ -201,8 +203,13 @@ A schema is a `#[derive(Table)]` struct, shown in the
   a nullable one with a default gets the three-state
   `Defaultable<Option<T>>`, whose third state the builder spells
   `.column_null()`. `*Update` mirrors all this with `Option<T>` /
-  `Option<Option<T>>` (untouched / `NULL` / value), and a request struct's
-  `Option<T>` converts into either. `update(t).set_to(col, expr)` starts a
+  `Option<Option<T>>` (untouched / `NULL` / value) — written through
+  `UsersUpdate::builder()`, whose setters take what the column holds or an
+  `Option` of it, so a request struct's fields map across one for one and
+  an absent one stays untouched; `.column_null()` is the explicit `NULL`.
+  (The struct literal spells the three states directly, which is easy to
+  nest wrongly: `Some(request.field)` sets `NULL` where the request said
+  nothing.) `update(t).set_to(col, expr)` starts a
   statement whose assignments are all computed, and needs no `Result`, since
   one assignment is one. An assignment a value can't say —
   `updated_at = now()`, `version = version + 1` — goes in with
@@ -246,7 +253,9 @@ A schema is a `#[derive(Table)]` struct, shown in the
   `outer.correlated(table, sel)` builds a subquery whose scope is the outer
   query's plus its own table, so referencing an outer column is legal; the
   resulting `EXISTS` is tagged with those tables, so filtering it onto a
-  query that doesn't have them is a compile error.
+  query that doesn't have them is a compile error — as is filtering it onto
+  a query of another dialect, since a subquery is checked against its own
+  dialect's capabilities before it is rendered in anyone's.
 - **One query, two shapes** — `.count(&pool)` answers "how many rows would
   this return", ignoring `ORDER BY`/`LIMIT`/`OFFSET` and counting *groups*
   for a grouped query; it borrows, so a paginated endpoint needs no clone.
@@ -348,7 +357,7 @@ A schema is a `#[derive(Table)]` struct, shown in the
   selected, so a wider row is read by key or through `#[derive(FromRow)]`.
 - Naming a row type in a signature takes a type alias, and one long enough
   to trip `clippy::type_complexity`; inference covers every use that stays
-  inside a function.
+  inside a function, and `<table>::AllRow` covers a stored `select(All)`.
 - A `RETURNING` row is decoded as many, so `load_one` hands back an
   `Option`: `ON CONFLICT DO NOTHING` can return no row at all, even for an
   insert of exactly one.
@@ -390,9 +399,15 @@ A schema is a `#[derive(Table)]` struct, shown in the
   compiles and then renders `FROM "t" JOIN "t"`, which the database refuses.
   Two `#[derive(Table)]` structs must not share a `#[table(name = "..")]`.
 - A correlated `EXISTS` is tagged with the outer query's tables, so it can
-  only be filtered onto that query — but `prepare!{}` doesn't tie its
-  `Params` struct to the query it was built from, and a mismatch surfaces at
-  `.load()` as `UnresolvedPlaceholder` rather than at compile time.
+  only be filtered onto that query. It is a condition and not an expression:
+  `.filter(sub.exists())` (conditionally, since `.filter` returns `Self`),
+  but not `predicate(sub.exists())` into a `Vec<Predicate<_>>`, which would
+  drop the dialect it is pinned to.
+- `prepare!{}` doesn't tie its `Params` struct to the query it was built
+  from: running a query with another struct's params is an
+  `UnresolvedPlaceholder` at `.load()`, not a compile error. Placeholder
+  names carry the module and struct they were declared in, so it is always
+  that error and never a value bound to the wrong slot.
 - The derives expand to `::qbrs::` paths, so depend on the `qbrs` facade
   rather than on `qbrs-core` + `qbrs-macros` directly.
 - Every `?` in a `sql!{}` text is a slot — there is no escape for a literal

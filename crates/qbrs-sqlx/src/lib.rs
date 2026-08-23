@@ -3,11 +3,14 @@
 //! query building, SQL rendering, and every compile-time guarantee live in
 //! `qbrs-core`, which stays independent of any async runtime or driver.
 
+use qbrs_core::delete::Delete;
 use qbrs_core::dialect::Postgres;
 use qbrs_core::expr::Value;
+use qbrs_core::insert::Insert;
 use qbrs_core::row::{Row, RowCons, RowNil};
 use qbrs_core::select::{DynSelect, Prepared, PreparedParams, Select, Selection, SetOp, Total};
 use qbrs_core::statement::{Returning, Statement, WrittenTable};
+use qbrs_core::update::Update;
 use sqlx::Row as _;
 use sqlx::postgres::PgRow;
 
@@ -27,9 +30,10 @@ pub enum Error {
     #[error(transparent)]
     UnresolvedPlaceholder(#[from] qbrs_core::select::UnresolvedPlaceholder),
 
-    /// An `*Update` with nothing set, or an insert of no rows, reached a
-    /// statement: the same qbrs-level misuse `UnresolvedPlaceholder` is, so
-    /// a handler returning this crate's `Result` can `?` on either.
+    /// An `*Update` describing no assignment, or an insert of no rows —
+    /// caught where the request-shaped data is read (`Assignments::from_row`,
+    /// `.values_all`), never at a statement. Here so a handler returning
+    /// this crate's `Result` can `?` on that as readily as on a query.
     #[error(transparent)]
     NothingToSet(#[from] qbrs_core::update::NothingToSet),
 
@@ -61,7 +65,7 @@ pub mod prelude {
     pub use crate::Error;
     pub use crate::{
         CountExt, CountQuery, DecodeRow, ExecuteExt, LoadExt, PreparedCountExt, PreparedExt,
-        RowQuery,
+        PreparedQuery, PreparedTotal, RowQuery, WriteStatement,
     };
 }
 
@@ -176,7 +180,7 @@ async fn execute_only<'e, E: sqlx::PgExecutor<'e>>(
 /// `scope::Superset` explains. Callers never see it; it's inferred.
 #[diagnostic::on_unimplemented(
     message = "`{Self}` isn't a query this crate can run",
-    label = "a `Select`, a `RETURNING`, a `DynSelect` or a set operation, whose values are all types `DecodeRow` covers"
+    label = "a `Select`, a `RETURNING`, a `DynSelect` or a set operation, in the `Postgres` dialect, whose values are all types `DecodeRow` covers"
 )]
 pub trait RowQuery<Idx> {
     type Output: DecodeRow;
@@ -189,6 +193,14 @@ pub trait RowQuery<Idx> {
 /// `ExecuteExt::execute` where there are none to decode. One trait for
 /// every row-producing builder keeps the terminal vocabulary tied to what a
 /// statement yields rather than to which builder happens to be in hand.
+///
+/// Implemented for every builder, satisfiable by the ones that produce
+/// rows: what a builder can't do is then reported by `RowQuery`, which says
+/// so, rather than by the method not existing — which rustc answers with a
+/// list of unsatisfied bounds or, worse, by suggesting `Iterator`. Not a
+/// blanket impl, since `load`/`count`/`execute` are names other traits in a
+/// caller's scope have too. A builder added here needs its three empty
+/// impls, or its terminal goes back to reporting nothing.
 pub trait LoadExt {
     fn load<'e, Idx, E: sqlx::PgExecutor<'e>>(
         &self,
@@ -213,7 +225,13 @@ pub trait LoadExt {
     }
 }
 
-impl<Scope, Sel> LoadExt for Select<Postgres, Scope, Sel> {}
+impl<D, Scope, Sel, Outer> LoadExt for Select<D, Scope, Sel, Outer> {}
+impl<S, Sel> LoadExt for Returning<S, Sel> {}
+impl<D, Output> LoadExt for DynSelect<D, Output> {}
+impl<D, Output> LoadExt for SetOp<D, Output> {}
+impl<D, R: qbrs_core::insert::InsertRow> LoadExt for Insert<D, R> {}
+impl<D, T: qbrs_core::scope::Table> LoadExt for Update<D, T> {}
+impl<D, T: qbrs_core::scope::Table> LoadExt for Delete<D, T> {}
 
 impl<Scope, Sel, Idx> RowQuery<Idx> for Select<Postgres, Scope, Sel>
 where
@@ -233,14 +251,15 @@ where
 /// `Option`, since a count query always produces exactly one row.
 #[diagnostic::on_unimplemented(
     message = "`{Self}` isn't a query this crate can count",
-    label = "a `Select` or a set operation is; a writing statement reports rows affected through `.execute(..)` instead"
+    label = "a `Select` or a set operation in the `Postgres` dialect is; a writing statement reports rows affected through `.execute(..)` instead"
 )]
 pub trait CountQuery<Idx> {
     #[doc(hidden)]
     fn count_rendered(&self) -> (String, Vec<Value>);
 }
 
-/// The bound is on the method for the reason `RowQuery` explains.
+/// The bound is on the method, and the impl is blanket, for the two
+/// reasons `LoadExt` explains.
 pub trait CountExt {
     fn count<'e, Idx, E: sqlx::PgExecutor<'e>>(
         &self,
@@ -253,7 +272,13 @@ pub trait CountExt {
     }
 }
 
-impl<Scope, Sel> CountExt for Select<Postgres, Scope, Sel> {}
+impl<D, Scope, Sel, Outer> CountExt for Select<D, Scope, Sel, Outer> {}
+impl<S, Sel> CountExt for Returning<S, Sel> {}
+impl<D, Output> CountExt for DynSelect<D, Output> {}
+impl<D, Output> CountExt for SetOp<D, Output> {}
+impl<D, R: qbrs_core::insert::InsertRow> CountExt for Insert<D, R> {}
+impl<D, T: qbrs_core::scope::Table> CountExt for Update<D, T> {}
+impl<D, T: qbrs_core::scope::Table> CountExt for Delete<D, T> {}
 
 impl<Scope, Sel: Selection<Scope, Idx>, Idx> CountQuery<Idx> for Select<Postgres, Scope, Sel> {
     fn count_rendered(&self) -> (String, Vec<Value>) {
@@ -264,15 +289,11 @@ impl<Scope, Sel: Selection<Scope, Idx>, Idx> CountQuery<Idx> for Select<Postgres
 /// Erasure is for a query whose joins depend on a condition, and such a
 /// query is paged like any other, so it counts like any other. The same
 /// goes for a set-operation chain.
-impl<Output> CountExt for DynSelect<Postgres, Output> {}
-
 impl<Output> CountQuery<()> for DynSelect<Postgres, Output> {
     fn count_rendered(&self) -> (String, Vec<Value>) {
         self.count_sql()
     }
 }
-
-impl<Output> CountExt for SetOp<Postgres, Output> {}
 
 impl<Output> CountQuery<()> for SetOp<Postgres, Output> {
     fn count_rendered(&self) -> (String, Vec<Value>) {
@@ -290,29 +311,49 @@ async fn count_rows<'e, E: sqlx::PgExecutor<'e>>(
     Ok(row.try_get::<i64, _>(0)?)
 }
 
-/// Every writing statement: what `execute` returns is rows affected.
+/// Every writing statement, rendered: what `execute` returns is rows
+/// affected, whichever of the three it was.
 #[diagnostic::on_unimplemented(
     message = "`{Self}` isn't a statement this crate can execute",
-    label = "an `INSERT`, `UPDATE` or `DELETE` is; a `SELECT` yields rows, so it goes through `.load(..)`"
+    label = "an `INSERT`, `UPDATE` or `DELETE` in the `Postgres` dialect is; a `SELECT` yields rows, so it goes through `.load(..)`"
 )]
+pub trait WriteStatement {
+    #[doc(hidden)]
+    fn write_rendered(&self) -> (String, Vec<Value>);
+}
+
+#[diagnostic::do_not_recommend]
+impl<S: Statement<Dialect = Postgres>> WriteStatement for S {
+    fn write_rendered(&self) -> (String, Vec<Value>) {
+        self.to_sql()
+    }
+}
+
+/// The bound is on the method, and the impl is blanket, for the two reasons
+/// `LoadExt` explains.
 pub trait ExecuteExt {
     fn execute<'e, E: sqlx::PgExecutor<'e>>(
         &self,
         executor: E,
-    ) -> impl std::future::Future<Output = Result<u64>>;
-}
-
-impl<S: Statement<Dialect = Postgres>> ExecuteExt for S {
-    async fn execute<'e, E: sqlx::PgExecutor<'e>>(&self, executor: E) -> Result<u64> {
-        let (sql, params) = self.to_sql();
-        execute_only(executor, &sql, params).await
+    ) -> impl std::future::Future<Output = Result<u64>>
+    where
+        Self: WriteStatement,
+    {
+        let (sql, params) = self.write_rendered();
+        async move { execute_only(executor, &sql, params).await }
     }
 }
 
+impl<D, Scope, Sel, Outer> ExecuteExt for Select<D, Scope, Sel, Outer> {}
+impl<S, Sel> ExecuteExt for Returning<S, Sel> {}
+impl<D, Output> ExecuteExt for DynSelect<D, Output> {}
+impl<D, Output> ExecuteExt for SetOp<D, Output> {}
+impl<D, R: qbrs_core::insert::InsertRow> ExecuteExt for Insert<D, R> {}
+impl<D, T: qbrs_core::scope::Table> ExecuteExt for Update<D, T> {}
+impl<D, T: qbrs_core::scope::Table> ExecuteExt for Delete<D, T> {}
+
 /// One impl for every `RETURNING`: what a statement returns is decided by
 /// its selection, not by which statement it was.
-impl<S, Sel> LoadExt for Returning<S, Sel> {}
-
 impl<S: Statement<Dialect = Postgres>, Sel, Idx> RowQuery<Idx> for Returning<S, Sel>
 where
     Sel: Selection<WrittenTable<S::Table>, Idx>,
@@ -394,16 +435,12 @@ impl<L: DecodeRow> DecodeRow for Row<L> {
 /// An erased query and a set-op chain were both rendered before their
 /// selection type was gone, leaving nothing for `Idx` to index — hence
 /// `RowQuery<()>`, the same trait with an empty proof.
-impl<Output> LoadExt for DynSelect<Postgres, Output> {}
-
 impl<Output: DecodeRow> RowQuery<()> for DynSelect<Postgres, Output> {
     type Output = Output;
     fn rendered(&self) -> (String, Vec<Value>) {
         self.to_sql()
     }
 }
-
-impl<Output> LoadExt for SetOp<Postgres, Output> {}
 
 impl<Output: DecodeRow> RowQuery<()> for SetOp<Postgres, Output> {
     type Output = Output;
@@ -419,43 +456,59 @@ impl<Output: DecodeRow> RowQuery<()> for SetOp<Postgres, Output> {
 /// re-rendering it.
 #[diagnostic::on_unimplemented(
     message = "`{Self}` isn't a prepared query this crate can run",
-    label = "a `prepare!{{}}`-built query is, and its `Params` have to be the ones it declared"
+    label = "a `.prepare()`-built query is, and its `Params` have to be the ones it declared"
 )]
-pub trait PreparedExt<Params> {
-    type Output;
-    fn load<'e, E: sqlx::PgExecutor<'e>>(
-        &self,
-        executor: E,
-        params: Params,
-    ) -> impl std::future::Future<Output = Result<Vec<Self::Output>>>;
-    fn load_one<'e, E: sqlx::PgExecutor<'e>>(
-        &self,
-        executor: E,
-        params: Params,
-    ) -> impl std::future::Future<Output = Result<Option<Self::Output>>>;
+pub trait PreparedQuery<Params> {
+    type Output: DecodeRow;
+    #[doc(hidden)]
+    fn resolved(&self, params: Params) -> Result<(String, Vec<Value>)>;
 }
 
-impl<Params: PreparedParams, Output: DecodeRow> PreparedExt<Params>
+/// The bound is on the method, and the impl is blanket, for the two reasons
+/// `LoadExt` explains.
+pub trait PreparedExt {
+    fn load<'e, Params, E: sqlx::PgExecutor<'e>>(
+        &self,
+        executor: E,
+        params: Params,
+    ) -> impl std::future::Future<Output = Result<Vec<<Self as PreparedQuery<Params>>::Output>>>
+    where
+        Self: PreparedQuery<Params>,
+    {
+        let resolved = self.resolved(params);
+        async move {
+            let (sql, values) = resolved?;
+            fetch_all::<<Self as PreparedQuery<Params>>::Output, E>(executor, &sql, values).await
+        }
+    }
+
+    fn load_one<'e, Params, E: sqlx::PgExecutor<'e>>(
+        &self,
+        executor: E,
+        params: Params,
+    ) -> impl std::future::Future<Output = Result<Option<<Self as PreparedQuery<Params>>::Output>>>
+    where
+        Self: PreparedQuery<Params>,
+    {
+        let resolved = self.resolved(params);
+        async move {
+            let (sql, values) = resolved?;
+            fetch_optional::<<Self as PreparedQuery<Params>>::Output, E>(executor, &sql, values)
+                .await
+        }
+    }
+}
+
+impl<D, Params, Output> PreparedExt for Prepared<D, Params, Output> {}
+
+#[diagnostic::do_not_recommend]
+impl<Params: PreparedParams, Output: DecodeRow> PreparedQuery<Params>
     for Prepared<Postgres, Params, Output>
 {
     type Output = Output;
 
-    async fn load<'e, E: sqlx::PgExecutor<'e>>(
-        &self,
-        executor: E,
-        params: Params,
-    ) -> Result<Vec<Output>> {
-        let (sql, values) = self.resolve(params)?;
-        fetch_all::<Output, E>(executor, &sql, values).await
-    }
-
-    async fn load_one<'e, E: sqlx::PgExecutor<'e>>(
-        &self,
-        executor: E,
-        params: Params,
-    ) -> Result<Option<Output>> {
-        let (sql, values) = self.resolve(params)?;
-        fetch_optional::<Output, E>(executor, &sql, values).await
+    fn resolved(&self, params: Params) -> Result<(String, Vec<Value>)> {
+        Ok(self.resolve(params)?)
     }
 }
 
@@ -463,21 +516,36 @@ impl<Params: PreparedParams, Output: DecodeRow> PreparedExt<Params>
 /// is separate from `LoadExt`: a count produces a number, not rows.
 #[diagnostic::on_unimplemented(
     message = "`{Self}` isn't a prepared total this crate can run",
-    label = "`prepare_count!{{}}` builds one; `prepare!{{}}` builds a query whose rows go through `.load(..)`"
+    label = "`.prepare_count()` builds one; `.prepare()` builds a query whose rows go through `.load(..)`"
 )]
-pub trait PreparedCountExt<Params> {
-    fn count<'e, E: sqlx::PgExecutor<'e>>(
+pub trait PreparedTotal<Params> {
+    #[doc(hidden)]
+    fn resolved_count(&self, params: Params) -> Result<(String, Vec<Value>)>;
+}
+
+impl<Params: PreparedParams> PreparedTotal<Params> for Prepared<Postgres, Params, Total> {
+    fn resolved_count(&self, params: Params) -> Result<(String, Vec<Value>)> {
+        Ok(self.resolve(params)?)
+    }
+}
+
+/// The bound is on the method, and the impl is blanket, for the two reasons
+/// `LoadExt` explains.
+pub trait PreparedCountExt {
+    fn count<'e, Params, E: sqlx::PgExecutor<'e>>(
         &self,
         executor: E,
         params: Params,
-    ) -> impl std::future::Future<Output = Result<i64>>;
-}
-
-impl<Params: PreparedParams> PreparedCountExt<Params> for Prepared<Postgres, Params, Total> {
-    async fn count<'e, E: sqlx::PgExecutor<'e>>(&self, executor: E, params: Params) -> Result<i64> {
-        count_rows(executor, self.resolve(params)?).await
+    ) -> impl std::future::Future<Output = Result<i64>>
+    where
+        Self: PreparedTotal<Params>,
+    {
+        let resolved = self.resolved_count(params);
+        async move { count_rows(executor, resolved?).await }
     }
 }
+
+impl<D, Params, Output> PreparedCountExt for Prepared<D, Params, Output> {}
 
 #[cfg(test)]
 mod tests {

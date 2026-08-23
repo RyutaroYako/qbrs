@@ -199,3 +199,37 @@ fn set_to_assigns_a_typed_sql_null() {
         vec![qbrs::expr::Value::NullText, qbrs::expr::Value::I64(1)]
     );
 }
+
+#[test]
+fn an_update_builder_leaves_an_absent_request_field_untouched() {
+    // The struct literal spells a nullable column's three states as
+    // `Option<Option<T>>`; the builder takes what a request holds, so an
+    // absent field can't turn into `SET display_name = NULL`.
+    let absent: Option<String> = None;
+    let patch = UsersUpdate::builder()
+        .display_name(absent)
+        .nickname("Ada")
+        .build();
+
+    let (sql, params) = qbrs::update::update::<Postgres, _>(users::Table)
+        .set(Assignments::from_row(patch).expect("nickname is set"))
+        .to_sql();
+    assert_eq!(sql, "UPDATE \"users\" SET \"nickname\" = $1");
+    assert_eq!(params, vec![qbrs::expr::Value::Text("Ada".into())]);
+
+    // The explicit NULL is its own call, as it is on the insert builder.
+    let cleared = UsersUpdate::builder().display_name_null().build();
+    let (sql, params) = qbrs::update::update::<Postgres, _>(users::Table)
+        .set(Assignments::from_row(cleared).expect("display_name is set"))
+        .to_sql();
+    assert_eq!(sql, "UPDATE \"users\" SET \"display_name\" = $1");
+    assert_eq!(params, vec![qbrs::expr::Value::NullText]);
+}
+
+#[test]
+fn all_row_names_what_select_all_decodes_to() {
+    fn take(row: users::AllRow) -> i64 {
+        *row.get(users::id)
+    }
+    let _ = take;
+}

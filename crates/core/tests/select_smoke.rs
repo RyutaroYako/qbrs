@@ -374,6 +374,20 @@ fn full_join_makes_every_table_nullable() {
 }
 
 #[test]
+fn having_all_folds_a_runtime_length_collection() {
+    let conds = vec![predicate(qbrs_core::expr::count().gt(1i64))];
+    let (sql, _) = select((users::id, qbrs_core::expr::count()))
+        .from::<Postgres, _>(users::Table)
+        .group_by(users::id)
+        .having_all(conds)
+        .to_sql();
+    assert_eq!(
+        sql,
+        "SELECT \"users\".\"id\", count(*) FROM \"users\" GROUP BY \"users\".\"id\" HAVING (count(*) > $1)"
+    );
+}
+
+#[test]
 fn group_by_and_having_render() {
     let q = select((users::active, qbrs_core::expr::count()))
         .from::<Postgres, _>(users::Table)

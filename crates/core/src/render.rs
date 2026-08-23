@@ -178,7 +178,7 @@ pub(crate) fn render_expr<D: Dialect>(expr: &ExprKind, sink: &mut dyn Sink) {
             partition_by,
             order_by,
         } => {
-            // No defensive parens here, unlike `Raw`: `OVER` only attaches
+            // No defensive parens here, unlike `Template`: `OVER` only attaches
             // to a bare function-call syntax node, so `(row_number()) OVER
             // (..)` would not be valid SQL.
             sink.text(func);

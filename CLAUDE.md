@@ -183,10 +183,14 @@ make one from a query, so no call site has to remember that an embedded query's 
 are written by position and numbered later. Both carriers — `Cte<D, _>` and `SetOp<D, _>` —
 keep the dialect they were rendered in, which is what makes a fragment safe to hold.
 
-An `EXISTS` subquery is deliberately *not* one: an `Expr` carries no dialect, so a rendered
-fragment inside one could be filtered onto a statement of another dialect. `ExprKind::Exists`
-holds the `SelectBody` and its selection unrendered, and `render_expr` writes it in the
-host statement's dialect. `sql!{}` is likewise an `ExprKind::Template`, its slots rendered
+An `EXISTS` subquery is deliberately *not* one: `ExprKind::Exists` holds the `SelectBody`
+and its selection unrendered, so its placeholders are numbered by the statement it lands in.
+Rendering late is not enough on its own, though — the subquery was capability-checked against
+its own dialect and any CTE it binds is already a `Fragment` in that dialect — so
+`Select::exists` returns a `select::Exists<D, Req>`, which is a `Condition<D, ..>` and
+nothing else. That is why `Condition` carries `D`: it is the one trait every boolean clause
+goes through, and the only place a dialect-pinned condition can be caught. `Exists` has no
+`predicate(..)`, which would trade the dialect away. `sql!{}` is likewise an `ExprKind::Template`, its slots rendered
 with everything else. If you add another place that embeds a *query* in an expression, hold
 the query; if you add one that embeds SQL in a dialect-tagged builder, take a `Fragment` —
 don't reintroduce a bare `(String, Vec<Value>)` pair.
@@ -221,7 +225,9 @@ to the struct as `pub use users::HasId as _;`: anonymous, so a schema adds exact
 names to its module and `use crate::schema::*;` is all a call site needs.
 
 It also emits `const All` (a `select::All<Table>`) and the `select::AllColumns` impl behind
-it, so `select(users::All)` never restates the column list. A selection list is a chain of
+it, so `select(users::All)` never restates the column list, plus `type AllRow` — what that
+selection decodes to with the table joined not-null, so a stored `Prepared`/`DynSelect`
+names a row instead of spelling a `RowCons` chain by hand. A selection list is a chain of
 `select::SelectionPart`s, each contributing `Fields<Tail>` in front of whatever the rest of
 the list contributes — which is what lets one tuple element carry a whole table, and makes
 the 16-element limit count tables rather than columns.
@@ -239,7 +245,10 @@ type after — named after the column, so the builder's type says which one is s
 exactly when the row is complete and nothing is unwrapped. Insert fields use `Defaultable<T>`
 (and `Defaultable<Option<T>>` for nullable-with-default) so
 omit / explicit-NULL / explicit-value stay distinguishable; update fields use `Option<T>` /
-`Option<Option<T>>` for untouched / set-NULL / set-value. A statement with nothing in it —
+`Option<Option<T>>` for untouched / set-NULL / set-value — reached through
+`*Update::builder()`, whose setters take the same `IntoColumnValue` shape the insert
+builder's do, so a request's `Option<T>` maps across without the nesting (and the nesting is
+what rustc's own "try wrapping in `Some`" turns into a silent `SET column = NULL`). A statement with nothing in it —
 `UPDATE .. SET` with no assignments, `INSERT` with no rows — has no SQL form, and both
 shapes are ordinary request-shaped data rather than bugs, so the two places that read such
 data — `Assignments::from_row(..)` and `.values_all(..)` — return a `Result`
@@ -263,11 +272,21 @@ branches, against the `RowCons` chain `with!{}` declares as `CteShape::Row`.
 
 Execution is bolted on via extension traits implemented only for `Postgres`-dialect
 builders, plus `DecodeRow` impls for row decoding. The traits are cut by what a statement
-*produces*, not by which builder it came from: `LoadExt` (`load`/`load_one`) covers `SELECT`,
-`RETURNING`, `DynSelect` and `SetOp` alike, and supplies only `rendered()` per builder;
-`ExecuteExt` is rows-affected DML; `CountExt` is a total; `PreparedExt` is `LoadExt`'s pair of
-methods with the `Params` that arrive at the call. A new row-producing builder adds a
-`LoadExt` impl, not a trait. All methods are generic over
+*produces*, not by which builder it came from: `load`/`load_one` cover `SELECT`,
+`RETURNING`, `DynSelect` and `SetOp` alike; `execute` is rows-affected DML; `count` is a
+total; `PreparedExt`/`PreparedCountExt` are those with the `Params` that arrive at the call.
+
+Each terminal is split in two: a *carrier* trait that says what a builder renders to
+(`RowQuery`, `CountQuery`, `WriteStatement`, `PreparedQuery`, `PreparedTotal`) and carries
+the `on_unimplemented` message, and an *extension* trait (`LoadExt`, `CountExt`,
+`ExecuteExt`, `PreparedExt`, `PreparedCountExt`) whose method carries the bound. The
+extension traits are implemented for every builder, dialect and all, so a terminal always
+resolves and the carrier reports why it can't be satisfied — with the bound on the impl
+instead, `.load()` on the wrong builder is a method-resolution failure that names five
+unsatisfied bounds, or worse, suggests `Iterator`. They are not blanket impls:
+`load`/`count`/`execute` are names other traits in a caller's scope have too. A new builder
+therefore needs its empty `LoadExt`/`CountExt`/`ExecuteExt` impls plus the carrier impl that
+is actually true of it. All methods are generic over
 `sqlx::PgExecutor`, which is why `&PgPool` and `&mut *tx` both work with no separate
 transactional API. Everything returns `qbrs_sqlx::Result<T>`; keep `UnresolvedPlaceholder`
 (a qbrs-level misuse) distinct from the `Sqlx` variant rather than collapsing them.

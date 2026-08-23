@@ -518,13 +518,6 @@ where
     }
 }
 
-impl<L: RowValues> RowValues for Row<L> {
-    type Values = L::Values;
-    fn into_values(self) -> Self::Values {
-        self.0.into_values()
-    }
-}
-
 /// `Vec<Row<..>> -> Vec<(..)>`.
 pub trait IntoTuples {
     type Tuples;

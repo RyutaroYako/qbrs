@@ -1,7 +1,7 @@
 //! Window functions: `row_number()`/`rank()`/`dense_rank()` `.over(window()
 //! .partition_by(..).order_by(..))`.
 //!
-//! `row_number()`/`rank()`/`dense_rank()` return `WindowFunc<K, S>`, whose only
+//! `row_number()`/`rank()`/`dense_rank()` return `WindowFunc<K>`, whose only
 //! method is `.over()`, so `.over()` can't be reached from an arbitrary
 //! expression that would render nonsense SQL.
 //!
@@ -11,7 +11,7 @@
 
 use std::marker::PhantomData;
 
-use crate::expr::{BigInt, ExprKind, IntoExpr, Keyed, SortDir, SqlType};
+use crate::expr::{BigInt, ExprKind, IntoExpr, Keyed, SortDir};
 use crate::scope::{Concat, Nil};
 use crate::select::OrderKey;
 
@@ -73,13 +73,16 @@ impl<Req> Window<Req> {
 ///
 /// `K` is the row key `.over(..)` stamps onto the result, so a selected
 /// `row_number()` is readable as `row.row_number()` with nothing declared.
-pub struct WindowFunc<K, S: SqlType> {
+pub struct WindowFunc<K> {
     sql: &'static str,
-    _marker: PhantomData<fn() -> (K, S)>,
+    _marker: PhantomData<fn() -> K>,
 }
 
-impl<K, S: SqlType> WindowFunc<K, S> {
-    pub fn over<WindowReq>(self, window: Window<WindowReq>) -> Keyed<K, WindowReq, S> {
+impl<K> WindowFunc<K> {
+    /// Every ranking function counts rows, so the result is `BigInt` rather
+    /// than a parameter — an aggregate over a window, which would have the
+    /// aggregate's own type, is the separate shape this module defers.
+    pub fn over<WindowReq>(self, window: Window<WindowReq>) -> Keyed<K, WindowReq, BigInt> {
         Keyed::from_kind(ExprKind::Window {
             func: self.sql,
             partition_by: window.partition_by,
@@ -88,7 +91,7 @@ impl<K, S: SqlType> WindowFunc<K, S> {
     }
 }
 
-fn window_func<K, S: SqlType>(sql: &'static str) -> WindowFunc<K, S> {
+fn window_func<K>(sql: &'static str) -> WindowFunc<K> {
     WindowFunc {
         sql,
         _marker: PhantomData,
@@ -140,18 +143,18 @@ crate::row::expr_key!(
 
 /// `ROW_NUMBER() OVER (..)` — a unique, sequential number per row within its
 /// partition, ordered by the window's `ORDER BY`.
-pub fn row_number() -> WindowFunc<RowNumber, BigInt> {
+pub fn row_number() -> WindowFunc<RowNumber> {
     window_func("row_number()")
 }
 
 /// `RANK() OVER (..)` — like `row_number()`, but rows tied on the `ORDER BY`
 /// key share the same rank, leaving a gap in the sequence afterward.
-pub fn rank() -> WindowFunc<Rank, BigInt> {
+pub fn rank() -> WindowFunc<Rank> {
     window_func("rank()")
 }
 
 /// `DENSE_RANK() OVER (..)` — like `rank()`, but without the gap after a
 /// tie.
-pub fn dense_rank() -> WindowFunc<DenseRank, BigInt> {
+pub fn dense_rank() -> WindowFunc<DenseRank> {
     window_func("dense_rank()")
 }

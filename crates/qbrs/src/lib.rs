@@ -40,7 +40,7 @@ pub mod prelude {
     };
     pub use qbrs_core::select::All;
     pub use qbrs_core::select::{
-        Condition, DynSelect, GroupBy, Grouping, JoinSource, OrderExt, OrderKey, Ordinal,
+        Condition, DynSelect, Exists, GroupBy, Grouping, JoinSource, OrderExt, OrderKey, Ordinal,
         OrdinalKey, Predicate, Prepared, Select, SelectSeed, Selection, SetOp, SortBy, SortKey,
         Total, grouping, nth, predicate, select, sort_key,
     };

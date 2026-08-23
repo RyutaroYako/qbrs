@@ -16,14 +16,16 @@ pub trait PreparedParams {
 /// A query rendered once, with its `Value::Placeholder(name)` slots left
 /// unresolved, reusable across many `.load(executor, params)` calls. `load`
 /// takes the exact `Params` struct `prepare!{}` generated for this query, so
-/// a missing or mistyped value is a compile error. The dialect it was
+/// a missing or mistyped value is caught. The dialect it was
 /// rendered in stays in its type, so it can only be run by an executor of
 /// that dialect — the same rule `Select` and `DynSelect` follow.
 ///
-/// That holds as long as every placeholder came from `Params::field()`
-/// accessors of the same `prepare!{}` invocation, which is why the
-/// lower-level `expr::placeholder` is `#[doc(hidden)]`: a hand-written name
-/// that matches nothing fails at `.load()` time instead.
+/// `Params` is a free parameter, though — nothing ties the placeholder names
+/// baked into the template to the struct that fills them — so a query built
+/// from one `prepare!` struct and run with another is caught at `resolve`
+/// rather than at compile time. Placeholder names are qualified by the
+/// module and struct they were declared in, so that mismatch is always an
+/// `UnresolvedPlaceholder` and never a value bound to the wrong slot.
 pub struct Prepared<D, Params, Output> {
     sql: String,
     template: Vec<Value>,
@@ -74,8 +76,9 @@ pub struct Total;
 
 /// Returned by `Prepared::resolve` — and so by the `.load()` that calls
 /// it — when a placeholder in the
-/// template has no matching field in the `Params` passed in. Reachable only
-/// by hand-constructing a mismatched `expr::placeholder` name.
+/// template has no matching field in the `Params` passed in: a query
+/// prepared with one `prepare!` struct and run with another, or a
+/// hand-constructed `expr::placeholder` name.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct UnresolvedPlaceholder(pub &'static str);
 

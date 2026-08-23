@@ -102,7 +102,8 @@ macro_rules! scalar_selection {
 /// list is assembled by nesting rather than by concatenating afterwards.
 #[diagnostic::on_unimplemented(
     message = "`{Self}` can't be part of a selection list",
-    label = "a column, an aggregate, a window function, a `sql!` fragment, a labelled one of those, or `<table>::All` can be"
+    label = "a column, an aggregate, a window function, a `sql!` fragment, a labelled one of those, or `<table>::All` can be",
+    note = "an expression the builder inferred a type for — a comparison, an arithmetic combination — has to state what it decodes to with `.decodes_as::<..>()`, since that inference can contradict the join"
 )]
 pub trait SelectionPart<Scope, Idx> {
     type Fields<Tail>;

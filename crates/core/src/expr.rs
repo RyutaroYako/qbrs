@@ -1214,10 +1214,9 @@ pub const fn placeholder_count(sql: &str) -> usize {
 }
 
 /// The one door into `ExprKind` from outside the crate, and the only shape
-/// that needs one: `sql!{}` expands in the caller's. `Req` is pinned to
-/// `Nil` rather than being a parameter, so a raw fragment can't claim a
-/// scope it hasn't got. Reached through `sql!`, which is what checks that
-/// every `?` has a value.
+/// that needs one: `sql!{}` expands in the caller's. `Req` is the union of
+/// the slots' own, so a fragment carries exactly the tables its `?`s name.
+/// Reached through `sql!`, which is what checks that every `?` has a value.
 #[doc(hidden)]
 pub fn raw_expr<S: SqlType, Args: RawArgs>(
     sql: &'static str,

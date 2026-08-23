@@ -99,3 +99,23 @@ fn missing_placeholder_is_a_typed_error_not_a_panic() {
         .unwrap_err();
     assert_eq!(err.0, "not_email");
 }
+
+prepare! {
+    struct ByOtherEmail { email: Text }
+}
+
+#[test]
+fn a_query_run_with_another_prepare_structs_params_is_refused() {
+    // `Params` is a free parameter of `.prepare()`, so this type-checks;
+    // the placeholder names carry where they were declared, so it can't
+    // bind one struct's value into another's slot.
+    let query = select((users::email,))
+        .from::<Postgres, _>(users::Table)
+        .filter(users::email.eq(ByEmail::email()))
+        .prepare::<ByOtherEmail, _>();
+
+    let resolved = query.resolve(ByOtherEmail {
+        email: "a@example.com".into(),
+    });
+    assert!(resolved.is_err(), "{resolved:?}");
+}

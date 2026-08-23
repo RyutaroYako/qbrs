@@ -32,7 +32,7 @@ pub struct Delete<D, T: Table> {
 }
 
 impl<D, T: Table> Delete<D, T> {
-    pub fn filter<C: Condition<WrittenTable<T>, Idxs>, Idxs>(mut self, cond: C) -> Self {
+    pub fn filter<C: Condition<D, WrittenTable<T>, Idxs>, Idxs>(mut self, cond: C) -> Self {
         self.wheres.push(cond.into_predicate().into_kind());
         self
     }

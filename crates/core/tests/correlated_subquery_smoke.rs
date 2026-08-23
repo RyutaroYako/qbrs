@@ -129,21 +129,13 @@ fn correlated_subquery_with_bound_value_renumbers_correctly() {
 // }
 
 #[test]
-fn a_subquery_is_written_in_the_dialect_of_the_statement_it_lands_in() {
-    // An `Expr` carries no dialect, so an `EXISTS` is rendered by whoever
-    // renders the statement — never in the dialect its own builder had.
+fn an_exists_is_a_condition_of_its_own_dialect() {
+    // Pinned rather than dialect-agnostic: the subquery was checked against
+    // its dialect's capabilities, and any CTE it binds is already rendered
+    // in that dialect, so it can only be filtered onto a statement of the
+    // same one. The cross-dialect version is a compile error — see
+    // `tests/compile-bench/trybuild-drafts/exists_across_dialects.rs.draft`.
     let inner = select((orders::user_id,)).from::<MySql, _>(orders::Table);
-
-    let (sql, _) = select((users::id,))
-        .from::<Postgres, _>(users::Table)
-        .filter(inner.exists())
-        .to_sql();
-    assert_eq!(
-        sql,
-        "SELECT \"users\".\"id\" FROM \"users\" WHERE (EXISTS (SELECT \"orders\".\"user_id\" FROM \"orders\"))"
-    );
-
-    let inner = select((orders::user_id,)).from::<Postgres, _>(orders::Table);
     let (sql, _) = select((users::id,))
         .from::<MySql, _>(users::Table)
         .filter(inner.exists())

@@ -85,6 +85,10 @@ pub trait InsertRow: private::Sealed {
 /// the table being inserted into, where a raw `&[&str]` would let a typo
 /// through to the database. Implemented for a bare `Column<C>` and for
 /// tuples of up to three; add arities as real schemas need them.
+#[diagnostic::on_unimplemented(
+    message = "`{Self}` isn't an `ON CONFLICT` target for `{T}`",
+    label = "a column of that table, or a tuple of up to three of them"
+)]
 pub trait ConflictTarget<T: Table>: conflict_target::Sealed {
     #[doc(hidden)]
     fn column_names(&self) -> Vec<&'static str>;
@@ -272,6 +276,14 @@ impl<D, R: InsertRow> Insert<D, R> {
     /// Bulk insert: add another row to the same statement.
     pub fn values(mut self, row: R) -> Self {
         self.rows.push(row.into_values());
+        self
+    }
+
+    /// The same for a collection. Infallible, unlike the seed's: this
+    /// statement already has a row, so an empty collection adds nothing
+    /// rather than describing an `INSERT` with nothing in it.
+    pub fn values_all(mut self, rows: impl IntoIterator<Item = R>) -> Self {
+        self.rows.extend(rows.into_iter().map(R::into_values));
         self
     }
 }

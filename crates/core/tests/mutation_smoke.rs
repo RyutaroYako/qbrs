@@ -224,6 +224,23 @@ fn insert_bulk_and_returning() {
 }
 
 #[test]
+fn values_all_appends_to_a_statement_that_already_has_a_row() {
+    let (sql, params) = insert::<Postgres, _>(users::Table)
+        .values(UsersInsert::builder().email("a@example.com").build())
+        .values_all(
+            ["b@example.com", "c@example.com"]
+                .into_iter()
+                .map(|email| UsersInsert::builder().email(email).build()),
+        )
+        .to_sql();
+    assert_eq!(
+        sql,
+        "INSERT INTO \"users\" (\"email\", \"display_name\", \"created_at\") VALUES ($1, $2, DEFAULT), ($3, $4, DEFAULT), ($5, $6, DEFAULT)"
+    );
+    assert_eq!(params.len(), 6);
+}
+
+#[test]
 fn an_update_that_sets_nothing_is_an_error_not_a_panic() {
     let nothing = Assignments::<UsersMarker>::from_row(UsersUpdate::default());
     assert!(matches!(nothing, Err(NothingToSet)));

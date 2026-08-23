@@ -346,4 +346,90 @@ async fn sqlite_executes_every_rendered_statement_shape() {
     )
     .await;
     assert_eq!(remaining[0].get::<i64, _>(0), 2);
+
+    // `count_sql` is its own rendering — the query wrapped in a total, with
+    // its paging dropped — so it is executed here rather than only asserted
+    // as a string.
+    let total = run(
+        &pool,
+        select((orders::id,))
+            .from::<Sqlite, _>(orders::Table)
+            .filter(orders::total.gt(0i64))
+            .order_by(orders::id.desc())
+            .limit(1)
+            .count_sql(),
+    )
+    .await;
+    assert_eq!(total[0].get::<i64, _>(0), 2);
+
+    let grouped_total = run(
+        &pool,
+        select((orders::user_id, count()))
+            .from::<Sqlite, _>(orders::Table)
+            .group_by(orders::user_id)
+            .having_all(vec![predicate(count().gte(1i64))])
+            .count_sql(),
+    )
+    .await;
+    assert_eq!(grouped_total[0].get::<i64, _>(0), 1);
+
+    let full = run(
+        &pool,
+        select((users::email, orders::total))
+            .from::<Sqlite, _>(users::Table)
+            .full_join(orders::Table, orders::user_id.eq(users::id))
+            .to_sql(),
+    )
+    .await;
+    assert!(!full.is_empty());
+
+    let intersected = run(
+        &pool,
+        select((users::email,))
+            .from::<Sqlite, _>(users::Table)
+            .intersect(
+                &select((users::email,))
+                    .from::<Sqlite, _>(users::Table)
+                    .filter(users::email.like("ada%")),
+            )
+            .to_sql(),
+    )
+    .await;
+    assert_eq!(intersected.len(), 1);
+
+    let excepted = run(
+        &pool,
+        select((users::email,))
+            .from::<Sqlite, _>(users::Table)
+            .except(
+                &select((users::email,))
+                    .from::<Sqlite, _>(users::Table)
+                    .filter(users::email.like("ada%")),
+            )
+            .to_sql(),
+    )
+    .await;
+    assert_eq!(excepted.len(), 1);
+
+    let erased = run(
+        &pool,
+        select((users::email,))
+            .from::<Sqlite, _>(users::Table)
+            .erase()
+            .limit(1)
+            .to_sql(),
+    )
+    .await;
+    assert_eq!(erased.len(), 1);
+
+    let in_list = run(
+        &pool,
+        select((users::email,))
+            .from::<Sqlite, _>(users::Table)
+            .filter(users::email.is_in(["ada@example.com".to_string()]))
+            .filter(users::id.is_in(Vec::<i64>::new()))
+            .to_sql(),
+    )
+    .await;
+    assert!(in_list.is_empty());
 }

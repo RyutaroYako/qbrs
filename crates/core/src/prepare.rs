@@ -26,7 +26,14 @@ macro_rules! prepare {
         impl $name {
             $(
                 pub fn $field() -> $crate::expr::Expr<$crate::scope::Nil, $ty> {
-                    $crate::expr::placeholder::<$ty>(stringify!($field))
+                    // Qualified by where it was declared: `Params` is a free
+                    // parameter of `.prepare()`, so two `prepare!` structs
+                    // sharing a field name would otherwise fill each other's
+                    // placeholders with no complaint from anyone.
+                    $crate::expr::placeholder::<$ty>(::std::concat!(
+                        ::std::module_path!(), "::", ::std::stringify!($name),
+                        ".", ::std::stringify!($field)
+                    ))
                 }
             )*
         }
@@ -34,7 +41,13 @@ macro_rules! prepare {
         impl $crate::select::PreparedParams for $name {
             fn into_named_values(self) -> ::std::vec::Vec<(&'static str, $crate::expr::Value)> {
                 ::std::vec![
-                    $((stringify!($field), ::std::convert::Into::into(self.$field)),)*
+                    $((
+                        ::std::concat!(
+                            ::std::module_path!(), "::", ::std::stringify!($name),
+                            ".", ::std::stringify!($field)
+                        ),
+                        ::std::convert::Into::into(self.$field),
+                    ),)*
                 ]
             }
         }

@@ -287,6 +287,22 @@ fn gen_schema_mod(
     }
 
     let col_names: Vec<_> = columns.iter().map(|c| c.field_name.clone()).collect();
+    // The row `select(<table>::All)` decodes to with the table joined
+    // not-null — the one type a stored `Prepared`/`DynSelect` field would
+    // otherwise have to spell by hand.
+    let all_row = columns
+        .iter()
+        .rev()
+        .fold(quote! { ::qbrs::row::RowNil }, |tail, c| {
+            let name = &c.field_name;
+            let base = &c.base_ty;
+            let value = if c.nullable {
+                quote! { ::std::option::Option<#base> }
+            } else {
+                quote! { #base }
+            };
+            quote! { ::qbrs::row::RowCons<columns::#name, #value, #tail> }
+        });
     let all_fields = col_names.iter().rev().fold(quote! { Tail }, |tail, name| {
         quote! {
             ::qbrs::row::RowCons<
@@ -318,6 +334,11 @@ fn gen_schema_mod(
             /// Every column of this table, in declaration order.
             #[allow(non_upper_case_globals)]
             pub const All: ::qbrs::select::All<Table> = ::qbrs::select::All::new();
+
+            /// What `select(All)` decodes to with this table joined
+            /// not-null: the type a stored `Prepared`/`DynSelect` names,
+            /// rather than a hand-written `RowCons` chain.
+            pub type AllRow = ::qbrs::row::Row<#all_row>;
 
             // One `Idx` for the whole table: every column of it is found at
             // the same place in the scope, with the same nullability.
@@ -1087,10 +1108,70 @@ fn gen_update_struct(
         }
     });
 
+    let builder_ident = format_ident!("{}Builder", update_ident);
+    let setters = updatable.iter().map(|c| {
+        let name = &c.field_name;
+        let base = &c.base_ty;
+        if c.nullable {
+            // `Option<T>` means the same here as at every other setter —
+            // a value, or nothing to say — so a request field maps across
+            // without the nesting the struct literal needs. The third
+            // state has its own name, as it does on an insert.
+            let null_setter = format_ident!("{}_null", name);
+            quote! {
+                pub fn #name(
+                    mut self,
+                    value: impl ::qbrs::insert::IntoColumnValue<::std::option::Option<#base>>,
+                ) -> Self {
+                    self.0.#name = ::qbrs::insert::IntoColumnValue::into_column_value(value)
+                        .map(::std::option::Option::Some);
+                    self
+                }
+
+                pub fn #null_setter(mut self) -> Self {
+                    self.0.#name = ::std::option::Option::Some(::std::option::Option::None);
+                    self
+                }
+            }
+        } else {
+            quote! {
+                pub fn #name(
+                    mut self,
+                    value: impl ::qbrs::insert::IntoColumnValue<::std::option::Option<#base>>,
+                ) -> Self {
+                    self.0.#name = ::qbrs::insert::IntoColumnValue::into_column_value(value);
+                    self
+                }
+            }
+        }
+    });
+
     quote! {
         #[derive(::std::default::Default, ::std::fmt::Debug, ::std::clone::Clone)]
         pub struct #update_ident {
             #(#fields,)*
+        }
+
+        impl #update_ident {
+            /// Every setter takes what the column holds or an `Option` of
+            /// it, so a request struct's fields map across one for one —
+            /// the struct literal's `Option<Option<T>>` is a nullable
+            /// column's three states written out, and is easy to nest
+            /// wrongly.
+            pub fn builder() -> #builder_ident {
+                #builder_ident(::std::default::Default::default())
+            }
+        }
+
+        #[derive(::std::fmt::Debug, ::std::clone::Clone)]
+        pub struct #builder_ident(#update_ident);
+
+        impl #builder_ident {
+            #(#setters)*
+
+            pub fn build(self) -> #update_ident {
+                self.0
+            }
         }
 
         impl ::qbrs::update::UpdateRowSealed for #update_ident {}
