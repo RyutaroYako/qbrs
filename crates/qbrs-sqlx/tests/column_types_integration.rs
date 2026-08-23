@@ -6,18 +6,24 @@
 
 mod common;
 
+// Spelled through imports, not fully qualified: a schema's field types are
+// the caller's to name however they name types, and the derive must not
+// re-resolve them in a module of its own.
+use chrono::{DateTime, Utc};
 use qbrs::prelude::*;
 use qbrs_sqlx::prelude::*;
+use rust_decimal::Decimal;
+use uuid::Uuid;
 
 #[derive(Table)]
 #[table(name = "events")]
 #[allow(dead_code)]
 struct Events {
     #[column(primary_key)]
-    id: uuid::Uuid,
-    happened_at: chrono::DateTime<chrono::Utc>,
+    id: Uuid,
+    happened_at: DateTime<Utc>,
     on_day: Option<chrono::NaiveDate>,
-    amount: rust_decimal::Decimal,
+    amount: Decimal,
 }
 
 #[tokio::test]

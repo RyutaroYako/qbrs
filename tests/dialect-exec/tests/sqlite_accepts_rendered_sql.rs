@@ -518,6 +518,28 @@ async fn sqlite_executes_every_rendered_statement_shape() {
     .await;
     assert_eq!(stats.len(), 1);
 
+    // A mixed chain: SQLite reads compound operators left to right and
+    // Postgres binds `INTERSECT` tighter, so the rendered nesting is what
+    // makes the two agree with the builder.
+    let mixed = run(
+        &pool,
+        select((users::email,))
+            .from::<Sqlite, _>(users::Table)
+            .union(
+                &select((users::email,))
+                    .from::<Sqlite, _>(users::Table)
+                    .filter(users::email.like("dan%")),
+            )
+            .intersect(
+                &select((users::email,))
+                    .from::<Sqlite, _>(users::Table)
+                    .filter(users::email.like("ada%")),
+            )
+            .to_sql(Sqlite),
+    )
+    .await;
+    assert_eq!(mixed.len(), 1);
+
     let in_list = run(
         &pool,
         select((users::email,))

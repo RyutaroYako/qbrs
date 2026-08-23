@@ -16,6 +16,7 @@ use crate::expr::Value;
 use crate::render::{Fragment, QuerySink, Sink};
 use crate::row::SameShape;
 
+#[derive(Clone, Copy, PartialEq, Eq)]
 enum SetOpKind {
     Union,
     UnionAll,
@@ -183,8 +184,32 @@ impl<D: Dialect, Output> SetOp<D, Output> {
             }
         };
 
+        // The chain is a left fold, and SQL's own precedence is not:
+        // `INTERSECT` binds tighter than `UNION`/`EXCEPT`, so flat text
+        // would reassociate `a.union(&b).intersect(&c)` into
+        // `A UNION (B INTERSECT C)` on Postgres — and, since SQLite reads
+        // compound operators left to right, would mean different things in
+        // the two dialects this crate executes. Parenthesising the
+        // accumulator wherever the operator changes says the fold outright,
+        // without encoding any dialect's precedence table.
+        let changes = self
+            .rest
+            .windows(2)
+            .filter(|pair| pair[0].0 != pair[1].0)
+            .count();
+        for _ in 0..changes {
+            if D::PARENTHESIZED_SET_OP_BRANCHES {
+                sink.ch('(');
+            } else {
+                sink.text("SELECT * FROM (");
+            }
+        }
+
         branch(sink, &self.first);
-        for (kind, part) in &self.rest {
+        for (i, (kind, part)) in self.rest.iter().enumerate() {
+            if i > 0 && self.rest[i - 1].0 != *kind {
+                sink.ch(')');
+            }
             sink.text(kind.keyword());
             branch(sink, part);
         }

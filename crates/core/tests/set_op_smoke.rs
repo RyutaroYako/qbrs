@@ -233,8 +233,8 @@ fn chained_set_ops_and_ordinal_order_by_limit_offset() {
         .to_sql(Postgres);
     assert_eq!(
         sql,
-        "(SELECT \"users\".\"id\" FROM \"users\") \
-         UNION (SELECT \"archived_users\".\"id\" FROM \"archived_users\") \
+        "((SELECT \"users\".\"id\" FROM \"users\") \
+         UNION (SELECT \"archived_users\".\"id\" FROM \"archived_users\")) \
          UNION ALL (SELECT \"users\".\"id\" FROM \"users\" WHERE (\"users\".\"id\" = $1)) \
          ORDER BY 1 DESC LIMIT 5 OFFSET 2"
     );
@@ -289,4 +289,31 @@ fn a_single_column_set_operation_orders_without_naming_a_position() {
         sql,
         "(SELECT \"users\".\"id\" FROM \"users\") UNION (SELECT \"archived_users\".\"id\" FROM \"archived_users\") ORDER BY 1 DESC"
     );
+}
+
+#[test]
+fn a_chain_renders_as_the_left_fold_it_reads_as() {
+    // SQL binds `INTERSECT` tighter than `UNION`/`EXCEPT`, and SQLite reads
+    // compound operators left to right, so flat text would mean two
+    // different things in the two dialects this crate executes — and
+    // neither of them the fold the builder describes.
+    let a = select((users::id,)).from(users::Table);
+    let b = select((users::id,))
+        .from(users::Table)
+        .filter(users::id.gt(1));
+    let c = select((users::id,))
+        .from(users::Table)
+        .filter(users::id.lt(9));
+
+    let (sql, _) = a.union(&b).intersect(&c).to_sql(Postgres);
+    assert_eq!(
+        sql,
+        "((SELECT \"users\".\"id\" FROM \"users\") \
+         UNION (SELECT \"users\".\"id\" FROM \"users\" WHERE (\"users\".\"id\" > $1))) \
+         INTERSECT (SELECT \"users\".\"id\" FROM \"users\" WHERE (\"users\".\"id\" < $2))"
+    );
+
+    // One operator throughout is already a left fold, so it stays flat.
+    let (flat, _) = a.union(&b).union(&c).to_sql(Postgres);
+    assert!(!flat.starts_with("(("), "{flat}");
 }

@@ -230,6 +230,13 @@ supposed to match it, and a hand-written impl could select a row that decodes tr
 
 ### Derive and codegen (`crates/macros`)
 
+A generated module can't see the caller's imports, so nothing the caller wrote is re-resolved
+inside one: `AllRow`'s field types are projected through `<C as ColumnKey>::Sql`'s `Native`
+rather than copied from the field's tokens, which is what lets a column be declared
+`DateTime<Utc>` rather than `chrono::DateTime<chrono::Utc>`. A field's SQL name comes from
+`sql_name`, which takes off the `r#` a Rust keyword needs — `r#type` is a column called
+`type`.
+
 `#[derive(Table)]` generates a `mod users { struct Table; mod columns { struct id; }
 const id: Column<columns::id>; trait HasId<Idx> { fn id(&self) -> &Self::Value } }` plus
 `UsersInsert`/`UsersUpdate` companions. The `columns` marker is the column's *identity* —
@@ -274,6 +281,11 @@ data — `Assignments::from_row(..)` and `.values_all(..)` — return a `Result`
 `update::Assignments` they produce and is infallible: no builder method returns a `Result`
 that cannot be `Err`. A column assigned twice keeps the last assignment, since a `SET` list
 naming one column twice is SQL no database accepts.
+
+A set-operation chain is a left fold, and SQL's precedence isn't: `INTERSECT` binds tighter
+than `UNION`/`EXCEPT`, and SQLite reads all of them left to right. `SetOp::render_branches`
+parenthesises the accumulator wherever the operator changes, so the rendered statement says
+the fold outright and means the same thing in every dialect — no precedence table anywhere.
 
 `with!{}` generates the same shape for a CTE pseudo-table — markers, consts, accessor traits
 and `AllRow` alike — so a CTE *is* a real table to `Scope`/`Find`/`Superset` with no separate

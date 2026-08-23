@@ -292,3 +292,32 @@ fn a_sql_fragment_negates_and_a_boolean_column_does_too() {
         "SELECT \"users\".\"id\" FROM \"users\" WHERE (NOT (\"users\".\"display_name\" IS NULL)) AND (NOT \"users\".\"active\")"
     );
 }
+
+#[derive(Table)]
+#[table(name = "events")]
+#[allow(dead_code)]
+struct Events {
+    #[column(primary_key, generated)]
+    id: i64,
+    /// A column whose SQL name is a Rust keyword: `r#` is the language's
+    /// escape, not the database's, so it must not reach the SQL.
+    r#type: String,
+}
+
+#[test]
+fn a_column_named_by_a_rust_keyword_renders_its_sql_name() {
+    let (sql, params) = select((events::id, events::r#type))
+        .from(events::Table)
+        .filter(events::r#type.eq("signup"))
+        .to_sql(Postgres);
+    assert_eq!(
+        sql,
+        "SELECT \"events\".\"id\", \"events\".\"type\" FROM \"events\" WHERE (\"events\".\"type\" = $1)"
+    );
+    assert_eq!(params, vec![qbrs::expr::Value::Text("signup".into())]);
+
+    let (insert_sql, _) = qbrs::insert::insert(events::Table)
+        .values(EventsInsert::builder().r#type("signup").build())
+        .to_sql(Postgres);
+    assert_eq!(insert_sql, "INSERT INTO \"events\" (\"type\") VALUES ($1)");
+}

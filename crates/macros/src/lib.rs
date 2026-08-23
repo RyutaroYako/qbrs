@@ -256,7 +256,7 @@ fn gen_schema_mod(
         } else {
             quote! { #base_sql_ty }
         };
-        let col_name_str = name.to_string();
+        let col_name_str = sql_name(name);
         let type_name = type_level_name(&col_name_str);
         // The same set `*Update` covers: a generated or primary-key column
         // isn't something a statement assigns.
@@ -312,18 +312,25 @@ fn gen_schema_mod(
     // The row `select(<table>::All)` decodes to with the table joined
     // not-null — the one type a stored `Prepared`/`DynSelect` field would
     // otherwise have to spell by hand.
+    // Spelled through the column's own `Sql` type rather than by copying
+    // the field's tokens: this lands inside the generated module, where a
+    // parent's `use chrono::DateTime` is not in scope, so `DateTime<Utc>`
+    // would not resolve. The projection is all `::qbrs::` paths, and a
+    // nullable column's `Sql` is already `Nullable<..>`, whose `Native` is
+    // the `Option`.
     let all_row = columns
         .iter()
         .rev()
         .fold(quote! { ::qbrs::row::RowNil }, |tail, c| {
             let name = &c.field_name;
-            let base = &c.base_ty;
-            let value = if c.nullable {
-                quote! { ::std::option::Option<#base> }
-            } else {
-                quote! { #base }
-            };
-            quote! { ::qbrs::row::RowCons<columns::#name, #value, #tail> }
+            quote! {
+                ::qbrs::row::RowCons<
+                    columns::#name,
+                    <<columns::#name as ::qbrs::expr::ColumnKey>::Sql
+                        as ::qbrs::expr::SqlType>::Native,
+                    #tail,
+                >
+            }
         });
 
     Ok(quote! {
@@ -446,7 +453,7 @@ fn field_source(field: &syn::Field, field_name: &Ident) -> syn::Result<FieldSour
         )),
         (_, Some(path)) => Ok(FieldSource::Column(path)),
         (Some(renamed), None) => Ok(FieldSource::Named(renamed)),
-        (None, None) => Ok(FieldSource::Named(field_name.to_string())),
+        (None, None) => Ok(FieldSource::Named(sql_name(field_name))),
     }
 }
 
@@ -636,7 +643,7 @@ fn expand_with(decl: CteDecl) -> TokenStream2 {
     let mut names = Vec::new();
 
     for (field, ty) in &decl.fields {
-        let field_str = field.to_string();
+        let field_str = sql_name(field);
         let type_name = type_level_name(&field_str);
         // The marker lives in `columns`, its impls in the enclosing module:
         // a declared column's type is written in the caller's scope, which
@@ -754,7 +761,7 @@ pub fn label(input: TokenStream) -> TokenStream {
     let mut decls = Vec::new();
     let mut uses = Vec::new();
     for name in &names {
-        let name_str = name.to_string();
+        let name_str = sql_name(name);
         let type_name = type_level_name(&name_str);
         let trait_ident = format_ident!("Has{}", to_camel_case(&name_str));
         let accessor = accessor_trait(&trait_ident, name, &quote! { label::#name });
@@ -854,7 +861,7 @@ fn gen_insert_struct(
     // when every required column has one, and no value is ever unwrapped.
     let slots: Vec<Ident> = required
         .iter()
-        .map(|c| format_ident!("__Qbrs{}", to_camel_case(&c.field_name.to_string())))
+        .map(|c| format_ident!("__Qbrs{}", to_camel_case(&sql_name(&c.field_name))))
         .collect();
     let required_names: Vec<&Ident> = required.iter().map(|c| &c.field_name).collect();
     let required_types: Vec<&syn::Type> = required.iter().map(|c| &c.base_ty).collect();
@@ -991,7 +998,7 @@ fn gen_insert_struct(
         }
     });
 
-    let columns_arr = insertable.iter().map(|c| c.field_name.to_string());
+    let columns_arr = insertable.iter().map(|c| sql_name(&c.field_name));
     let into_values = insertable.iter().map(|c| {
         let name = &c.field_name;
         let sql_ty = &c.sql_type;
@@ -1114,7 +1121,7 @@ fn gen_update_struct(
 
     let sets = updatable.iter().map(|c| {
         let name = &c.field_name;
-        let col_name_str = c.field_name.to_string();
+        let col_name_str = sql_name(&c.field_name);
         let sql_ty = &c.sql_type;
         if c.nullable {
             quote! {
@@ -1211,6 +1218,17 @@ fn gen_update_struct(
             }
         }
     }
+}
+
+/// A field's SQL name. `r#type` is how Rust spells a column called `type`;
+/// the `r#` is the language's, not the database's, so it comes off before
+/// the name reaches SQL, a `Named::NAME`, or a generated trait name.
+fn sql_name(ident: &Ident) -> String {
+    let spelled = ident.to_string();
+    spelled
+        .strip_prefix("r#")
+        .map(str::to_string)
+        .unwrap_or(spelled)
 }
 
 fn to_snake_case(s: &str) -> String {
