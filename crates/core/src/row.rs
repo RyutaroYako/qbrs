@@ -306,24 +306,27 @@ where
 
 /// Maps a value written in a selection list to the type its field is filed
 /// under, so a field is read back with the same value that selected it.
+#[diagnostic::on_unimplemented(
+    message = "`{Self}` can't appear in a selection list",
+    label = "a column, an aggregate, a window function, or a labelled one of those"
+)]
 pub trait RowKey {
     type Key;
 }
 
+#[diagnostic::do_not_recommend]
 impl<C: ColumnKey> RowKey for Column<C> {
     type Key = C;
 }
 
+#[diagnostic::do_not_recommend]
 impl<K, Req, S: SqlType> RowKey for Keyed<K, Req, S> {
     type Key = K;
 }
 
+#[diagnostic::do_not_recommend]
 impl<K, Inner> RowKey for Labeled<K, Inner> {
     type Key = K;
-}
-
-impl<Req, S: SqlType> RowKey for crate::expr::Expr<Req, S> {
-    type Key = Anon;
 }
 
 /// A value that can name a field at a `.get()`/`.take()` call. Every

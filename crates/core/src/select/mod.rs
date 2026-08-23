@@ -419,10 +419,9 @@ impl SelectBody {
             body.render_into::<D>(&[crate::expr::count_item()], &mut sink);
             return sink.finish();
         }
-        sink.text("SELECT count(*) FROM (");
-        body.render_into::<D>(selection, &mut sink);
-        sink.text(") AS ");
-        crate::render::render_ident::<D>(&mut sink, "qbrs_total");
+        crate::render::render_count_wrapped::<D>(&mut sink, |sink| {
+            body.render_into::<D>(selection, sink)
+        });
         sink.finish()
     }
 

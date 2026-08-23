@@ -7,11 +7,11 @@
 //! parallel virtual-table machinery.
 //!
 //! Being syntactic, `with!{}` can't see the query it will be paired with.
-//! `with()` checks that the body produces the declared columns: the same
-//! types, by `RowValues`, and the same *names in the same order*, by
-//! `row::SameNames`. Checking only types would accept a body whose columns
-//! are type-compatible but transposed, and the outer query reads those
-//! columns by key.
+//! `with()` checks that the body produces the declared columns — the same
+//! types *and* the same names, in the same order — through `row::SameShape`,
+//! the one comparison a `UNION` branch also goes through. Checking only
+//! types would accept a body whose columns are type-compatible but
+//! transposed, and the outer query reads those columns by key.
 //!
 //! **Known limitations**: non-recursive, single-level CTEs only.
 //! `WITH RECURSIVE` and a CTE body referencing another CTE both need a CTE

@@ -410,7 +410,9 @@ A schema is a `#[derive(Table)]` struct, shown in the
   unusable there.
 - An expression the *builder* inferred a type for — a comparison, an
   `is_null`, a `LIKE` — has to say what it decodes to before it can be
-  selected: `expr.decodes_as::<Bool>()`. Its NULL-ability doesn't follow from
+  selected or labelled: `expr.decodes_as::<Bool>()`. That is the whole rule
+  now: a `sql!` fragment states its type in the macro, a column carries its
+  declared one, and everything else says so once. Its NULL-ability doesn't follow from
   any one column's join, and the inferred `S` can contradict it. A `sql!`
   fragment already states its type, so it needs nothing. Either is then read
   positionally, or by name once `.label(label::x)` gives it one.

@@ -170,10 +170,7 @@ impl<D: Dialect, Output> SetOp<D, Output> {
     /// is a different set from a `UNION` of the whole ones.
     pub fn count_sql(&self) -> (String, Vec<Value>) {
         let mut sink = QuerySink::<D>::new();
-        sink.text("SELECT count(*) FROM (");
-        self.render_branches(&mut sink);
-        sink.text(") AS ");
-        crate::render::render_ident::<D>(&mut sink, "qbrs_total");
+        crate::render::render_count_wrapped::<D>(&mut sink, |sink| self.render_branches(sink));
         sink.finish()
     }
 

@@ -433,9 +433,6 @@ assigns_across!(
     BigInt => Real,
 );
 
-// A money column is compared against a literal more than it is compared
-// against another money column, and every database this crate speaks
-// compares numeric with the integers and floats.
 #[cfg(feature = "decimal")]
 assigns_across!(
     Integer => Numeric,
@@ -443,6 +440,9 @@ assigns_across!(
     Real => Numeric,
 );
 
+// A money column is compared against a literal more than it is compared
+// against another money column, and every database this crate speaks
+// compares numeric with the integers and floats.
 #[cfg(feature = "decimal")]
 comparable_across!(
     Numeric => Integer,
@@ -507,7 +507,6 @@ pub trait LabelExt: Sized {
     }
 }
 impl<C: ColumnKey> LabelExt for Column<C> {}
-impl<Req, S: SqlType> LabelExt for Expr<Req, S> {}
 impl<K, Req, S: SqlType> LabelExt for Keyed<K, Req, S> {}
 
 /// Comparison/boolean-combinator methods, blanket-implemented for anything
@@ -588,6 +587,18 @@ pub trait ExprMethods: IntoExpr + Sized {
     /// **Known limitation**: the list holds values, not expressions — a
     /// column reference on the right needs the table it belongs to folded
     /// into `Req`, which is the same design `sql!{}` covers today.
+    /// `x LIKE 'pattern'`. The text requirement is on the method rather
+    /// than on a trait of its own, so a non-text operand reports `TextLike`
+    /// instead of a missing method.
+    fn like<Rhs: IntoExpr>(self, rhs: Rhs) -> Expr<<Self::Req as Concat<Rhs::Req>>::Output, Bool>
+    where
+        Self::Sql: TextLike,
+        Rhs::Sql: TextLike,
+        Self::Req: Concat<Rhs::Req>,
+    {
+        bin_op(BinOp::Like, self, rhs)
+    }
+
     fn is_in<I>(self, values: I) -> Expr<Self::Req, Bool>
     where
         I: IntoIterator,
@@ -684,20 +695,6 @@ pub trait TextLike: SqlType {}
 
 impl TextLike for Text {}
 impl TextLike for crate::scope::Nullable<Text> {}
-
-/// `.like(..)`, on any expression — the text requirement is on the method,
-/// so a non-text operand reports `TextLike` rather than a missing method.
-pub trait TextExprMethods: IntoExpr + Sized {
-    fn like<Rhs: IntoExpr>(self, rhs: Rhs) -> Expr<<Self::Req as Concat<Rhs::Req>>::Output, Bool>
-    where
-        Self::Sql: TextLike,
-        Rhs::Sql: TextLike,
-        Self::Req: Concat<Rhs::Req>,
-    {
-        bin_op(BinOp::Like, self, rhs)
-    }
-}
-impl<T: IntoExpr> TextExprMethods for T {}
 
 impl<Req> Expr<Req, Bool> {
     pub fn and<Req2>(self, rhs: Expr<Req2, Bool>) -> Expr<<Req as Concat<Req2>>::Output, Bool>

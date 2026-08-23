@@ -20,8 +20,8 @@ pub mod prelude {
     pub use qbrs_core::expr::Numeric;
     pub use qbrs_core::expr::{Agg, Avg, Count, CountOf, Max, Min, Sum};
     pub use qbrs_core::expr::{
-        BigInt, Bool, Bytes, ExprMethods, HasCount, Integer, LabelExt, Real, SortDir, Text,
-        TextExprMethods, Value, all_of, any_of, avg, count, count_of, max, min, sum,
+        BigInt, Bool, Bytes, ExprMethods, HasCount, Integer, LabelExt, Real, SortDir, Text, Value,
+        all_of, any_of, avg, count, count_of, max, min, sum,
     };
     #[cfg(feature = "chrono")]
     pub use qbrs_core::expr::{Date, Timestamptz};

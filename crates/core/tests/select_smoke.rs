@@ -2,7 +2,7 @@
 //! validate the `Select` builder end-to-end before wiring up codegen.
 
 use qbrs_core::dialect::Postgres;
-use qbrs_core::expr::{Bool, ExprMethods, TextExprMethods, all_of, any_of};
+use qbrs_core::expr::{Bool, ExprMethods, all_of, any_of};
 use qbrs_core::scope::Table as TableTrait;
 use qbrs_core::select::{OrderExt, Predicate, grouping, predicate, select, sort_key};
 use qbrs_core::sql;

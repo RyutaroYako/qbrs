@@ -677,9 +677,11 @@ pub fn label(input: TokenStream) -> TokenStream {
             #[allow(non_camel_case_types)]
             #[derive(Clone, Copy)]
             pub struct #name;
+            #[diagnostic::do_not_recommend]
             impl ::qbrs::row::RowKey for #name {
                 type Key = #name;
             }
+            #[diagnostic::do_not_recommend]
             impl ::qbrs::row::LookupKey for #name {}
             impl ::qbrs::expr::LabelKey for #name {}
             #[doc(hidden)]

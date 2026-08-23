@@ -1,11 +1,11 @@
 //! What a `.select(..)` list decodes to once a row comes back.
 
-use crate::expr::{Column, ColumnKey, Expr, ExprKind, Keyed, LabelKey, Labeled, SqlType};
+use crate::expr::{Column, ColumnKey, ExprKind, Keyed, LabelKey, Labeled, SqlType};
 use crate::render::SelectItem;
 use std::marker::PhantomData;
 
 use crate::row::{Named, Row, RowCons, RowKey, RowNil};
-use crate::scope::{Find, Nil, Superset, Table, WrapNullable};
+use crate::scope::{Find, Superset, Table, WrapNullable};
 
 /// One *field* of a resulting `Row`: the key its value is filed under, and
 /// the Rust type it decodes to. A selection list is a chain of
@@ -43,21 +43,6 @@ where
             table: <C::Table as Table>::NAME,
             name: C::NAME,
         })
-    }
-}
-
-// Only a scope-free expression is selectable as a bare `Expr`. One that
-// names a table has a per-query nullability that `S` doesn't carry, so
-// selecting it would report the declared type where a `LEFT JOIN` produces
-// NULL; a `Column` is how a table's value is selected, and `sql!{}` — always
-// `Nil` — is how a computed one is.
-impl<S: SqlType, Scope, Idx> RowField<Scope, Idx> for Expr<Nil, S>
-where
-    Scope: Superset<Nil, Idx>,
-{
-    type Value = S::Native;
-    fn item(&self) -> SelectItem {
-        SelectItem::bare(self.kind.clone())
     }
 }
 
@@ -152,7 +137,6 @@ macro_rules! selectable {
     };
 }
 selectable!(impl[C: ColumnKey] Column<C>);
-selectable!(impl[S: SqlType] Expr<Nil, S>);
 selectable!(impl[K, Req, S: SqlType] Keyed<K, Req, S>);
 selectable!(impl[K, Inner] Labeled<K, Inner>);
 

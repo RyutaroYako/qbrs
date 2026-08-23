@@ -129,9 +129,11 @@ enum ConflictAction<T> {
     /// The same `SET` list `UPDATE` takes: an `*Update` value, or
     /// `Assignments` of expressions.
     ///
-    /// **Known limitation**: only literal/bound values, not
-    /// `EXCLUDED.column` (`SET total = users.total + EXCLUDED.total`), which
-    /// needs its own typed API.
+    /// **Known limitation**: no `EXCLUDED.column` (`SET total = total +
+    /// EXCLUDED.total`) — the row being inserted isn't a table the scope
+    /// knows, so referring to it needs its own typed API. Everything else a
+    /// `SET` list can say, including expressions over the target's own
+    /// columns, works here.
     DoUpdate(Assignments<T>),
 }
 

@@ -69,7 +69,7 @@ impl<T: Table> Assignments<T> {
     /// `updated_at = now()`, `version = version + 1`. The expression is
     /// checked against the table being written to, exactly as a `WHERE`
     /// condition is.
-    pub fn set_to<C, V, Idxs>(column: Column<C>, value: V) -> Self
+    pub fn set_to<C, V, Idxs>(_column: Column<C>, value: V) -> Self
     where
         C: ColumnKey<Table = T> + Writable,
         V: IntoExpr,
@@ -77,10 +77,9 @@ impl<T: Table> Assignments<T> {
         WrittenTable<T>: Superset<V::Req, Idxs>,
     {
         Assignments {
-            sets: Vec::new(),
+            sets: vec![(<C as crate::row::Named>::NAME, value.into_expr().kind)],
             _marker: PhantomData,
         }
-        .and_set_to(column, value)
     }
 
     /// One more of them, so a statement can assign several expressions.
@@ -127,10 +126,6 @@ impl<T> Assignments<T> {
             sets,
             _marker: PhantomData,
         })
-    }
-
-    fn extend(&mut self, other: Assignments<T>) {
-        self.sets.extend(other.sets);
     }
 }
 
@@ -240,7 +235,7 @@ impl<D, T: Table> Update<D, T> {
         V::Sql: AssignsTo<C::Sql>,
         WrittenTable<T>: Superset<V::Req, Idxs>,
     {
-        self.sets.extend(Assignments::set_to(column, value));
+        self.sets = self.sets.and_set_to(column, value);
         self
     }
 }

@@ -310,6 +310,19 @@ pub(crate) fn dir_keyword(dir: SortDir) -> &'static str {
     }
 }
 
+/// `SELECT count(*) FROM (<query>) AS qbrs_total` — how this crate counts a
+/// query whose rows aren't one per matching row. Written once, since the
+/// alias is part of the shape.
+pub(crate) fn render_count_wrapped<D: Dialect>(
+    sink: &mut QuerySink<D>,
+    body: impl FnOnce(&mut QuerySink<D>),
+) {
+    sink.text("SELECT count(*) FROM (");
+    body(sink);
+    sink.text(") AS ");
+    render_ident::<D>(sink, "qbrs_total");
+}
+
 /// A comma-separated expression list behind a keyword — `GROUP BY`,
 /// `PARTITION BY` — or nothing at all when there are none.
 pub(crate) fn render_expr_list<D: Dialect>(sink: &mut dyn Sink, keyword: &str, list: &[ExprKind]) {
