@@ -93,24 +93,23 @@ impl<I: Position> Position for There<I> {
     const POSITION: u32 = I::POSITION + 1;
 }
 
-/// What a proof trait's `Proof` associated type must be, and only this
-/// crate can name it. Sealing by supertrait would not work here: the lying
-/// impl's `Self` is `Cons`, which any seal on `Self` already admits. What
-/// has to be unnameable is the proof itself.
+/// The seals for the scope proofs. Each carries the *same parameters* as
+/// the trait it seals and is implemented only for the honest combinations,
+/// which is what a seal on `Self` alone cannot do: `Find<T, _>` and
+/// `row::Field<K, _>` take the caller's own marker as a bare parameter, so
+/// the orphan rule licenses a schema crate to write
+/// `impl Find<orders::Table, Here> for <a scope without orders>` — and with
+/// it, the compile error this crate exists to produce.
 ///
-/// This matters because `Find<T, _>`/`row::Field<K, _>` take the *caller's*
-/// table or column marker as a bare trait parameter, so the orphan rule
-/// licenses a schema crate to write `impl Find<orders::Table, Here> for
-/// <a scope without orders>` — and with it, the compile error this crate
-/// exists to produce.
+/// A private *type* in an associated position is not enough, and was the
+/// mistake this replaces: `type Proof: Sealed` can be satisfied from
+/// outside by projecting the same type out of an honest impl
+/// (`<Nil as Superset<Nil, Nil>>::Proof`), because path privacy doesn't
+/// reach through projection. A private *trait* has nothing to project.
 pub(crate) mod proof {
-    pub trait Sealed {}
+    pub trait FoundAt<T, Index> {}
 
-    /// The one inhabitant, constructible nowhere: a proof is a type-level
-    /// fact, never a value.
-    pub enum Proof {}
-
-    impl Sealed for Proof {}
+    pub trait SupersetOf<Req, Idxs> {}
 }
 
 /// Proof that table `T` appears somewhere in a scope list, found at
@@ -122,26 +121,26 @@ pub(crate) mod proof {
     label = "add `.join(<table>, ..)` (or `.from(..)`) for `{T}` before referencing its columns here",
     note = "columns can only be referenced once their table has been joined into the current FROM/JOIN scope — and in a generic helper give each table its own `Idx` parameter, since one shared index matches no scope"
 )]
-pub trait Find<T: Table, Index> {
-    #[doc(hidden)]
-    type Proof: proof::Sealed;
-
+pub trait Find<T: Table, Index>: proof::FoundAt<T, Index> {
     /// The nullability `T` has in this scope (derived from how it was
     /// joined, not asserted manually).
     type Nullability: Nullability;
 }
 
+impl<T: Table, N: Nullability, Tail> proof::FoundAt<T, Here> for Cons<TableSlot<T, N>, Tail> {}
+
 impl<T: Table, N: Nullability, Tail> Find<T, Here> for Cons<TableSlot<T, N>, Tail> {
-    type Proof = proof::Proof;
     type Nullability = N;
 }
+
+impl<T: Table, Head, Tail, I> proof::FoundAt<T, There<I>> for Cons<Head, Tail> where Tail: Find<T, I>
+{}
 
 #[diagnostic::do_not_recommend]
 impl<T: Table, Head, Tail, I> Find<T, There<I>> for Cons<Head, Tail>
 where
     Tail: Find<T, I>,
 {
-    type Proof = proof::Proof;
     type Nullability = <Tail as Find<T, I>>::Nullability;
 }
 
@@ -177,17 +176,16 @@ impl<Head, Tail: Concat<Other>, Other> Concat<Other> for Cons<Head, Tail> {
     label = "requires {Req}, but the current query scope doesn't contain all of it",
     note = "in a generic helper, `Idxs` has to be a type parameter of its own — one shared index matches no scope, however right the tables look"
 )]
-pub trait Superset<Req, Idxs> {
-    /// Unnameable outside this crate, for the reason `proof` explains — and
-    /// needed here as much as on `Find`, since `Idxs` is a free slot: a
-    /// local type in it is all the orphan rule asks for, and this is the
-    /// trait every builder bound actually names.
-    #[doc(hidden)]
-    type Proof: proof::Sealed;
-}
+pub trait Superset<Req, Idxs>: proof::SupersetOf<Req, Idxs> {}
 
-impl<S> Superset<Nil, Nil> for S {
-    type Proof = proof::Proof;
+impl<S> proof::SupersetOf<Nil, Nil> for S {}
+impl<S> Superset<Nil, Nil> for S {}
+
+impl<S, Head: Table, Tail, IdxHead, IdxsTail>
+    proof::SupersetOf<Cons<Head, Tail>, Cons<IdxHead, IdxsTail>> for S
+where
+    S: Find<Head, IdxHead> + Superset<Tail, IdxsTail>,
+{
 }
 
 impl<S, Head: Table, Tail, IdxHead, IdxsTail> Superset<Cons<Head, Tail>, Cons<IdxHead, IdxsTail>>
@@ -195,7 +193,6 @@ impl<S, Head: Table, Tail, IdxHead, IdxsTail> Superset<Cons<Head, Tail>, Cons<Id
 where
     S: Find<Head, IdxHead> + Superset<Tail, IdxsTail>,
 {
-    type Proof = proof::Proof;
 }
 
 /// A scope's tables without their nullability: the `Req` list an expression

@@ -224,10 +224,16 @@ Every clause of a `SELECT` other than the selection list lives in one `SelectBod
 there and it flows through `.erase()`, `retype()`, and rendering on its own — don't spread
 clause fields back across the two builders or pass them as separate render arguments.
 
-`select::Selection`/`SelectionPart`/`RowField` carry the same unnameable `Proof` `Find` and
-`Superset` do — a private supertrait alone was not enough, because their seal is blanket
-over `Column<C>` and every tuple, so a forged impl could keep an honest `Self` and fill the
-free `Idx` with a local type, then hand back a `SelectItem` built at another scope.
+**How the proof traits are sealed, and why the obvious ways don't work.** `Find`,
+`Superset`, `row::Field`, `row::TakeNamed`, `select::RowField`/`Selection`/`SelectionPart`
+all take a caller-local marker as a bare parameter, so the orphan rule licenses a schema
+crate to implement them. Two mechanisms were tried and are wrong: a seal on `Self` alone
+(the lying impl's `Self` is an honest `Cons`/`Column<C>`, and the free index takes the
+caller's own type), and a private associated *type* (`type Proof: Sealed`) — path privacy
+does not reach through projection, so `<Nil as Superset<Nil, Nil>>::Proof` names it from
+outside. What holds is a **private supertrait carrying the trait's own parameters**,
+implemented only for the honest combinations: there is no type to project and no trait to
+implement. `row::SameNameAs` is sealed the same way.
 `row::SameNameAs` is sealed the same way in spirit (a private supertrait carrying the one
 honest impl's bounds), since without it a schema crate could declare two differently-named
 columns interchangeable and splice a `UNION` branch in transposed.
