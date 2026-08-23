@@ -315,7 +315,7 @@ async fn count_rows<'e, E: sqlx::PgExecutor<'e>>(
 /// affected, whichever of the three it was.
 #[diagnostic::on_unimplemented(
     message = "`{Self}` isn't a statement this crate can execute",
-    label = "an `INSERT`, `UPDATE` or `DELETE` in the `Postgres` dialect is; a `SELECT` yields rows, so it goes through `.load(..)`"
+    label = "an `INSERT`, `UPDATE` or `DELETE` in the `Postgres` dialect is; a `SELECT` or a `RETURNING` yields rows, so it goes through `.load(..)` — and a prepared query through `.load(.., params)`"
 )]
 pub trait WriteStatement {
     #[doc(hidden)]
@@ -500,6 +500,11 @@ pub trait PreparedExt {
 }
 
 impl<D, Params, Output> PreparedExt for Prepared<D, Params, Output> {}
+
+// A prepared query's `load`/`count` are told apart from the plain ones by
+// arity, but `execute` is not — without this, it is the one terminal on the
+// one builder that reports nothing.
+impl<D, Params, Output> ExecuteExt for Prepared<D, Params, Output> {}
 
 #[diagnostic::do_not_recommend]
 impl<Params: PreparedParams, Output: DecodeRow> PreparedQuery<Params>

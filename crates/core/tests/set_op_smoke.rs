@@ -235,6 +235,27 @@ fn chained_set_ops_and_ordinal_order_by_limit_offset() {
     assert_eq!(params, vec![qbrs_core::expr::Value::I32(1)]);
 }
 
+#[test]
+fn a_set_operation_can_be_ordered_by_a_column_instead_of_a_number() {
+    // The position is the row's own index for that key, so a column the
+    // combined result doesn't select can't be named here.
+    let a = select((users::id, users::email)).from::<Postgres, _>(users::Table);
+    let b = select((archived_users::id, archived_users::email))
+        .from::<Postgres, _>(archived_users::Table);
+
+    let (sql, _) = a
+        .union(&b)
+        .order_by_column(users::email, qbrs_core::expr::SortDir::Desc)
+        .order_by_column(users::id, qbrs_core::expr::SortDir::Asc)
+        .to_sql();
+    assert_eq!(
+        sql,
+        "(SELECT \"users\".\"id\", \"users\".\"email\" FROM \"users\") \
+         UNION (SELECT \"archived_users\".\"id\", \"archived_users\".\"email\" FROM \"archived_users\") \
+         ORDER BY 2 DESC, 1 ASC"
+    );
+}
+
 // Uncomment to eyeball the compile error for mismatched output shapes
 // (confirmed working — kept out of the normal test run since it's meant to
 // fail): `users::email` (Text) vs. `archived_users::id` (Integer) — the two

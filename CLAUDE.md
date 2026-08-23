@@ -114,8 +114,8 @@ different costume: same `Here`/`There<I>` indexed lookup, same reason the index 
 trait parameter.
 
 A single un-tupled selection (`select(users::email)`) stays a bare value — there is no
-position to disambiguate, so there is nothing to key. `Row::into_tuple` /
-`Vec<Row<_>>::into_tuples` / `From<Row<..>> for (..)` give the positional view back; the
+position to disambiguate, so there is nothing to key. `Row::into_tuple` and
+`Vec<Row<_>>::into_tuples` give the positional view back; the
 arity limit lives in `row::Prepend`'s impls and nowhere else.
 
 Two lookups, deliberately distinct. `Field` searches by key *identity*
@@ -132,8 +132,9 @@ A field says which column fills it by name, by `#[from_row(rename = "..")]`, or 
 instead of `TakeNamed` (name) — the only lookup that stays unambiguous when a selection
 holds two columns of the same name, and what makes `select((a::All, b::All))` fillable.
 The attribute takes the column path a call site writes; `<table>::<column>` and
-`<table>::columns::<column>` are the value and the type of one thing, and every generator
-of a schema puts them in that relation.
+`<table>::columns::<column>` are the value and the type of one thing, which `#[derive(Table)]`
+and `with!` both arrange. A `label!` name is one item that is both, so it has no identity
+route and is matched by name.
 
 `FromRow` is its own trait rather than `From`: the per-field lookup indices have nowhere to
 live in a foreign trait's fixed shape. Hence `into_struct`/`into_structs`.
@@ -276,6 +277,11 @@ from a CTE nobody bound, binding one and selecting from another, and splicing a 
 rendered for one dialect into another's statement are all unwritable as a result. Its declared columns are checked against the actual body at
 `cte::with()` by `row::SameShape` — the same one comparison `SetOp` requires of `UNION`
 branches, against the `RowCons` chain `with!{}` declares as `CteShape::Row`.
+
+A set operation's `ORDER BY` takes an ordinal, because the branches' scopes are gone by
+then — but the ordinal is `row::Field`'s index, which `scope::Position` reads, so
+`SetOp::order_by_column` names a column and the index does the counting. `nth(n)` stays for
+the one output shape that has no key to name: a single un-tupled column.
 
 ### Execution layer (`crates/qbrs-sqlx`)
 

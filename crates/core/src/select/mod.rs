@@ -224,16 +224,11 @@ impl<Scope> Clone for SortKey<Scope> {
 }
 
 /// Discharges a sort key's scope requirement. `Scope` is inferred from the
-/// query the keys are eventually given to.
-pub fn sort_key<Scope, Req, Idxs>(key: OrderKey<Req>) -> SortKey<Scope>
-where
-    Scope: Superset<Req, Idxs>,
-{
-    SortKey {
-        kind: key.kind,
-        dir: key.dir,
-        _marker: PhantomData,
-    }
+/// query the keys are eventually given to. Takes whatever `.order_by` takes,
+/// as `predicate` takes whatever `.filter` does — so a helper generic over
+/// `SortBy` can discharge without knowing which of the two it was handed.
+pub fn sort_key<Scope, Idxs, K: SortBy<Scope, Idxs>>(key: K) -> SortKey<Scope> {
+    key.into_sort_key()
 }
 
 /// A grouping key with its scope requirement discharged — `predicate`'s
@@ -252,15 +247,10 @@ impl<Scope> Clone for Grouping<Scope> {
     }
 }
 
-/// Discharges a grouping key's scope requirement.
-pub fn grouping<Scope, Req, Idxs>(key: impl IntoExpr<Req = Req>) -> Grouping<Scope>
-where
-    Scope: Superset<Req, Idxs>,
-{
-    Grouping {
-        kind: key.into_expr().kind,
-        _marker: PhantomData,
-    }
+/// Discharges a grouping key's scope requirement, taking whatever
+/// `.group_by` takes — the same shape `predicate` and `sort_key` have.
+pub fn grouping<Scope, Idxs, K: GroupBy<Scope, Idxs>>(key: K) -> Grouping<Scope> {
+    key.into_grouping()
 }
 
 /// Something a query can be filtered by: an `Expr` whose tables this scope
@@ -309,6 +299,17 @@ impl<D, Scope> Condition<D, Scope, ()> for Predicate<D, Scope> {
 pub struct Exists<D, Req> {
     kind: ExprKind,
     _marker: PhantomData<fn() -> (D, Req)>,
+}
+
+// Hand-written for the reason `Expr`'s is: `#[derive(Clone)]` would ask the
+// phantom tags to be `Clone`.
+impl<D, Req> Clone for Exists<D, Req> {
+    fn clone(&self) -> Self {
+        Exists {
+            kind: self.kind.clone(),
+            _marker: PhantomData,
+        }
+    }
 }
 
 impl<D, Scope: Superset<Req, Idxs>, Req, Idxs> Condition<D, Scope, Idxs> for Exists<D, Req> {
@@ -706,12 +707,13 @@ impl<D: Dialect, Scope, Sel> Select<D, Scope, Sel> {
     }
 }
 
-impl<D: Dialect, Scope, Sel, Outer> Select<D, Scope, Sel, Outer> {
+impl<D: Dialect, Scope, Sel> Select<D, Scope, Sel> {
     /// This query as an embeddable `Fragment`: an `EXISTS (..)` subquery, a
     /// CTE body, or a set-operation branch. The only way to produce one, so
     /// no caller has to remember that an embedded query renders with `?`
-    /// placeholders rather than `D`'s own style. Generic over `Outer`, since
-    /// splicing is exactly what a subquery is for.
+    /// placeholders rather than `D`'s own style. `Outer = Nil` like the
+    /// other terminals: a correlated subquery names tables that aren't in
+    /// its own `FROM`, and reaches SQL through `EXISTS` instead.
     pub(crate) fn fragment<Idx>(&self) -> Fragment
     where
         Sel: Selection<Scope, Idx>,

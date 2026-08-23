@@ -380,6 +380,11 @@ fn gen_schema_mod(
 /// hidden, since an impl generic constrained only by a `where` clause isn't
 /// accepted. A helper reading two columns needs two of them — one index
 /// records one position.
+/// The bound stays on the impl, not on the method — unlike the execution
+/// terminals, where moving it is what makes the message render. Here an
+/// unconditional impl would put every schema's `.total()` on every `Row`,
+/// and two tables with a same-named column would make every call to it
+/// ambiguous. `row.get(users::total)` is the spelling that reports.
 fn accessor_trait(trait_ident: &Ident, method: &Ident, key: &TokenStream2) -> TokenStream2 {
     quote! {
         pub trait #trait_ident<Idx> {
@@ -454,8 +459,9 @@ fn field_source(field: &syn::Field, field_name: &Ident) -> syn::Result<FieldSour
 }
 
 /// `users::id` names the column; `users::columns::id` is its identity, the
-/// type a row is keyed by. Every generator of a schema — `#[derive(Table)]`,
-/// `with!`, `label!` — puts the two in that relation.
+/// type a row is keyed by. `#[derive(Table)]` and `with!` put the two in
+/// that relation; a `label!` name is one item that is both, and is matched
+/// by name instead.
 fn column_key_path(path: &syn::Path) -> syn::Result<syn::Path> {
     let mut key = path.clone();
     let last = key
@@ -540,6 +546,10 @@ fn expand_from_row(input: DeriveInput) -> syn::Result<TokenStream2> {
                     }
                     #[doc(hidden)]
                     impl ::qbrs::row::Spelled for #field_name {}
+
+                    impl ::qbrs::row::FieldValue for #field_name {
+                        type Value = #field_ty;
+                    }
                 });
 
                 let marker = quote! { #fields_mod::#field_name };

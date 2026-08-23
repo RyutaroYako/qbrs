@@ -35,7 +35,7 @@ pub mod prelude {
     };
     pub use qbrs_core::row::{Anon, FromRow, IntoStructs, IntoTuples, Named, Row, RowCons, RowNil};
     pub use qbrs_core::scope::{
-        BaseTable, Concat, Cons, Find, Here, MaybeNull, Nil, NotNull, Nullable, Superset,
+        BaseTable, Concat, Cons, Find, Here, MaybeNull, Nil, NotNull, Nullable, Position, Superset,
         TableSlot, There,
     };
     pub use qbrs_core::select::All;

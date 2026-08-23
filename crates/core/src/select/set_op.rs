@@ -34,8 +34,10 @@ impl SetOpKind {
     }
 }
 
-/// The `n`th selected column, 1-indexed: the only thing a set operation's
-/// `ORDER BY` can name.
+/// The `n`th selected column, 1-indexed. `SetOp::order_by_column` names one
+/// by its column instead and works out the position, which is what a tuple
+/// selection should use; this is for the un-tupled single-column case, whose
+/// output is a bare value with no key to name.
 pub fn nth(position: u32) -> Ordinal {
     Ordinal(position)
 }
@@ -87,6 +89,24 @@ pub struct SetOp<D, Output> {
     limit: Option<super::RowCount>,
     offset: Option<super::RowCount>,
     _marker: PhantomData<fn() -> (D, Output)>,
+}
+
+impl<D: Dialect, L> SetOp<D, crate::row::Row<L>> {
+    /// `ORDER BY` naming the column instead of counting to it: the position
+    /// is `row::Field`'s index, which the row already carries. A column the
+    /// combined result doesn't select is then a compile error, in the one
+    /// place a column reference otherwise wasn't checked at all.
+    pub fn order_by_column<K, Idx>(self, _key: K, dir: SortDir) -> Self
+    where
+        K: crate::row::LookupKey,
+        L: crate::row::Field<K::Key, Idx>,
+        Idx: crate::scope::Position,
+    {
+        self.order_by(OrdinalKey {
+            position: <Idx as crate::scope::Position>::POSITION,
+            dir,
+        })
+    }
 }
 
 impl<D: Dialect, Output> SetOp<D, Output> {
@@ -147,9 +167,10 @@ impl<D: Dialect, Output> SetOp<D, Output> {
     }
 
     /// Orders the combined result by a selected column's ordinal position —
-    /// `nth(1).desc()`; see this struct's doc comment for why position, not
-    /// a typed column, is the only reference available here. Callable
-    /// multiple times like `Select::order_by`, each call appending a key.
+    /// `nth(1).desc()`. SQL allows nothing else here, but the position can
+    /// be worked out rather than counted: `order_by_column` does that, and
+    /// is what a tuple selection should use. Callable multiple times like
+    /// `Select::order_by`, each call appending a key.
     pub fn order_by(mut self, key: OrdinalKey) -> Self {
         self.order_by.push((key.position, key.dir));
         self

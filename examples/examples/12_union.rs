@@ -31,9 +31,11 @@ async fn main() {
         .from(users::Table)
         .inner_join(orders::Table, orders::user_id.eq(users::id));
 
+    // Ordered by the column, not by counting to it — the position comes
+    // from the row's own index for `users::email`.
     let feed: Vec<(String, i64)> = user_rows
         .union_all(&order_rows)
-        .order_by(nth(1).asc())
+        .order_by_column(users::email, SortDir::Asc)
         .load(&pool)
         .await
         .expect("union_all feed")

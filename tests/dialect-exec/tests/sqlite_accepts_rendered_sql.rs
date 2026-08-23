@@ -3,7 +3,7 @@
 //! says SQLite agrees.
 
 use qbrs::cte::with;
-use qbrs::expr::{Value, count, sum};
+use qbrs::expr::{Value, avg, count, max, min, sum};
 use qbrs::prelude::*;
 use qbrs::sql;
 use sqlx::{Row, SqlitePool};
@@ -421,6 +421,41 @@ async fn sqlite_executes_every_rendered_statement_shape() {
     )
     .await;
     assert_eq!(erased.len(), 1);
+
+    // `ORDER BY <ordinal>` + paging on a set operation is the one place
+    // SQLite's derived-table branch wrapping and its ordinal ordering meet.
+    let paged_union = run(
+        &pool,
+        select((users::email,))
+            .from::<Sqlite, _>(users::Table)
+            .union_all(
+                &select((users::email,))
+                    .from::<Sqlite, _>(users::Table)
+                    .filter(users::email.like("ada%")),
+            )
+            .order_by(nth(1).desc())
+            .limit(2)
+            .offset(1)
+            .to_sql(),
+    )
+    .await;
+    assert_eq!(paged_union.len(), 2);
+
+    // The aggregates that render a `CAST`, and a `NOT EXISTS`.
+    let stats = run(
+        &pool,
+        select((avg(orders::total), min(orders::total), max(orders::total)))
+            .from::<Sqlite, _>(orders::Table)
+            .filter(
+                select((orders::id,))
+                    .from::<Sqlite, _>(orders::Table)
+                    .filter(orders::total.lt(0i64))
+                    .not_exists(),
+            )
+            .to_sql(),
+    )
+    .await;
+    assert_eq!(stats.len(), 1);
 
     let in_list = run(
         &pool,

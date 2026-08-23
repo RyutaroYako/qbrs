@@ -242,7 +242,11 @@ A schema is a `#[derive(Table)]` struct, shown in the
   yet.
 - **`UNION`/`INTERSECT`/`EXCEPT`** —
   [`12_union`](examples/examples/12_union.rs). Combines `SELECT`s with
-  unrelated `Scope`s as long as their output shapes match.
+  unrelated `Scope`s as long as their output shapes match. SQL allows only
+  an ordinal in this `ORDER BY`, so `.order_by_column(users::email, dir)`
+  works the position out from the row rather than making you count —
+  `nth(1)` is for the un-tupled single-column case, whose output is a bare
+  value with no key to name.
 - **Window functions** (`row_number()`/`rank()`/`dense_rank()`) —
   [`13_window`](examples/examples/13_window.rs). Aggregate-as-window-function
   isn't supported yet.

@@ -16,10 +16,12 @@ mod private {
     pub trait Sealed {}
 }
 
-/// The `AllColumns` half is emitted in the schema's own crate, so its seal
-/// is public-but-hidden, as `scope::BaseTableSealed` is.
+/// `AllColumns`/`CteShape` are emitted in the schema's own crate, so their
+/// seal has to be nameable there — a separate trait, because sharing
+/// `private::Sealed` would hand out the one line that unseals `Selection`
+/// too, and a hand-written `Selection` is exactly what the seal is for.
 #[doc(hidden)]
-pub use private::Sealed as SelectableSealed;
+pub trait SelectableSealed {}
 
 impl<C: crate::expr::ColumnKey> private::Sealed for Column<C> {}
 impl<K, Req, S: SqlType> private::Sealed for Keyed<K, Req, S> {}
@@ -41,7 +43,7 @@ impl<T> private::Sealed for All<T> {}
 #[diagnostic::on_unimplemented(
     message = "`{Self}` can't be a field of this query's rows",
     label = "a column, an aggregate, a window function, a `sql!` fragment, or a labelled one of those can be",
-    note = "an expression the builder inferred a type for — a comparison, an arithmetic combination — has to state what it decodes to with `.decodes_as::<..>()`, since that inference can contradict the join; a `sql!` fragment already states it"
+    note = "an expression the builder inferred a type for — a comparison, an `is_null`, a `LIKE` — has to state what it decodes to with `.decodes_as::<..>()`, since that inference can contradict the join; a `sql!` fragment already states it"
 )]
 pub trait RowField<Scope, Idx>: RowKey + private::Sealed {
     type Value;
@@ -122,7 +124,7 @@ macro_rules! scalar_selection {
 #[diagnostic::on_unimplemented(
     message = "`{Self}` can't be part of a selection list",
     label = "a column, an aggregate, a window function, a `sql!` fragment, a labelled one of those, or `<table>::All` can be",
-    note = "an expression the builder inferred a type for — a comparison, an arithmetic combination — has to state what it decodes to with `.decodes_as::<..>()`, since that inference can contradict the join"
+    note = "an expression the builder inferred a type for — a comparison, an `is_null`, a `LIKE` — has to state what it decodes to with `.decodes_as::<..>()`, since that inference can contradict the join"
 )]
 pub trait SelectionPart<Scope, Idx>: private::Sealed {
     type Fields<Tail>;

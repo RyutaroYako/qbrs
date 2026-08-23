@@ -168,12 +168,21 @@ impl Named for Anon {
     const NAME: &'static str = "?";
 }
 
+/// What a `#[derive(FromRow)]` field decodes to, declared beside its name
+/// so that a lookup searches for the *pair*. With the type checked
+/// afterwards instead — as an equality on `TakeNamed::Value` — a field whose
+/// type disagrees with the join reports a bare associated-type mismatch at
+/// `into_structs()`, naming neither the field nor the fix.
+pub trait FieldValue {
+    type Value;
+}
+
 /// `Field` by name rather than by key identity, which is what lets a struct
 /// that has never heard of `users::email` still receive it.
 #[diagnostic::on_unimplemented(
     message = "this query's rows have no field matching `{F}`",
     label = "the selection needs a column of that name, decoding to that type",
-    note = "a computed expression is matched by name only once `.label(label::..)` gives it one"
+    note = "a computed expression is matched by name only once `.label(label::..)` gives it one, and a LEFT/RIGHT/FULL JOIN makes a column decode as `Option<T>`, so a struct filled from one declares `Option<T>`"
 )]
 pub trait TakeNamed<F, Idx> {
     type Value;
@@ -184,7 +193,7 @@ pub trait TakeNamed<F, Idx> {
 impl<F, K, V, Tail> TakeNamed<F, Here> for RowCons<K, V, Tail>
 where
     K: Spelled,
-    F: Spelled<Name = <K as Named>::Name>,
+    F: Spelled<Name = <K as Named>::Name> + FieldValue<Value = V>,
 {
     type Value = V;
     type Rest = Tail;
@@ -208,8 +217,8 @@ where
 
 /// One column can stand in for another: they are called the same thing.
 #[diagnostic::on_unimplemented(
-    message = "column `{Self}` can't stand in for `{Other}`",
-    label = "these two columns must have the same name",
+    message = "`{Self}` can't stand in for `{Other}`",
+    label = "these two selected items must have the same name",
     note = "matched by name: `.label(label::..)` whichever side is spelled wrong — and an unnamed expression (`Anon`) has no name to match with at all"
 )]
 pub trait SameNameAs<Other> {}
@@ -230,7 +239,7 @@ where
 /// type-compatible would otherwise splice in transposed.
 #[diagnostic::on_unimplemented(
     message = "these two selections don't produce the same row",
-    label = "must select the same column names, in the same order, decoding to the same types"
+    label = "must select the same names, in the same order, decoding to the same types"
 )]
 pub trait SameShape<Other> {}
 

@@ -77,6 +77,22 @@ pub struct Here;
 /// Index marker: "found further down the list, at index `I`".
 pub struct There<I>(PhantomData<I>);
 
+/// The 1-based position an index names, which is what SQL's `ORDER BY <n>`
+/// on a set operation takes. The index is already computed by `row::Field`;
+/// this reads it, so a set operation can be ordered by a column rather than
+/// by a number nothing checks.
+pub trait Position {
+    const POSITION: u32;
+}
+
+impl Position for Here {
+    const POSITION: u32 = 1;
+}
+
+impl<I: Position> Position for There<I> {
+    const POSITION: u32 = I::POSITION + 1;
+}
+
 /// Proof that table `T` appears somewhere in a scope list, found at
 /// compile-time-inferred position `Index`. `Index` is never spelled out by
 /// callers — it's inferred, exactly like frunk's `Plucker` — and it's what
