@@ -257,8 +257,8 @@ data — `Assignments::from_row(..)` and `.values_all(..)` — return a `Result`
 that cannot be `Err`. A column assigned twice keeps the last assignment, since a `SET` list
 naming one column twice is SQL no database accepts.
 
-`with!{}` generates the same shape for a CTE pseudo-table — markers, consts, and accessor
-traits alike — so a CTE *is* a real table to `Scope`/`Find`/`Superset` with no separate
+`with!{}` generates the same shape for a CTE pseudo-table — markers, consts, accessor traits
+and `AllRow` alike — so a CTE *is* a real table to `Scope`/`Find`/`Superset` with no separate
 virtual-table machinery. It deliberately does *not* emit `scope::BaseTable`, so the
 pseudo-table is not itself a `JoinSource`: the `cte::with(..)` binding is, and it is passed
 to `.from(binding)`/`.inner_join(binding, on)` exactly where a table would go, making

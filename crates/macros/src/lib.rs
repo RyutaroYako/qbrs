@@ -709,6 +709,10 @@ fn expand_with(decl: CteDecl) -> TokenStream2 {
             #[allow(non_upper_case_globals)]
             pub const All: ::qbrs::select::All<Table> = ::qbrs::select::All::new();
 
+            /// What `select(All)` decodes to — a CTE's pseudo-table names
+            /// its row the way a real one does.
+            pub type AllRow = ::qbrs::row::Row<#declared_row>;
+
             impl<Scope, Idx> ::qbrs::select::AllColumns<Scope, Idx> for Table
             where
                 #(::qbrs::expr::Column<columns::#col_idents>:
@@ -836,8 +840,8 @@ fn gen_insert_struct(
         .filter(|c| !c.nullable && !c.has_default)
         .collect();
     let builder_ident = format_ident!("{}Builder", insert_ident);
-    // One type parameter per required column, `()` until it is given a
-    // value and the column's own type after — so `build()` exists exactly
+    // One type parameter per required column, `Missing<C>` until it is
+    // given a value and the column's own type after — so `build()` exists exactly
     // when every required column has one, and no value is ever unwrapped.
     let slots: Vec<Ident> = required
         .iter()
@@ -889,8 +893,8 @@ fn gen_insert_struct(
         quote! { <#(#required_types),*> }
     };
 
-    // Setting a required column moves its slot from `()` to its type,
-    // leaving the others alone.
+    // Setting a required column moves its slot from `Missing<C>` to its
+    // type, leaving the others alone.
     let required_setters = required.iter().enumerate().map(|(i, c)| {
         let name = &c.field_name;
         let base = &c.base_ty;

@@ -251,10 +251,10 @@ impl<A, B> SameShape<Row<B>> for Row<A> where A: SameShape<B> {}
 
 /// Maps a value written in a selection list to the type its field is filed
 /// under, so a field is read back with the same value that selected it.
-#[diagnostic::on_unimplemented(
-    message = "`{Self}` can't appear in a selection list",
-    label = "a column, an aggregate, a window function, a `sql!` fragment, or a labelled one of those"
-)]
+/// Carries no message of its own: it is reached both from a selection list
+/// (where `SelectionPart` says what belongs in one) and from `.get()`
+/// (where `LookupKey` says what can name a field), and each of those is the
+/// accurate sentence in its position.
 pub trait RowKey {
     type Key;
 }

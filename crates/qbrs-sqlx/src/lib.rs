@@ -251,14 +251,14 @@ where
 /// `Option`, since a count query always produces exactly one row.
 #[diagnostic::on_unimplemented(
     message = "`{Self}` isn't a query this crate can count",
-    label = "a `Select` or a set operation in the `Postgres` dialect is; a writing statement reports rows affected through `.execute(..)` instead"
+    label = "a `Select`, a `DynSelect` or a set operation in the `Postgres` dialect is; a writing statement reports rows affected through `.execute(..)` instead"
 )]
 pub trait CountQuery<Idx> {
     #[doc(hidden)]
     fn count_rendered(&self) -> (String, Vec<Value>);
 }
 
-/// The bound is on the method, and the impl is blanket, for the two
+/// The bound is on the method, and the impls are per-builder, for the two
 /// reasons `LoadExt` explains.
 pub trait CountExt {
     fn count<'e, Idx, E: sqlx::PgExecutor<'e>>(
@@ -329,8 +329,8 @@ impl<S: Statement<Dialect = Postgres>> WriteStatement for S {
     }
 }
 
-/// The bound is on the method, and the impl is blanket, for the two reasons
-/// `LoadExt` explains.
+/// The bound is on the method, and the impls are per-builder, for the two
+/// reasons `LoadExt` explains.
 pub trait ExecuteExt {
     fn execute<'e, E: sqlx::PgExecutor<'e>>(
         &self,
@@ -464,8 +464,8 @@ pub trait PreparedQuery<Params> {
     fn resolved(&self, params: Params) -> Result<(String, Vec<Value>)>;
 }
 
-/// The bound is on the method, and the impl is blanket, for the two reasons
-/// `LoadExt` explains.
+/// The bound is on the method, and the impls are per-builder, for the two
+/// reasons `LoadExt` explains.
 pub trait PreparedExt {
     fn load<'e, Params, E: sqlx::PgExecutor<'e>>(
         &self,
@@ -529,8 +529,8 @@ impl<Params: PreparedParams> PreparedTotal<Params> for Prepared<Postgres, Params
     }
 }
 
-/// The bound is on the method, and the impl is blanket, for the two reasons
-/// `LoadExt` explains.
+/// The bound is on the method, and the impls are per-builder, for the two
+/// reasons `LoadExt` explains.
 pub trait PreparedCountExt {
     fn count<'e, Params, E: sqlx::PgExecutor<'e>>(
         &self,

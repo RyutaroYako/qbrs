@@ -986,6 +986,10 @@ pub fn count() -> Keyed<Count, Nil, BigInt> {
 /// `CAST` keeps the widened type a database picks for a sum inside the
 /// closed set of types this crate has: Postgres returns `numeric` for
 /// `sum(bigint)` and `avg(int)`, neither of which has a native here.
+#[diagnostic::on_unimplemented(
+    message = "`sum`/`avg` need a numeric expression, and `{Self}` isn't one",
+    label = "only `Integer`, `BigInt` and `Real` columns and expressions (and `Numeric`, with the `decimal` feature) can be summed or averaged"
+)]
 pub trait Summable: SqlType {
     type Sum: SqlType;
     const SUM_CAST: Option<CastTarget>;

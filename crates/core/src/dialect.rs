@@ -89,7 +89,8 @@ impl SupportsReturning for Sqlite {}
 /// trait when it lands.
 #[diagnostic::on_unimplemented(
     message = "`{Self}` has no `ON CONFLICT`",
-    label = "Postgres and SQLite do; MySQL spells upsert as `ON DUPLICATE KEY UPDATE`, which is a different clause and isn't built yet"
+    label = "Postgres and SQLite do; MySQL spells upsert as `ON DUPLICATE KEY UPDATE`",
+    note = "that is a different clause, not a spelling of this one, so it isn't rendered from `.on_conflict_*(..)`"
 )]
 pub trait SupportsOnConflict: Dialect {}
 impl SupportsOnConflict for Postgres {}

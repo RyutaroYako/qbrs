@@ -78,3 +78,14 @@ fn a_cte_column_is_read_by_key_and_by_accessor() {
     assert_eq!(row.get(big_orders::total), &2500);
     assert_eq!(row.total(), &2500);
 }
+
+#[test]
+fn a_cte_names_its_row_the_way_a_table_does() {
+    // `with!` generates `AllRow` for the same reason `#[derive(Table)]`
+    // does: a stored query over `select(All)` names a row rather than
+    // spelling a `RowCons` chain.
+    fn total(row: big_orders::AllRow) -> i64 {
+        *row.get(big_orders::total)
+    }
+    let _ = total;
+}

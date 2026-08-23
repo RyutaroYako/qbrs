@@ -214,8 +214,8 @@ A schema is a `#[derive(Table)]` struct, shown in the
   one assignment is one. An assignment a value can't say —
   `updated_at = now()`, `version = version + 1` — goes in with
   `.set_to(column, expression)` on the statement, or
-  `Assignments::set_to(..)` where the whole `SET` list is expressions, which
-  `UPDATE` and `ON CONFLICT DO UPDATE` both accept. Either way the column
+  `Assignments::set_to(..)`/`.and_set_to(..)` where the whole `SET` list is
+  expressions, which `UPDATE` and `ON CONFLICT DO UPDATE` both accept. Either way the column
   has to be one a statement may write (not generated, not the primary key)
   and the expression has to fit it — a nullable expression doesn't assign to
   a NOT NULL column. An `*Insert` is built by naming its
@@ -276,7 +276,7 @@ A schema is a `#[derive(Table)]` struct, shown in the
   `grouping(..)`/`.group_by_all(..)` are the same pair for a runtime-length
   `ORDER BY` or `GROUP BY` — the `?sort=email,-created_at` case, shown in
   [`19_dynamic_sort`](examples/examples/19_dynamic_sort.rs).
-- **Predicates** — `.eq()`/`.ne()`/`.lt()`/`.gt()`/`.like()`, plus
+- **Predicates** — `.eq()`/`.ne()`/`.lt()`/`.lte()`/`.gt()`/`.gte()`/`.like()`, plus
   `.is_null()`/`.is_not_null()` and `.is_in([..])`. A nullable column and a
   non-nullable one compare freely, so an optional foreign key joins like any
   other. Comparing to NULL with `=` is never true in SQL, so `.eq(None)`
@@ -372,8 +372,10 @@ A schema is a `#[derive(Table)]` struct, shown in the
 - One `label!` per scope — it declares a `label` module, and a scope holds
   one. List every name that scope needs in the one invocation.
 - A helper generic over rows needs one index type parameter per column it
-  reads (`fn f<I1, I2, R>(..) where R: HasEmail<I1> + HasTotal<I2>`); sharing
-  one across two columns is a compile error that says so.
+  reads, and names each accessor through its table, since a schema exports
+  them anonymously (`fn f<I1, I2, R>(..) where R: users::HasEmail<I1> +
+  orders::HasTotal<I2>`); sharing one index across two columns is a compile
+  error that says so.
 - A `#[derive(FromRow)]` field's type is the column's decoded type, so a DTO
   filled from a `LEFT JOIN` declares `Option<T>` where one filled from an
   `INNER JOIN` declares `T`. It names no column and no table, but it does
