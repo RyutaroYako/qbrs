@@ -21,7 +21,7 @@ use crate::select::OrderKey;
 pub struct Window<Req> {
     partition_by: Vec<ExprKind>,
     order_by: Vec<(ExprKind, SortDir)>,
-    _marker: PhantomData<Req>,
+    _marker: PhantomData<fn() -> Req>,
 }
 
 /// Starts an empty window spec (bare `OVER ()` if never partitioned/ordered
@@ -77,6 +77,14 @@ pub struct WindowFunc<K> {
     sql: &'static str,
     _marker: PhantomData<fn() -> K>,
 }
+
+impl<K> crate::row::RowKey for WindowFunc<K> {
+    type Key = K;
+}
+
+/// So `row.get(row_number())` works: the key is the function, and a window
+/// spec would only be noise at the lookup.
+impl<K: crate::row::Spelled> crate::row::LookupKey for WindowFunc<K> {}
 
 impl<K> WindowFunc<K> {
     /// Every ranking function counts rows, so the result is `BigInt` rather

@@ -70,11 +70,22 @@ struct JoinClause {
 /// An order-by key: a column/expression tagged with a direction. Built via
 /// `.asc()`/`.desc()` on any column or expression (see `OrderExt` below),
 /// so `.order_by(users::created_at.desc())` reads as one argument, not two.
-#[derive(Clone)]
 pub struct OrderKey<Req> {
     kind: ExprKind,
     dir: SortDir,
-    _marker: PhantomData<Req>,
+    _marker: PhantomData<fn() -> Req>,
+}
+
+// Hand-written for the reason `Expr`'s is: `#[derive(Clone)]` would ask the
+// phantom `Req` to be `Clone`, which no scope list is.
+impl<Req> Clone for OrderKey<Req> {
+    fn clone(&self) -> Self {
+        OrderKey {
+            kind: self.kind.clone(),
+            dir: self.dir,
+            _marker: PhantomData,
+        }
+    }
 }
 
 impl<Req> OrderKey<Req> {

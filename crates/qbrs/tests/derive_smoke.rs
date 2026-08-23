@@ -275,3 +275,20 @@ fn a_write_statement_builds_its_own_correlated_exists() {
     );
     assert_eq!(params, vec![qbrs::expr::Value::Bool(false)]);
 }
+
+#[test]
+fn a_sql_fragment_negates_and_a_boolean_column_does_too() {
+    let (sql, _) = select((users::id,))
+        .from(users::Table)
+        .filter(!qbrs::sql!(
+            qbrs::expr::Bool,
+            "? IS NULL",
+            users::display_name
+        ))
+        .filter(!users::active)
+        .to_sql(Postgres);
+    assert_eq!(
+        sql,
+        "SELECT \"users\".\"id\" FROM \"users\" WHERE (NOT (\"users\".\"display_name\" IS NULL)) AND (NOT \"users\".\"active\")"
+    );
+}

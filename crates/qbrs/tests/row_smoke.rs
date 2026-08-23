@@ -352,3 +352,26 @@ fn a_named_expression_over_a_column_states_what_it_decodes_to() {
     .to_sql(Postgres);
     assert!(sql.contains("AS \"flagged\""), "{sql}");
 }
+
+#[test]
+fn a_window_function_is_read_back_by_the_value_that_selected_it() {
+    use qbrs::window::{row_number, window};
+
+    let row = select((
+        users::email,
+        row_number().over(window().order_by(users::id.asc())),
+    ))
+    .from(users::Table)
+    .to_sql(Postgres);
+    assert!(
+        row.0
+            .contains("row_number() OVER (ORDER BY \"users\".\"id\" ASC)")
+    );
+
+    // The key is the function, so reading it back doesn't re-spell a window
+    // the lookup ignores.
+    fn read(r: Row<RowCons<qbrs::window::RowNumber, i64, RowNil>>) -> i64 {
+        *r.get(row_number())
+    }
+    let _ = read;
+}

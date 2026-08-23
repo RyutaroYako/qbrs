@@ -19,9 +19,11 @@ use crate::update::Assignments;
 /// What a column's setter accepts, keyed by what that column's field
 /// holds: the column's own Rust type — `&str` for text — plus the `Option`
 /// a request struct already carries, wherever leaving the column out means
-/// something. `None` is that meaning: NULL for a nullable column, the
-/// schema's default for a defaulted one, and for a column that is both,
-/// `.<column>_null()` says the other one.
+/// something. What `None` means is the position's own: on an insert it is
+/// NULL for a nullable column and the schema's default for a defaulted one
+/// (`.<column>_null()` says the other, where a column is both); on an
+/// update it is *untouched*, since an `UPDATE` that says nothing about a
+/// column leaves it alone.
 #[diagnostic::on_unimplemented(
     message = "`{Self}` isn't a value this column accepts",
     label = "expected the column's own Rust type, or an `Option` of it"
@@ -31,6 +33,12 @@ pub trait IntoColumnValue<V> {
 }
 
 /// Proof that a builder's slot for column `C` holds that column's value.
+/// Deliberately unsealed, unlike `scope::Find`: forging it buys nothing,
+/// because `*Insert`'s fields are public and a complete row with a value of
+/// the caller's choosing is directly constructible. What the type-state
+/// builder prevents is *forgetting* a column, not choosing its value — and
+/// a seal here can't hold anyway, since the derive must implement this in
+/// the schema's own crate, where any nameable proof is nameable twice.
 /// `Missing<C>` doesn't implement it, which is what `build()` is bounded
 /// by — on the method rather than by the slot's type, so an incomplete row
 /// is a sentence naming the column rather than a missing `build`.

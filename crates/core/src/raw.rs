@@ -31,19 +31,29 @@
 /// (`jsonb_exists(?, 'key')`).
 #[macro_export]
 macro_rules! sql {
-    ($sql_type:ty, $text:expr $(, $arg:expr)* $(,)?) => {{
-        // Binding the text to a `const` first is what rejects a runtime
-        // string: `concat!`, `include_str!` and a `const` of your own all
-        // pass, an assembled `String` does not. The binding is named for
-        // the rule because rustc quotes the line back at whoever breaks it.
-        const SQL_TEXT_MUST_BE_A_LITERAL: &'static str = $text;
-        // Both counts are constants here, so a mismatch is a compile error
-        // rather than a panic when the expression is built.
-        const _: () = ::std::assert!(
-            $crate::expr::placeholder_count(SQL_TEXT_MUST_BE_A_LITERAL)
-                == <[&'static str]>::len(&[$(::std::stringify!($arg)),*]),
-            "`sql!` needs one argument per `?` slot",
-        );
-        $crate::expr::raw_expr::<$sql_type, _>(SQL_TEXT_MUST_BE_A_LITERAL, ($($arg,)*))
-    }};
+    // The expansion is a *call*, with the const-guard block as its first
+    // argument: a block in tail position is coerced to whatever the
+    // surrounding expression expects, which made `!sql!(..)` unify against
+    // the operand type instead of `Not::Output`.
+    ($sql_type:ty, $text:expr $(, $arg:expr)* $(,)?) => {
+        $crate::expr::raw_expr::<$sql_type, _>(
+            {
+                // Binding the text to a `const` first is what rejects a
+                // runtime string: `concat!`, `include_str!` and a `const` of
+                // your own all pass, an assembled `String` does not. The
+                // binding is named for the rule because rustc quotes the
+                // line back at whoever breaks it.
+                const SQL_TEXT_MUST_BE_A_LITERAL: &'static str = $text;
+                // Both counts are constants here, so a mismatch is a compile
+                // error rather than a panic when the expression is built.
+                const _: () = ::std::assert!(
+                    $crate::expr::placeholder_count(SQL_TEXT_MUST_BE_A_LITERAL)
+                        == <[&'static str]>::len(&[$(::std::stringify!($arg)),*]),
+                    "`sql!` needs one argument per `?` slot",
+                );
+                SQL_TEXT_MUST_BE_A_LITERAL
+            },
+            ($($arg,)*),
+        )
+    };
 }

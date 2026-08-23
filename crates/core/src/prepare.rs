@@ -10,7 +10,7 @@
 /// let query = select((users::id,))
 ///     .from(users::Table)
 ///     .filter(users::email.eq(ByEmail::email()))
-///     .prepare();
+///     .prepare::<ByEmail, _>(Postgres);
 ///
 /// let (sql, params) = query.resolve(ByEmail { email: "a@example.com".into() })?;
 /// ```

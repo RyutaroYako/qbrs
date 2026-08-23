@@ -133,6 +133,28 @@ pub fn update<D, T: BaseTable>(_table: T) -> UpdateSeed<D, T> {
 }
 
 impl<D, T: Table> UpdateSeed<D, T> {
+    /// A correlated subquery over the table this statement will write —
+    /// available before the `SET` list, since the scope it correlates
+    /// against is the table, not the assignments.
+    pub fn correlated<S, InnerSel>(
+        &self,
+        source: S,
+        selection: InnerSel,
+    ) -> crate::select::Select<
+        D,
+        crate::scope::Cons<
+            crate::scope::TableSlot<S::Table, crate::scope::NotNull>,
+            WrittenTable<T>,
+        >,
+        InnerSel,
+        WrittenTable<T>,
+    >
+    where
+        S: crate::select::JoinSource<D>,
+    {
+        crate::select::correlated_with(source, selection)
+    }
+
     /// `SET column = <expression>` as the statement's first assignment —
     /// infallible, since one assignment is one assignment. `.set_to(..)`
     /// again for more.
@@ -185,9 +207,6 @@ pub struct Update<D, T: Table> {
 }
 
 impl<D, T: Table> Update<D, T> {
-    /// Only columns of the table being updated are ever in scope for the
-    /// `WHERE` clause here, so the `Superset` check is against a
-    /// single-table scope rather than a full query `Scope`.
     /// A correlated subquery over the table this statement writes — the
     /// same `EXISTS` a `SELECT` builds with `Select::correlated`, against
     /// the one-table scope a write statement has.

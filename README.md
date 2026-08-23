@@ -309,7 +309,8 @@ A schema is a `#[derive(Table)]` struct, shown in the
   `sql.placeholder()`. `.prepare_count()` prepares the same query's total,
   so a paginated endpoint renders each of its two statements once — and
   `.limit(..)`/`.offset(..)` take a placeholder, so one prepared query serves
-  every page.
+  every page. `.load(&pool, params)` runs it; `.resolve(params)` is its
+  rendering terminal, for a dialect this crate doesn't execute.
 - **Transactions** —
   [`15_transaction`](examples/examples/15_transaction.rs). Every
   `.load()`/`.execute()` method is generic over `sqlx::PgExecutor`, so a
@@ -423,6 +424,13 @@ A schema is a `#[derive(Table)]` struct, shown in the
   `UnresolvedPlaceholder` at `.load()`, not a compile error. Placeholder
   names carry the module and struct they were declared in, so it is always
   that error and never a value bound to the wrong slot.
+- No row locking (`FOR UPDATE`/`FOR SHARE`/`SKIP LOCKED`) and no subquery
+  in an expression position (`IN (SELECT ..)`, a scalar subquery in the
+  selection list). `sql!{}` doesn't reach either: it builds an expression,
+  not a statement suffix, and a `Select` isn't a slot value. A correlated
+  `EXISTS` covers what `IN (SELECT ..)` means; the rest is deferred rather
+  than half-supported, since a subquery in a slot would have to carry the
+  dialect it was checked against, as `exists()` does.
 - The derives expand to `::qbrs::` paths, so depend on the `qbrs` facade
   rather than on `qbrs-core` + `qbrs-macros` directly.
 - Every `?` in a `sql!{}` text is a slot — there is no escape for a literal

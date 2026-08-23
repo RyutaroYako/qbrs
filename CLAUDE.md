@@ -324,8 +324,9 @@ transactional API. Everything returns `qbrs_sqlx::Result<T>`; keep `UnresolvedPl
   holds now, never the history of how it was found. Do not narrate rejected alternatives or
   quote compiler error codes.
 - **Deferred, not half-supported.** `WITH RECURSIVE`, aggregate window functions,
-  CTE-referencing-CTE, and relations/eager-loading are explicitly out of scope and documented
-  as "Known limitations" in the relevant module doc comment. Follow that pattern: state the
+  CTE-referencing-CTE, row locking, a subquery in an expression position, and
+  relations/eager-loading are explicitly out of scope and documented as "Known limitations"
+  in the relevant module doc comment. Follow that pattern: state the
   limitation and why, don't silently fall back to `sql!{}`.
 - **Adding a SQL feature** normally touches: an `ExprKind`/builder addition in `core`, a
   render arm, a `*_smoke.rs` test in `crates/core/tests` asserting the exact SQL string, a

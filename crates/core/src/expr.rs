@@ -761,18 +761,30 @@ impl BoolLike for crate::scope::Nullable<Bool> {}
 
 /// `!condition`, not `condition.not()`: the standard `Not` trait reads more
 /// naturally at call sites than a same-named inherent method. Implemented
-/// for both spellings a boolean expression has, since `.filter` takes both.
-impl<Req> std::ops::Not for Expr<Req, Bool> {
-    type Output = Expr<Req, Bool>;
+/// for all three spellings `.filter` takes, each keeping its own type —
+/// `NOT` of a `Nullable<Bool>` is still nullable, and a `sql!` fragment
+/// stays the same fragment.
+impl<Req, S: BoolLike> std::ops::Not for Expr<Req, S> {
+    type Output = Expr<Req, S>;
     fn not(self) -> Self::Output {
         Expr::from_kind(ExprKind::Not(Box::new(self.kind)))
     }
 }
 
 impl<K, Req, S: BoolLike> std::ops::Not for Keyed<K, Req, S> {
-    type Output = Expr<Req, Bool>;
+    type Output = Keyed<K, Req, S>;
     fn not(self) -> Self::Output {
-        Expr::from_kind(ExprKind::Not(Box::new(self.kind)))
+        Keyed::from_kind(ExprKind::Not(Box::new(self.kind)))
+    }
+}
+
+impl<C: ColumnKey> std::ops::Not for Column<C>
+where
+    C::Sql: BoolLike,
+{
+    type Output = Expr<Cons<C::Table, Nil>, C::Sql>;
+    fn not(self) -> Self::Output {
+        Expr::from_kind(ExprKind::Not(Box::new(self.into_expr().kind)))
     }
 }
 
