@@ -239,7 +239,10 @@ to the struct as `pub use users::HasId as _;`: anonymous, so a schema adds exact
 names to its module and `use crate::schema::*;` is all a call site needs.
 
 It also emits `const All` (a `select::All<Table>`) and the `select::AllColumns` impl behind
-it, so `select(users::All)` never restates the column list, plus `type AllRow` — what that
+it — which states only `type Columns`, the table's columns as a type-level list, since
+`select::ColumnList` walks that one list for both the row's fields and the rendered items;
+stating the two separately is what let a hand-written impl select a row that decodes
+transposed — so `select(users::All)` never restates the column list, plus `type AllRow` — what that
 selection decodes to with the table joined not-null, so a stored `Prepared`/`DynSelect`
 names a row instead of spelling a `RowCons` chain by hand. A selection list is a chain of
 `select::SelectionPart`s, each contributing `Fields<Tail>` in front of whatever the rest of
@@ -279,14 +282,17 @@ pseudo-table is not itself a `JoinSource`: the `cte::with(..)` binding is, and i
 to `.from(binding)`/`.inner_join(binding, on)` exactly where a table would go, making
 attaching the `WITH` clause and putting the pseudo-table in scope one act. Selecting
 from a CTE nobody bound, binding one and selecting from another, and splicing a body
-rendered for one dialect into another's statement are all unwritable as a result. Its declared columns are checked against the actual body at
-`cte::with()` by `row::SameShape` — the same one comparison `SetOp` requires of `UNION`
+rendered for one dialect into another's statement are all unwritable as a result. Its `WITH name (..)` header is read off that same declared row by `row::ColumnNames`, so the
+names the outer query reads by and the shape the body was checked against are one fact. The
+declared columns are checked against the actual body at `cte::with()` by `row::SameShape` — the same one comparison `SetOp` requires of `UNION`
 branches, against the `RowCons` chain `with!{}` declares as `CteShape::Row`.
 
 A set operation's `ORDER BY` takes an ordinal, because the branches' scopes are gone by
 then — but the ordinal is `row::Field`'s index, which `scope::Position` reads, so
-`SetOp::order_by_column` names a column and the index does the counting. `nth(n)` stays for
-the one output shape that has no key to name: a single un-tupled column.
+`SetOp::order_by_column` names a column and the index does the counting. The one output
+shape with no key to name — a single un-tupled column, marked `select::SingleColumn` — takes
+`.order_by(dir)` and counts to 1 itself. No public API takes a position: `OrdinalKey` is
+private, since a position a caller writes is one nothing can check.
 
 ### Execution layer (`crates/qbrs-sqlx`)
 

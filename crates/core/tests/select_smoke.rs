@@ -508,3 +508,20 @@ fn a_nullable_column_compares_against_a_non_nullable_one() {
     let (sql, _) = q.to_sql(Postgres);
     assert!(sql.contains("\"users\".\"created_at\" = \"orders\".\"total\""));
 }
+
+#[test]
+fn a_count_of_a_query_that_returns_one_row_is_one() {
+    // The selection decides this as much as `GROUP BY` does: a query that
+    // already aggregates returns one row, so counting it has to wrap it.
+    let (sql, _) = select((qbrs_core::expr::count(),))
+        .from(users::Table)
+        .count_sql(Postgres);
+    assert_eq!(
+        sql,
+        "SELECT count(*) FROM (SELECT count(*) FROM \"users\") AS \"qbrs_total\""
+    );
+
+    // A plain-column selection still counts without the wrap.
+    let (plain, _) = select((users::id,)).from(users::Table).count_sql(Postgres);
+    assert_eq!(plain, "SELECT count(*) FROM \"users\"");
+}

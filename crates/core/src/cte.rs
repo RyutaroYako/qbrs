@@ -28,10 +28,10 @@ use crate::select::{Select, Selection};
 /// Implemented by a `with!{}`-generated pseudo-table's `Table` marker,
 /// pinning down the exact tuple of native types its CTE body must produce.
 ///
-/// `COLUMN_NAMES` is rendered as an explicit column list
-/// (`WITH name (col1, col2) AS (..)`), so the outer query refers to the
-/// declared names rather than to whatever Postgres would have called the
-/// body's columns.
+/// The declared row is also where the rendered column list
+/// (`WITH name (col1, col2) AS (..)`) comes from, so the header the outer
+/// query reads by and the shape the body was checked against are one fact,
+/// not two that can disagree.
 #[diagnostic::on_unimplemented(
     message = "`{Self}` isn't a `with!{{}}` pseudo-table",
     label = "only a `with!{{}}`-declared name can be bound as a CTE",
@@ -41,8 +41,7 @@ pub trait CteShape: Table + crate::select::SelectableSealed {
     /// The declared columns as a row — the same `RowCons` chain a selection
     /// produces, so a body is checked against it by the one comparison
     /// `UNION` branches already use: same names, same types, same order.
-    type Row;
-    const COLUMN_NAMES: &'static [&'static str];
+    type Row: crate::row::ColumnNames;
 }
 
 /// A `WITH name AS (..)` binding. It goes where a table goes — `.from(..)`,

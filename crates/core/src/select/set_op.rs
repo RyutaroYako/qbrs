@@ -34,47 +34,6 @@ impl SetOpKind {
     }
 }
 
-/// The `n`th selected column, 1-indexed. `SetOp::order_by_column` names one
-/// by its column instead and works out the position, which is what a tuple
-/// selection should use; this is for the un-tupled single-column case, whose
-/// output is a bare value with no key to name.
-pub fn nth(position: u32) -> Ordinal {
-    Ordinal(position)
-}
-
-pub struct Ordinal(u32);
-
-impl Ordinal {
-    pub fn asc(self) -> OrdinalKey {
-        OrdinalKey {
-            position: self.0,
-            dir: SortDir::Asc,
-        }
-    }
-
-    /// The direction as a value, matching `select::OrderExt::sort`.
-    pub fn sort(self, dir: SortDir) -> OrdinalKey {
-        OrdinalKey {
-            position: self.0,
-            dir,
-        }
-    }
-
-    pub fn desc(self) -> OrdinalKey {
-        OrdinalKey {
-            position: self.0,
-            dir: SortDir::Desc,
-        }
-    }
-}
-
-/// One sort key of a set operation — an ordinal position and a direction,
-/// reading as one argument the way `select::OrderKey` does.
-pub struct OrdinalKey {
-    position: u32,
-    dir: SortDir,
-}
-
 /// A chain of `SELECT`s combined by set operators, all decoding to the first
 /// branch's `Output` — which is also where SQL itself takes the combined
 /// result's column names from. `ORDER BY` here is necessarily by **ordinal position**
@@ -94,18 +53,24 @@ pub struct SetOp<D, Output> {
 impl<D: Dialect, L> SetOp<D, crate::row::Row<L>> {
     /// `ORDER BY` naming the column instead of counting to it: the position
     /// is `row::Field`'s index, which the row already carries. A column the
-    /// combined result doesn't select is then a compile error, in the one
-    /// place a column reference otherwise wasn't checked at all.
+    /// combined result doesn't select is a compile error, which is the whole
+    /// reason no `ORDER BY <n>` is spellable here. Callable multiple times
+    /// like `Select::order_by`, each call appending a key.
     pub fn order_by_column<K, Idx>(self, _key: K, dir: SortDir) -> Self
     where
         K: crate::row::LookupKey,
         L: crate::row::Field<K::Key, Idx>,
         Idx: crate::scope::Position,
     {
-        self.order_by(OrdinalKey {
-            position: <Idx as crate::scope::Position>::POSITION,
-            dir,
-        })
+        self.order_by_ordinal(<Idx as crate::scope::Position>::POSITION, dir)
+    }
+}
+
+/// A set operation whose branches select one un-tupled column: its output
+/// is a bare value, so there is one position and nothing to name.
+impl<D: Dialect, V: crate::select::SingleColumn> SetOp<D, V> {
+    pub fn order_by(self, dir: SortDir) -> Self {
+        self.order_by_ordinal(1, dir)
     }
 }
 
@@ -166,13 +131,8 @@ impl<D: Dialect, Output> SetOp<D, Output> {
         self.push(SetOpKind::Except, other.fragment::<IdxB>())
     }
 
-    /// Orders the combined result by a selected column's ordinal position —
-    /// `nth(1).desc()`. SQL allows nothing else here, but the position can
-    /// be worked out rather than counted: `order_by_column` does that, and
-    /// is what a tuple selection should use. Callable multiple times like
-    /// `Select::order_by`, each call appending a key.
-    pub fn order_by(mut self, key: OrdinalKey) -> Self {
-        self.order_by.push((key.position, key.dir));
+    fn order_by_ordinal(mut self, position: u32, dir: SortDir) -> Self {
+        self.order_by.push((position, dir));
         self
     }
 

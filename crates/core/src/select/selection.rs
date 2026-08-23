@@ -28,6 +28,12 @@ impl<K, Req, S: SqlType> private::Sealed for Keyed<K, Req, S> {}
 impl<K, Inner> private::Sealed for Labeled<K, Inner> {}
 impl<T> private::Sealed for All<T> {}
 
+/// What a single un-tupled selection decodes to: a bare native value, or
+/// its `Option`. Sealed by construction — the impls come from the same
+/// `sql_leaf_type!` that declares the types — and used to give a
+/// one-column set operation an `ORDER BY` with no position to state.
+pub trait SingleColumn {}
+
 /// One *field* of a resulting `Row`: the key its value is filed under, and
 /// the Rust type it decodes to. A selection list is a chain of
 /// `SelectionPart`s, one of which — `All` — carries many of these at once.
@@ -189,23 +195,58 @@ impl<T> Default for All<T> {
 
 /// What `#[derive(Table)]` emits so `All<Table>` knows the table's columns
 /// and what each of them decodes to in a given scope.
-pub trait AllColumns<Scope, Idx>: SelectableSealed {
+pub trait AllColumns: SelectableSealed {
+    /// The table's columns as a type-level list, `Cons<Column<C>, ..>`.
+    /// The row and the rendered items are both computed from it here, so a
+    /// hand-written impl can name a different set of columns but can never
+    /// make the two disagree — which is what a schema's own crate could do
+    /// while this trait stated the row and pushed the items separately.
+    type Columns;
+}
+
+/// The list `AllColumns` names, walked once for the row's fields and once
+/// for the items. Implemented for `Nil` and `Cons<Column<C>, Tail>` only,
+/// and only here.
+pub trait ColumnList<Scope, Idx> {
     type Fields<Tail>;
     fn push_items(out: &mut Vec<SelectItem>);
 }
 
-impl<T: AllColumns<Scope, Idx>, Scope, Idx> SelectionPart<Scope, Idx> for All<T> {
-    type Fields<Tail> = T::Fields<Tail>;
-    fn push_items(&self, out: &mut Vec<SelectItem>) {
-        T::push_items(out);
+impl<Scope, Idx> ColumnList<Scope, Idx> for crate::scope::Nil {
+    type Fields<Tail> = Tail;
+    fn push_items(_out: &mut Vec<SelectItem>) {}
+}
+
+impl<C: ColumnKey, Tail, Scope, Idx> ColumnList<Scope, Idx> for crate::scope::Cons<Column<C>, Tail>
+where
+    Column<C>: RowField<Scope, Idx>,
+    Tail: ColumnList<Scope, Idx>,
+{
+    type Fields<T> = RowCons<C, <Column<C> as RowField<Scope, Idx>>::Value, Tail::Fields<T>>;
+    fn push_items(out: &mut Vec<SelectItem>) {
+        out.push(RowField::item(&Column::<C>::new()));
+        Tail::push_items(out);
     }
 }
 
-impl<T: AllColumns<Scope, Idx>, Scope, Idx> Selection<Scope, Idx> for All<T> {
-    type Output = Row<T::Fields<RowNil>>;
+impl<T: AllColumns, Scope, Idx> SelectionPart<Scope, Idx> for All<T>
+where
+    T::Columns: ColumnList<Scope, Idx>,
+{
+    type Fields<Tail> = <T::Columns as ColumnList<Scope, Idx>>::Fields<Tail>;
+    fn push_items(&self, out: &mut Vec<SelectItem>) {
+        <T::Columns as ColumnList<Scope, Idx>>::push_items(out);
+    }
+}
+
+impl<T: AllColumns, Scope, Idx> Selection<Scope, Idx> for All<T>
+where
+    T::Columns: ColumnList<Scope, Idx>,
+{
+    type Output = Row<<T::Columns as ColumnList<Scope, Idx>>::Fields<RowNil>>;
     fn items(&self) -> Vec<SelectItem> {
         let mut out = Vec::new();
-        T::push_items(&mut out);
+        <T::Columns as ColumnList<Scope, Idx>>::push_items(&mut out);
         out
     }
 }

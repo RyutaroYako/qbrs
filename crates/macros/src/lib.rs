@@ -305,6 +305,10 @@ fn gen_schema_mod(
     }
 
     let col_names: Vec<_> = columns.iter().map(|c| c.field_name.clone()).collect();
+    let column_list = col_names.iter().rev().fold(
+        quote! { ::qbrs::scope::Nil },
+        |tail, name| quote! { ::qbrs::scope::Cons<::qbrs::expr::Column<columns::#name>, #tail> },
+    );
     // The row `select(<table>::All)` decodes to with the table joined
     // not-null — the one type a stored `Prepared`/`DynSelect` field would
     // otherwise have to spell by hand.
@@ -321,15 +325,6 @@ fn gen_schema_mod(
             };
             quote! { ::qbrs::row::RowCons<columns::#name, #value, #tail> }
         });
-    let all_fields = col_names.iter().rev().fold(quote! { Tail }, |tail, name| {
-        quote! {
-            ::qbrs::row::RowCons<
-                columns::#name,
-                <::qbrs::expr::Column<columns::#name> as ::qbrs::select::RowField<Scope, Idx>>::Value,
-                #tail,
-            >
-        }
-    });
 
     Ok(quote! {
         #[allow(non_snake_case)]
@@ -363,15 +358,8 @@ fn gen_schema_mod(
             #[doc(hidden)]
             impl ::qbrs::select::SelectableSealed for Table {}
 
-            impl<Scope, Idx> ::qbrs::select::AllColumns<Scope, Idx> for Table
-            where
-                #(::qbrs::expr::Column<columns::#col_names>:
-                    ::qbrs::select::RowField<Scope, Idx>,)*
-            {
-                type Fields<Tail> = #all_fields;
-                fn push_items(out: &mut ::std::vec::Vec<::qbrs::render::SelectItem>) {
-                    #(out.push(::qbrs::select::RowField::item(&#col_names));)*
-                }
+            impl ::qbrs::select::AllColumns for Table {
+                type Columns = #column_list;
             }
         }
 
@@ -705,15 +693,10 @@ fn expand_with(decl: CteDecl) -> TokenStream2 {
             });
 
     let col_idents: Vec<_> = decl.fields.iter().map(|(field, _)| field.clone()).collect();
-    let all_fields = col_idents.iter().rev().fold(quote! { Tail }, |tail, name| {
-        quote! {
-            ::qbrs::row::RowCons<
-                columns::#name,
-                <::qbrs::expr::Column<columns::#name> as ::qbrs::select::RowField<Scope, Idx>>::Value,
-                #tail,
-            >
-        }
-    });
+    let column_list = col_idents.iter().rev().fold(
+        quote! { ::qbrs::scope::Nil },
+        |tail, name| quote! { ::qbrs::scope::Cons<::qbrs::expr::Column<columns::#name>, #tail> },
+    );
 
     quote! {
         #[allow(non_snake_case)]
@@ -747,20 +730,12 @@ fn expand_with(decl: CteDecl) -> TokenStream2 {
             #[doc(hidden)]
             impl ::qbrs::select::SelectableSealed for Table {}
 
-            impl<Scope, Idx> ::qbrs::select::AllColumns<Scope, Idx> for Table
-            where
-                #(::qbrs::expr::Column<columns::#col_idents>:
-                    ::qbrs::select::RowField<Scope, Idx>,)*
-            {
-                type Fields<Tail> = #all_fields;
-                fn push_items(out: &mut ::std::vec::Vec<::qbrs::render::SelectItem>) {
-                    #(out.push(::qbrs::select::RowField::item(&#col_idents));)*
-                }
+            impl ::qbrs::select::AllColumns for Table {
+                type Columns = #column_list;
             }
 
             impl ::qbrs::cte::CteShape for Table {
                 type Row = #declared_row;
-                const COLUMN_NAMES: &'static [&'static str] = &[#(#names),*];
             }
         }
 

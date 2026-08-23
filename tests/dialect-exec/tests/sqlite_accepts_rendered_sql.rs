@@ -494,7 +494,7 @@ async fn sqlite_executes_every_rendered_statement_shape() {
                     .from(users::Table)
                     .filter(users::email.like("ada%")),
             )
-            .order_by(nth(1).desc())
+            .order_by_column(users::email, SortDir::Desc)
             .limit(2)
             .offset(1)
             .to_sql(Sqlite),

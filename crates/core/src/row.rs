@@ -297,6 +297,33 @@ impl<K, Inner> RowKey for Labeled<K, Inner> {
     type Key = K;
 }
 
+/// The names a declared row spells, in order — read off the row itself so
+/// a `WITH name (..)` header cannot disagree with the shape its body was
+/// checked against. Implemented here only, for `RowNil` and `RowCons`.
+pub trait ColumnNames {
+    /// One `push` per field, so the list is built without an allocation per
+    /// level of the chain.
+    #[doc(hidden)]
+    fn push_names(out: &mut Vec<&'static str>);
+
+    fn names() -> Vec<&'static str> {
+        let mut out = Vec::new();
+        Self::push_names(&mut out);
+        out
+    }
+}
+
+impl ColumnNames for RowNil {
+    fn push_names(_out: &mut Vec<&'static str>) {}
+}
+
+impl<K: Named, V, Tail: ColumnNames> ColumnNames for RowCons<K, V, Tail> {
+    fn push_names(out: &mut Vec<&'static str>) {
+        out.push(<K as Named>::NAME);
+        Tail::push_names(out);
+    }
+}
+
 /// A value that can name a field at a `.get()`/`.take()` call. Every
 /// `RowKey` can *file* a field; only these can find one again, which is what
 /// keeps an unlabelled expression's `Anon` field out of reach of any other

@@ -227,7 +227,7 @@ fn chained_set_ops_and_ordinal_order_by_limit_offset() {
     let (sql, params) = a
         .union(&b)
         .union_all(&c)
-        .order_by(qbrs_core::select::nth(1).desc())
+        .order_by_column(users::id, qbrs_core::expr::SortDir::Desc)
         .limit(5)
         .offset(2)
         .to_sql(Postgres);
@@ -273,3 +273,20 @@ fn a_set_operation_can_be_ordered_by_a_column_instead_of_a_number() {
 //     let b = select((archived_users::id,)).from(archived_users::Table);
 //     let _ = a.union(&b); // error[E0271]: type mismatch resolving `<... as Selection<...>>::Output == (String,)`
 // }
+
+#[test]
+fn a_single_column_set_operation_orders_without_naming_a_position() {
+    // One column, one position: nothing to state, and no way to state a
+    // wrong one — `ORDER BY 99` is not spellable anywhere any more.
+    let a = select(users::id).from(users::Table);
+    let b = select(archived_users::id).from(archived_users::Table);
+
+    let (sql, _) = a
+        .union(&b)
+        .order_by(qbrs_core::expr::SortDir::Desc)
+        .to_sql(Postgres);
+    assert_eq!(
+        sql,
+        "(SELECT \"users\".\"id\" FROM \"users\") UNION (SELECT \"archived_users\".\"id\" FROM \"archived_users\") ORDER BY 1 DESC"
+    );
+}

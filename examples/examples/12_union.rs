@@ -55,7 +55,7 @@ async fn main() {
 
     let both: Vec<(String,)> = active_emails
         .intersect(&ordering_emails)
-        .order_by(nth(1).asc())
+        .order_by_column(users::email, SortDir::Asc)
         .load(&pool)
         .await
         .expect("intersect")

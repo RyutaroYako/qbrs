@@ -827,6 +827,9 @@ macro_rules! sql_leaf_type {
             }
         }
 
+        impl crate::select::SingleColumn for $native {}
+        impl crate::select::SingleColumn for ::std::option::Option<$native> {}
+
         impl NullValue for $name {
             const NULL_VALUE: Value = Value::$null_variant;
         }

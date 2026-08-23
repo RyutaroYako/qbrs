@@ -244,9 +244,9 @@ A schema is a `#[derive(Table)]` struct, shown in the
   [`12_union`](examples/examples/12_union.rs). Combines `SELECT`s with
   unrelated `Scope`s as long as their output shapes match. SQL allows only
   an ordinal in this `ORDER BY`, so `.order_by_column(users::email, dir)`
-  works the position out from the row rather than making you count —
-  `nth(1)` is for the un-tupled single-column case, whose output is a bare
-  value with no key to name.
+  works the position out from the row rather than making you count, and a
+  single un-tupled column takes `.order_by(dir)` — there is no way to write
+  a position, because a written one is one nothing can check.
 - **Window functions** (`row_number()`/`rank()`/`dense_rank()`) —
   [`13_window`](examples/examples/13_window.rs). Aggregate-as-window-function
   isn't supported yet.

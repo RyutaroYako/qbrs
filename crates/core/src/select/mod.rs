@@ -23,8 +23,10 @@ mod set_op;
 pub use crate::expr::SortDir;
 pub use dyn_select::{CannotFilterAfterErase, DynSelect};
 pub use prepared::{Prepared, PreparedParams, Total, UnresolvedPlaceholder};
-pub use selection::{All, AllColumns, RowField, SelectableSealed, Selection, SelectionPart};
-pub use set_op::{Ordinal, OrdinalKey, SetOp, nth};
+pub use selection::{
+    All, AllColumns, ColumnList, RowField, SelectableSealed, Selection, SelectionPart, SingleColumn,
+};
+pub use set_op::SetOp;
 
 /// One `name AS (body)` binding, carried in by the `Cte` a query was
 /// entered through. Opaque outside this crate: `JoinSource::binding` is the
@@ -34,16 +36,12 @@ pub use set_op::{Ordinal, OrdinalKey, SetOp, nth};
 #[derive(Debug, Clone)]
 pub struct CteDef {
     name: &'static str,
-    column_names: &'static [&'static str],
+    column_names: Vec<&'static str>,
     body: Fragment,
 }
 
 impl CteDef {
-    pub(crate) fn new(
-        name: &'static str,
-        column_names: &'static [&'static str],
-        body: Fragment,
-    ) -> Self {
+    pub(crate) fn new(name: &'static str, column_names: Vec<&'static str>, body: Fragment) -> Self {
         CteDef {
             name,
             column_names,
@@ -154,7 +152,7 @@ impl<D, Marker: crate::cte::CteShape> JoinSource<D> for Cte<D, Marker> {
     fn binding(self) -> Option<CteDef> {
         Some(CteDef::new(
             <Marker as Table>::NAME,
-            Marker::COLUMN_NAMES,
+            <Marker::Row as crate::row::ColumnNames>::names(),
             self.into_body(),
         ))
     }
@@ -458,15 +456,23 @@ impl SelectBody {
     /// `SELECT count(*)` over this body with its paging dropped: a total
     /// counts the rows that match, not the page being shown.
     ///
-    /// A query whose rows aren't one per matching row — `GROUP BY`,
-    /// `HAVING`, `DISTINCT` — is counted by wrapping it, selection and all,
-    /// since what a page of it would show is what has to be counted.
+    /// A query whose rows aren't one per matching row is counted by
+    /// wrapping it, selection and all, since what a page of it would show is
+    /// what has to be counted. Stated as what may be left unwrapped — plain
+    /// columns, no `GROUP BY`/`HAVING`/`DISTINCT` — rather than as a list of
+    /// what may not: an aggregate collapses the rows too, and `sql!` can
+    /// hold anything at all.
     fn count_sql<D: Dialect>(&self, selection: &[SelectItem]) -> (String, Vec<Value>) {
         let mut body = self.clone();
         body.order_by.clear();
         body.limit = None;
         body.offset = None;
-        let one_row_each = body.group_by.is_empty() && body.having.is_empty() && !body.distinct;
+        let one_row_each = body.group_by.is_empty()
+            && body.having.is_empty()
+            && !body.distinct
+            && selection
+                .iter()
+                .all(|item| matches!(item.kind, ExprKind::Column { .. }));
 
         let mut sink = QuerySink::<D>::new();
         if one_row_each {
@@ -825,7 +831,7 @@ impl SelectBody {
 /// query — so `UPDATE`/`DELETE`, whose scope is the one table they write,
 /// reach the same `EXISTS` a `SELECT` does without conjuring a `Select`
 /// they don't otherwise need.
-pub fn correlated_with<D, Scope, S: JoinSource<D>, InnerSel>(
+pub(crate) fn correlated_with<D, Scope, S: JoinSource<D>, InnerSel>(
     source: S,
     selection: InnerSel,
 ) -> Select<D, Cons<TableSlot<S::Table, NotNull>, Scope>, InnerSel, Scope> {
