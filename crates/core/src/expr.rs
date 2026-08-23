@@ -807,6 +807,15 @@ pub fn null<S: NullValue>() -> Expr<Nil, crate::scope::Nullable<S>> {
 /// type. One concrete, non-generic impl per type — a blanket
 /// `impl<T: SqlType> WrapNullable<MaybeNull> for T` would conflict with
 /// `Nullable<T>`'s own impl (see `scope::WrapNullable`).
+mod raw_arg {
+    /// Sealed for the reason `select::ColumnList` is: `Req` is a free
+    /// parameter, and a slot's value can be delegated to a real column — so
+    /// a hand-written impl could claim `Nil` while naming a table, which is
+    /// exactly the scope check a `sql!` slot exists to keep.
+    pub trait Sealed {}
+    impl<T: super::IntoExpr> Sealed for T {}
+}
+
 macro_rules! sql_leaf_type {
     ($name:ident, $native:ty, $null_variant:ident) => {
         pub struct $name;
@@ -899,6 +908,8 @@ macro_rules! sql_leaf_type {
                 }
             }
         }
+
+        impl raw_arg::Sealed for ::std::option::Option<$native> {}
 
         impl RawArg for ::std::option::Option<$native> {
             type Req = Nil;
@@ -1209,7 +1220,7 @@ aggregate!(
 /// a request field already holds — a slot is the one place a NULL arrives
 /// as data rather than as a written `null::<..>()`. A slot that isn't one
 /// reports `IntoExpr`, since that is the bound this one is built on.
-pub trait RawArg {
+pub trait RawArg: raw_arg::Sealed {
     type Req;
     #[doc(hidden)]
     fn into_raw_arg(self) -> RawSlot;

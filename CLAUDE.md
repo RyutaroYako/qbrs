@@ -224,11 +224,16 @@ Every clause of a `SELECT` other than the selection list lives in one `SelectBod
 there and it flows through `.erase()`, `retype()`, and rendering on its own — don't spread
 clause fields back across the two builders or pass them as separate render arguments.
 
-`select::Selection`/`SelectionPart`/`RowField`/`AllColumns` and `cte::CteShape` are sealed
+`select::Selection`/`SelectionPart`/`RowField`/`AllColumns`/`ColumnList`, `expr::RawArg` and
+`cte::CteShape` are sealed
 for the reason `InsertRow` is: each pairs a type-level claim with the runtime list that is
 supposed to match it, and a hand-written impl could select a row that decodes transposed.
 `select::SelectableSealed` is the `#[doc(hidden)] pub` half, since the derive emits
-`AllColumns`/`CteShape` in the schema's own crate.
+`AllColumns`/`CteShape` in the schema's own crate. `ColumnList` and `RawArg` need no such
+door — nothing outside this crate implements them — and both need the seal: each pairs a
+type-level claim with runtime data (`ColumnList` the row against the pushed items, `RawArg`
+a slot's `Req` against the column it delegates to), which is precisely what splitting
+`AllColumns` was meant to remove.
 
 ### Derive and codegen (`crates/macros`)
 

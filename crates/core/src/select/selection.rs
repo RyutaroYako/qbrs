@@ -206,8 +206,18 @@ pub trait AllColumns: SelectableSealed {
 
 /// The list `AllColumns` names, walked once for the row's fields and once
 /// for the items. Implemented for `Nil` and `Cons<Column<C>, Tail>` only,
-/// and only here.
-pub trait ColumnList<Scope, Idx> {
+/// and only here — sealed, because this trait *is* the pairing `AllColumns`
+/// was split up to remove: it states the row and pushes the items
+/// separately, so a hand-written impl could transpose them. Nothing outside
+/// this crate implements it, so an ordinary private supertrait is enough;
+/// no `Proof` is needed.
+mod column_list {
+    pub trait Sealed {}
+    impl Sealed for crate::scope::Nil {}
+    impl<C: crate::expr::ColumnKey, Tail> Sealed for crate::scope::Cons<crate::expr::Column<C>, Tail> {}
+}
+
+pub trait ColumnList<Scope, Idx>: column_list::Sealed {
     type Fields<Tail>;
     fn push_items(out: &mut Vec<SelectItem>);
 }

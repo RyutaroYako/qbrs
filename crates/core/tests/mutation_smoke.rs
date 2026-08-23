@@ -114,6 +114,7 @@ impl UsersInsert {
 }
 
 impl qbrs_core::insert::InsertRowSealed for UsersInsert {}
+impl qbrs_core::insert::InsertableSealed for UsersInsert {}
 impl qbrs_core::insert::Insertable for UsersInsert {}
 
 impl InsertRow for UsersInsert {

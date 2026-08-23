@@ -32,6 +32,17 @@ pub trait IntoColumnValue<V> {
     fn into_column_value(self) -> V;
 }
 
+mod insertable {
+    /// Sealed like the other markers a derive emits. Unlike `Filled`, whose
+    /// doc explains why forging it buys nothing, forging this one turns a
+    /// bulk insert into a single `DEFAULT VALUES` — rows lost quietly — so
+    /// it gets the door even though a determined caller can still write it.
+    pub trait Sealed {}
+}
+
+#[doc(hidden)]
+pub use insertable::Sealed as InsertableSealed;
+
 /// A table with at least one column a statement may insert into. Emitted by
 /// `#[derive(Table)]` unless every column is generated, which leaves an
 /// `INSERT` with nothing to name: SQL spells that `DEFAULT VALUES`, and
@@ -41,7 +52,7 @@ pub trait IntoColumnValue<V> {
     label = "`DEFAULT VALUES` is what SQL calls a row with nothing in it, and it names no columns to repeat",
     note = "insert them one statement at a time"
 )]
-pub trait Insertable {}
+pub trait Insertable: InsertableSealed {}
 
 /// Proof that a builder's slot for column `C` holds that column's value.
 /// Deliberately unsealed, unlike `scope::Find`: forging it buys nothing,

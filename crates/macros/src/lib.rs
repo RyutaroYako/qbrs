@@ -1009,7 +1009,11 @@ fn gen_insert_struct(
     let insertable_marker = if insertable.is_empty() {
         quote! {}
     } else {
-        quote! { impl ::qbrs::insert::Insertable for #insert_ident {} }
+        quote! {
+            #[doc(hidden)]
+            impl ::qbrs::insert::InsertableSealed for #insert_ident {}
+            impl ::qbrs::insert::Insertable for #insert_ident {}
+        }
     };
     let columns_arr = insertable.iter().map(|c| sql_name(&c.field_name));
     let into_values = insertable.iter().map(|c| {
