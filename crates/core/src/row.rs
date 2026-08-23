@@ -305,7 +305,7 @@ where
 /// under, so a field is read back with the same value that selected it.
 #[diagnostic::on_unimplemented(
     message = "`{Self}` can't appear in a selection list",
-    label = "a column, an aggregate, a window function, or a labelled one of those"
+    label = "a column, an aggregate, a window function, a `sql!` fragment, or a labelled one of those"
 )]
 pub trait RowKey {
     type Key;

@@ -21,7 +21,7 @@ use crate::scope::{Find, Superset, Table, WrapNullable};
 /// separate check.
 #[diagnostic::on_unimplemented(
     message = "`{Self}` can't be a field of this query's rows",
-    label = "columns, aggregates, window functions, `<table>::All` and `sql!` fragments can be",
+    label = "a column, an aggregate, a window function, a `sql!` fragment, or a labelled one of those can be",
     note = "an expression the builder inferred a type for — a comparison, an arithmetic combination — has to state what it decodes to with `.decodes_as::<..>()`, since that inference can contradict the join; a `sql!` fragment already states it"
 )]
 pub trait RowField<Scope, Idx>: RowKey {
@@ -74,7 +74,7 @@ impl<K: LabelKey, Inner: RowField<Scope, Idx>, Scope, Idx> RowField<Scope, Idx>
 /// value, since there is nothing to key it against.
 #[diagnostic::on_unimplemented(
     message = "`{Self}` isn't a valid selection list here",
-    label = "a selection is a column, an expression, `<table>::All`, or a tuple of up to 16 of those",
+    label = "a selection is a column, an aggregate, a window function, a `sql!` fragment, a labelled one of those, `<table>::All`, or a tuple of up to 16 of them",
     note = "every element has to be in scope — `.from(..)`/`.join(..)` the tables it names — and an expression the builder inferred a type for has to state its decoded type with `.decodes_as::<..>()`"
 )]
 pub trait Selection<Scope, Idx> {
@@ -102,8 +102,7 @@ macro_rules! scalar_selection {
 /// list is assembled by nesting rather than by concatenating afterwards.
 #[diagnostic::on_unimplemented(
     message = "`{Self}` can't be part of a selection list",
-    label = "columns, aggregates, window functions, `<table>::All` and scope-free `sql!` fragments can be",
-    note = "a fragment that names a table has to say what it decodes to first — `.decodes_as::<Nullable<BigInt>>()` — since its NULL-ability doesn't follow from any one column's join"
+    label = "a column, an aggregate, a window function, a `sql!` fragment, a labelled one of those, or `<table>::All` can be"
 )]
 pub trait SelectionPart<Scope, Idx> {
     type Fields<Tail>;

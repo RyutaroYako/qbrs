@@ -114,7 +114,7 @@ async fn main() {
     let any_signal: Vec<String> = select(users::email)
         .from::<Postgres, _>(users::Table)
         .inner_join(orders::Table, orders::user_id.eq(users::id))
-        .filter(Predicate::any([
+        .filter(Predicate::any_of([
             predicate(users::active.eq(false)),
             predicate(orders::total.gt(2000i64)),
         ]))

@@ -100,6 +100,10 @@ impl SupportsOnConflict for Sqlite {}
 /// three today. It stays separate from `SupportsFullOuterJoin`, which MySQL
 /// genuinely lacks, and so that a dialect without `RIGHT JOIN` can be added
 /// without changing `right_join`'s signature.
+#[diagnostic::on_unimplemented(
+    message = "`{Self}` has no `RIGHT JOIN`",
+    label = "swap the tables and use `.left_join(..)`, which every dialect has"
+)]
 pub trait SupportsRightJoin: Dialect {}
 impl SupportsRightJoin for Postgres {}
 impl SupportsRightJoin for MySql {}

@@ -177,6 +177,11 @@ together, spliced with `Fragment::splice_into`, which assigns the numbering.
 that an embedded query's placeholders are written by position and numbered later. If you add another place that embeds SQL in a
 larger query, take a `Fragment`; don't reintroduce a bare `(String, Vec<Value>)` pair.
 
+Every clause that takes a condition goes through `select::Condition` and comes out a
+`Predicate<Scope>` — `.filter`, `.having`, and all four joins' `ON`, where the scope
+discharged against is the one the join produces. A boolean is `expr::BoolLike`, so a
+`Nullable<Bool>` column is a condition on its own.
+
 ### Builder shape
 
 Builders read in SQL keyword order and take tables as **values**, not turbofish:

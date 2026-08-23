@@ -260,9 +260,9 @@ A schema is a `#[derive(Table)]` struct, shown in the
   each pair widens the tables the expression claims. Conditions from
   *different* tables don't share an `Expr` type at all, so a collection of
   those goes through `predicate(..)` — then `.filter_all(..)` to AND them, or
-  `.filter(Predicate::any(..))` to OR them — `Predicate::all` nests a group
-  inside one. Every `.filter`/`.having`, on every builder, takes either kind
-  of condition. `sort_key(..)`/`.order_by_all(..)` and
+  `.filter(Predicate::any_of(..))` to OR them — `Predicate::all_of` nests a group
+  inside one. Every clause that takes a condition — `.filter`/`.having` on
+  every builder, and every join's `ON` — takes either kind. `sort_key(..)`/`.order_by_all(..)` and
   `grouping(..)`/`.group_by_all(..)` are the same pair for a runtime-length
   `ORDER BY` or `GROUP BY` — the `?sort=email,-created_at` case, shown in
   [`19_dynamic_sort`](examples/examples/19_dynamic_sort.rs).

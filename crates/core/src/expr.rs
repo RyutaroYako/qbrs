@@ -260,7 +260,7 @@ pub trait IntoExpr {
     /// The SQL type this expression has. An associated type rather than a
     /// parameter because every implementor has exactly one — a column its
     /// declared type, a literal its leaf type — which is what lets a
-    /// mismatch report itself as `Comparable`/`Assignable` rather than as
+    /// mismatch report itself as `Comparable`/`AssignsTo` rather than as
     /// an inference failure on a type nobody wrote.
     type Sql: SqlType;
     type Req;
@@ -582,12 +582,6 @@ pub trait ExprMethods: IntoExpr + Sized {
         })
     }
 
-    /// `x IN (a, b, ..)` over a runtime-length list of literals, each bound
-    /// as its own parameter. An empty list renders `FALSE`.
-    ///
-    /// **Known limitation**: the list holds values, not expressions — a
-    /// column reference on the right needs the table it belongs to folded
-    /// into `Req`, which is the same design `sql!{}` covers today.
     /// `x LIKE 'pattern'`. The text requirement is on the method rather
     /// than on a trait of its own, so a non-text operand reports `TextLike`
     /// instead of a missing method.
@@ -600,6 +594,12 @@ pub trait ExprMethods: IntoExpr + Sized {
         bin_op(BinOp::Like, self, rhs)
     }
 
+    /// `x IN (a, b, ..)` over a runtime-length list of literals, each bound
+    /// as its own parameter. An empty list renders `FALSE`.
+    ///
+    /// **Known limitation**: the list holds values, not expressions — a
+    /// column reference on the right needs the table it belongs to folded
+    /// into `Req`, which is the same design `sql!{}` covers today.
     fn is_in<I>(self, values: I) -> Expr<Self::Req, Bool>
     where
         I: IntoIterator,
@@ -845,13 +845,6 @@ macro_rules! sql_leaf_type {
             }
         }
 
-        impl RawArg for $native {
-            type Req = Nil;
-            fn into_raw_arg(self) -> RawSlot {
-                RawSlot(ExprKind::Value(Value::from(self)))
-            }
-        }
-
         impl RawArg for ::std::option::Option<$native> {
             type Req = Nil;
             fn into_raw_arg(self) -> RawSlot {
@@ -949,20 +942,6 @@ macro_rules! text_column_value {
 
 text_column_value!(&str);
 text_column_value!(&String);
-
-impl RawArg for &String {
-    type Req = Nil;
-    fn into_raw_arg(self) -> RawSlot {
-        RawSlot(ExprKind::Value(Value::Text(self.clone())))
-    }
-}
-
-impl RawArg for &str {
-    type Req = Nil;
-    fn into_raw_arg(self) -> RawSlot {
-        RawSlot(ExprKind::Value(Value::Text(self.to_string())))
-    }
-}
 
 impl<S: SqlType> SqlType for crate::scope::Nullable<S> {
     type Native = Option<S::Native>;
@@ -1139,14 +1118,21 @@ aggregate!(
     "`count(column)` — non-NULL values, unlike `count()`'s `count(*)` rows."
 );
 
-/// One `?` slot of a `sql!{}` fragment: a bound value, or an expression the
-/// renderer writes out — a column, an aggregate, another fragment. The
-/// tables an expression names travel with it in `Req`, which is what keeps
-/// the escape hatch inside the scope check rather than beside it.
+/// One `?` slot of a `sql!{}` fragment: every expression, plus the `Option`
+/// a request field already holds — a slot is the one place a NULL arrives
+/// as data rather than as a written `null::<..>()`. A slot that isn't one
+/// reports `IntoExpr`, since that is the bound this one is built on.
 pub trait RawArg {
     type Req;
     #[doc(hidden)]
     fn into_raw_arg(self) -> RawSlot;
+}
+
+impl<T: IntoExpr> RawArg for T {
+    type Req = T::Req;
+    fn into_raw_arg(self) -> RawSlot {
+        RawSlot(self.into_expr().kind)
+    }
 }
 
 /// What a slot holds, opaque outside this crate: the `RawArg` impls are the
@@ -1157,30 +1143,6 @@ pub struct RawSlot(ExprKind);
 impl RawSlot {
     fn into_kind(self) -> ExprKind {
         self.0
-    }
-}
-
-impl<C: ColumnKey> RawArg for Column<C> {
-    type Req = Cons<C::Table, Nil>;
-    fn into_raw_arg(self) -> RawSlot {
-        RawSlot(ExprKind::Column {
-            table: <C::Table as Table>::NAME,
-            name: <C as crate::row::Named>::NAME,
-        })
-    }
-}
-
-impl<Req, S: SqlType> RawArg for Expr<Req, S> {
-    type Req = Req;
-    fn into_raw_arg(self) -> RawSlot {
-        RawSlot(self.kind)
-    }
-}
-
-impl<K, Req, S: SqlType> RawArg for Keyed<K, Req, S> {
-    type Req = Req;
-    fn into_raw_arg(self) -> RawSlot {
-        RawSlot(self.kind)
     }
 }
 

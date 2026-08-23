@@ -212,6 +212,10 @@ where
 /// its `ORDER BY`/`LIMIT`/`OFFSET` dropped — a total counts the rows that
 /// match, not the page being shown. Returns a number rather than an
 /// `Option`, since a count query always produces exactly one row.
+#[diagnostic::on_unimplemented(
+    message = "`{Self}` isn't a query this crate can count",
+    label = "a `Select` or a set operation is; a writing statement reports rows affected through `.execute(..)` instead"
+)]
 pub trait CountExt<Idx> {
     fn count<'e, E: sqlx::PgExecutor<'e>>(
         &self,
@@ -250,6 +254,11 @@ async fn count_rows<'e, E: sqlx::PgExecutor<'e>>(
     Ok(row.try_get::<i64, _>(0)?)
 }
 
+/// Every writing statement: what `execute` returns is rows affected.
+#[diagnostic::on_unimplemented(
+    message = "`{Self}` isn't a statement this crate can execute",
+    label = "an `INSERT`, `UPDATE` or `DELETE` is; a `SELECT` yields rows, so it goes through `.load(..)`"
+)]
 pub trait ExecuteExt {
     fn execute<'e, E: sqlx::PgExecutor<'e>>(
         &self,
@@ -257,8 +266,6 @@ pub trait ExecuteExt {
     ) -> impl std::future::Future<Output = Result<u64>>;
 }
 
-/// Every writing statement, counted the same way: what `execute` returns is
-/// rows affected, whichever of the three it was.
 impl<S: Statement<Dialect = Postgres>> ExecuteExt for S {
     async fn execute<'e, E: sqlx::PgExecutor<'e>>(&self, executor: E) -> Result<u64> {
         let (sql, params) = self.to_sql();
@@ -368,6 +375,10 @@ impl<Output: DecodeRow> LoadExt<()> for SetOp<Postgres, Output> {
 /// the call rather than being baked into the query: one `Prepared` is meant
 /// to serve many calls, and `.resolve()` clones the template rather than
 /// re-rendering it.
+#[diagnostic::on_unimplemented(
+    message = "`{Self}` isn't a prepared query this crate can run",
+    label = "a `prepare!{{}}`-built query is, and its `Params` have to be the ones it declared"
+)]
 pub trait PreparedExt<Params> {
     type Output;
     fn load<'e, E: sqlx::PgExecutor<'e>>(
@@ -406,6 +417,10 @@ impl<Params: PreparedParams, Output: DecodeRow> PreparedExt<Params> for Prepared
 
 /// A prepared total. Separate from `PreparedExt` for the reason `CountExt`
 /// is separate from `LoadExt`: a count produces a number, not rows.
+#[diagnostic::on_unimplemented(
+    message = "`{Self}` isn't a prepared total this crate can run",
+    label = "`prepare_count!{{}}` builds one; `prepare!{{}}` builds a query whose rows go through `.load(..)`"
+)]
 pub trait PreparedCountExt<Params> {
     fn count<'e, E: sqlx::PgExecutor<'e>>(
         &self,

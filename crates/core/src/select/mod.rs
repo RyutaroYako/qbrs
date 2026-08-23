@@ -302,13 +302,13 @@ impl<Scope> Predicate<Scope> {
     /// reference the same tables; this one combines conditions whose scope
     /// requirement is already discharged, which is what lets a search form
     /// OR together conditions from different tables.
-    pub fn any(preds: impl IntoIterator<Item = Predicate<Scope>>) -> Self {
+    pub fn any_of(preds: impl IntoIterator<Item = Predicate<Scope>>) -> Self {
         Predicate::combine(preds, false)
     }
 
-    /// True when all of them are — the AND to `any`'s OR, so a group of
+    /// True when all of them are — the AND to `any_of`'s OR, so a group of
     /// them can be nested inside one.
-    pub fn all(preds: impl IntoIterator<Item = Predicate<Scope>>) -> Self {
+    pub fn all_of(preds: impl IntoIterator<Item = Predicate<Scope>>) -> Self {
         Predicate::combine(preds, true)
     }
 
@@ -555,39 +555,39 @@ impl<D, Scope, Sel, Outer> Select<D, Scope, Sel, Outer> {
         self
     }
 
-    /// `New` and `Req` are both inferred from the arguments (the table
-    /// token's type, and the `on` expression's own tracked requirement) —
-    /// no turbofish, no closure.
-    pub fn inner_join<S: JoinSource<D>, Req, Idxs>(
+    /// The joined table is in scope for the `ON` condition, and so is
+    /// everything already joined — the scope the condition is discharged
+    /// against is the one the join produces, not the one it started from.
+    pub fn inner_join<S: JoinSource<D>, C, Idxs>(
         mut self,
         source: S,
-        on: Expr<Req, Bool>,
+        on: C,
     ) -> Select<D, Cons<TableSlot<S::Table, NotNull>, Scope>, Sel, Outer>
     where
-        Cons<TableSlot<S::Table, NotNull>, Scope>: Superset<Req, Idxs>,
+        C: Condition<Cons<TableSlot<S::Table, NotNull>, Scope>, Idxs>,
     {
         self.body.bind(source);
         self.body.joins.push(JoinClause {
             kind: JoinKind::Inner,
             table: <S::Table as Table>::NAME,
-            on: on.kind,
+            on: on.into_predicate().into_kind(),
         });
         self.retype()
     }
 
-    pub fn left_join<S: JoinSource<D>, Req, Idxs>(
+    pub fn left_join<S: JoinSource<D>, C, Idxs>(
         mut self,
         source: S,
-        on: Expr<Req, Bool>,
+        on: C,
     ) -> Select<D, Cons<TableSlot<S::Table, MaybeNull>, Scope>, Sel, Outer>
     where
-        Cons<TableSlot<S::Table, MaybeNull>, Scope>: Superset<Req, Idxs>,
+        C: Condition<Cons<TableSlot<S::Table, MaybeNull>, Scope>, Idxs>,
     {
         self.body.bind(source);
         self.body.joins.push(JoinClause {
             kind: JoinKind::Left,
             table: <S::Table as Table>::NAME,
-            on: on.kind,
+            on: on.into_predicate().into_kind(),
         });
         self.retype()
     }
@@ -595,40 +595,40 @@ impl<D, Scope, Sel, Outer> Select<D, Scope, Sel, Outer> {
     /// RIGHT JOIN retroactively flips every already-joined table to
     /// nullable (`MapNullable`) before adding the new, guaranteed-present
     /// table, mirroring Drizzle's `AppendToNullabilityMap` rule.
-    pub fn right_join<S: JoinSource<D>, Req, Idxs>(
+    pub fn right_join<S: JoinSource<D>, C, Idxs>(
         mut self,
         source: S,
-        on: Expr<Req, Bool>,
+        on: C,
     ) -> Select<D, Cons<TableSlot<S::Table, NotNull>, Scope::Output>, Sel, Outer>
     where
         D: SupportsRightJoin,
         Scope: MapNullable,
-        Cons<TableSlot<S::Table, NotNull>, Scope::Output>: Superset<Req, Idxs>,
+        C: Condition<Cons<TableSlot<S::Table, NotNull>, Scope::Output>, Idxs>,
     {
         self.body.bind(source);
         self.body.joins.push(JoinClause {
             kind: JoinKind::Right,
             table: <S::Table as Table>::NAME,
-            on: on.kind,
+            on: on.into_predicate().into_kind(),
         });
         self.retype()
     }
 
-    pub fn full_join<S: JoinSource<D>, Req, Idxs>(
+    pub fn full_join<S: JoinSource<D>, C, Idxs>(
         mut self,
         source: S,
-        on: Expr<Req, Bool>,
+        on: C,
     ) -> Select<D, Cons<TableSlot<S::Table, MaybeNull>, Scope::Output>, Sel, Outer>
     where
         D: SupportsFullOuterJoin,
         Scope: MapNullable,
-        Cons<TableSlot<S::Table, MaybeNull>, Scope::Output>: Superset<Req, Idxs>,
+        C: Condition<Cons<TableSlot<S::Table, MaybeNull>, Scope::Output>, Idxs>,
     {
         self.body.bind(source);
         self.body.joins.push(JoinClause {
             kind: JoinKind::Full,
             table: <S::Table as Table>::NAME,
-            on: on.kind,
+            on: on.into_predicate().into_kind(),
         });
         self.retype()
     }

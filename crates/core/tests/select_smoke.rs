@@ -138,7 +138,7 @@ fn all_of_and_predicate_all_fold_the_same_way_filter_does() {
     let (sql, _params) = select((users::id,))
         .from::<Postgres, _>(users::Table)
         .filter(all_of([users::id.gt(1), users::id.lt(10)]))
-        .filter(Predicate::all([
+        .filter(Predicate::all_of([
             predicate(users::active.eq(true)),
             predicate(users::id.lte(9)),
         ]))
@@ -153,7 +153,7 @@ fn all_of_and_predicate_all_fold_the_same_way_filter_does() {
     // Empty: "all of nothing" matches everything, "any of nothing" nothing.
     let (all_empty, _) = select((users::id,))
         .from::<Postgres, _>(users::Table)
-        .filter(Predicate::all(Vec::new()))
+        .filter(Predicate::all_of(Vec::new()))
         .to_sql();
     assert_eq!(
         all_empty,
@@ -307,6 +307,30 @@ fn left_join_renders_and_typechecks() {
         "SELECT \"users\".\"id\", \"orders\".\"total\" FROM \"users\" LEFT JOIN \"orders\" ON (\"orders\".\"user_id\" = \"users\".\"id\") WHERE (\"users\".\"active\" = $1)"
     );
     assert_eq!(params, vec![qbrs_core::expr::Value::Bool(true)]);
+}
+
+#[test]
+fn an_on_condition_takes_whatever_a_where_condition_takes() {
+    let from_fragment = select((users::id,))
+        .from::<Postgres, _>(users::Table)
+        .inner_join(
+            orders::Table,
+            sql!(Bool, "? = ?", orders::user_id, users::id),
+        )
+        .to_sql()
+        .0;
+    assert_eq!(
+        from_fragment,
+        "SELECT \"users\".\"id\" FROM \"users\" INNER JOIN \"orders\" ON (\"orders\".\"user_id\" = \"users\".\"id\")"
+    );
+
+    let discharged: Predicate<_> = predicate(orders::user_id.eq(users::id));
+    let from_predicate = select((users::id,))
+        .from::<Postgres, _>(users::Table)
+        .inner_join(orders::Table, discharged)
+        .to_sql()
+        .0;
+    assert_eq!(from_fragment, from_predicate);
 }
 
 // Uncomment to eyeball the compile error for a forgotten join (confirmed
