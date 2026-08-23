@@ -12,7 +12,7 @@ async fn main() {
     seed(&pool).await;
 
     let active_users = select((users::id, users::email, users::display_name))
-        .from::<Postgres, _>(users::Table)
+        .from(users::Table)
         .filter(users::active.eq(true))
         .order_by(users::id.asc())
         .limit(10)
@@ -50,7 +50,7 @@ async fn main() {
     // A single un-tupled column decodes to its bare value, with no row to
     // index into.
     let emails: Vec<String> = select(users::email)
-        .from::<Postgres, _>(users::Table)
+        .from(users::Table)
         .load(&pool)
         .await
         .expect("select emails");

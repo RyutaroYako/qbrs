@@ -7,6 +7,25 @@ use std::marker::PhantomData;
 use crate::row::{Named, Row, RowCons, RowKey, RowNil};
 use crate::scope::{Find, Superset, Table, WrapNullable};
 
+/// Sealed for the reason `InsertRow` is: these traits pair a type-level
+/// claim (`Fields`/`Output`) with the runtime list of `SelectItem`s that is
+/// supposed to match it, and only the impls in this crate keep the two in
+/// step. A hand-written one could select a row that decodes transposed —
+/// the failure `row::SameShape` and column-keyed rows exist to stop.
+mod private {
+    pub trait Sealed {}
+}
+
+/// The `AllColumns` half is emitted in the schema's own crate, so its seal
+/// is public-but-hidden, as `scope::BaseTableSealed` is.
+#[doc(hidden)]
+pub use private::Sealed as SelectableSealed;
+
+impl<C: crate::expr::ColumnKey> private::Sealed for Column<C> {}
+impl<K, Req, S: SqlType> private::Sealed for Keyed<K, Req, S> {}
+impl<K, Inner> private::Sealed for Labeled<K, Inner> {}
+impl<T> private::Sealed for All<T> {}
+
 /// One *field* of a resulting `Row`: the key its value is filed under, and
 /// the Rust type it decodes to. A selection list is a chain of
 /// `SelectionPart`s, one of which — `All` — carries many of these at once.
@@ -24,7 +43,7 @@ use crate::scope::{Find, Superset, Table, WrapNullable};
     label = "a column, an aggregate, a window function, a `sql!` fragment, or a labelled one of those can be",
     note = "an expression the builder inferred a type for — a comparison, an arithmetic combination — has to state what it decodes to with `.decodes_as::<..>()`, since that inference can contradict the join; a `sql!` fragment already states it"
 )]
-pub trait RowField<Scope, Idx>: RowKey {
+pub trait RowField<Scope, Idx>: RowKey + private::Sealed {
     type Value;
     fn item(&self) -> SelectItem;
 }
@@ -77,7 +96,7 @@ impl<K: LabelKey, Inner: RowField<Scope, Idx>, Scope, Idx> RowField<Scope, Idx>
     label = "a selection is a column, an aggregate, a window function, a `sql!` fragment, a labelled one of those, `<table>::All`, or a tuple of up to 16 of them",
     note = "every element has to be in scope — `.from(..)`/`.join(..)` the tables it names — and an expression the builder inferred a type for has to state its decoded type with `.decodes_as::<..>()`"
 )]
-pub trait Selection<Scope, Idx> {
+pub trait Selection<Scope, Idx>: private::Sealed {
     type Output;
     fn items(&self) -> Vec<SelectItem>;
 }
@@ -105,7 +124,7 @@ macro_rules! scalar_selection {
     label = "a column, an aggregate, a window function, a `sql!` fragment, a labelled one of those, or `<table>::All` can be",
     note = "an expression the builder inferred a type for — a comparison, an arithmetic combination — has to state what it decodes to with `.decodes_as::<..>()`, since that inference can contradict the join"
 )]
-pub trait SelectionPart<Scope, Idx> {
+pub trait SelectionPart<Scope, Idx>: private::Sealed {
     type Fields<Tail>;
     fn push_items(&self, out: &mut Vec<SelectItem>);
 }
@@ -168,7 +187,7 @@ impl<T> Default for All<T> {
 
 /// What `#[derive(Table)]` emits so `All<Table>` knows the table's columns
 /// and what each of them decodes to in a given scope.
-pub trait AllColumns<Scope, Idx> {
+pub trait AllColumns<Scope, Idx>: SelectableSealed {
     type Fields<Tail>;
     fn push_items(out: &mut Vec<SelectItem>);
 }
@@ -200,6 +219,8 @@ macro_rules! row_chain {
 
 macro_rules! tuple_selection {
     ($($n:ident $i:ident),+) => {
+        impl<$($n,)+> private::Sealed for ($($n,)+) {}
+
         #[allow(non_snake_case)]
         impl<Scope, $($n,)+ $($i,)+> Selection<Scope, ($($i,)+)> for ($($n,)+)
         where

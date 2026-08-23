@@ -17,7 +17,7 @@ async fn main() {
     // come back `None`, proving the join-derived Option<i64> is real, not
     // just a type-level claim that never gets exercised at runtime.
     let rows = select((users::email, orders::total))
-        .from::<Postgres, _>(users::Table)
+        .from(users::Table)
         .left_join(orders::Table, orders::user_id.eq(users::id))
         .order_by(users::id.asc())
         .load(&pool)
@@ -39,7 +39,7 @@ async fn main() {
     // nullability, so the row's field type isn't wrapped, and the *type
     // itself* documents that this query can never see a NULL total.
     let inner = select((users::email, orders::total))
-        .from::<Postgres, _>(users::Table)
+        .from(users::Table)
         .inner_join(orders::Table, orders::user_id.eq(users::id))
         .order_by(orders::total.desc())
         .load(&pool)

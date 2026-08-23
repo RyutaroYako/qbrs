@@ -60,9 +60,11 @@ pub struct Nil;
 /// joined table first, which is the order a hand-written `Scope` alias has
 /// to be spelled in.
 ///
-/// **Known limitation**: a table appears at most once. Joining one twice is
-/// accepted here and reported later, as an inference ambiguity, the first
-/// time a column of it is referenced.
+/// **Known limitation**: a table appears at most once, and uniqueness is by
+/// marker type, not by SQL name. Joining one marker twice is reported later,
+/// as an inference ambiguity the first time a column of it is referenced;
+/// two *different* markers that share a `Table::NAME` are not caught at all
+/// and render `FROM "t" JOIN "t"`. Two schemas must not name the same table.
 pub struct Cons<Head, Tail>(PhantomData<(Head, Tail)>);
 
 /// One occurrence of a table in the scope list: table `T`, with the
@@ -82,7 +84,7 @@ pub struct There<I>(PhantomData<I>);
 #[diagnostic::on_unimplemented(
     message = "`{T}` is not available in this query's scope",
     label = "add `.join(<table>, ..)` (or `.from(..)`) for `{T}` before referencing its columns here",
-    note = "columns can only be referenced once their table has been joined into the current FROM/JOIN scope"
+    note = "columns can only be referenced once their table has been joined into the current FROM/JOIN scope — and in a generic helper give each table its own `Idx` parameter, since one shared index matches no scope"
 )]
 pub trait Find<T: Table, Index> {
     /// The nullability `T` has in this scope (derived from how it was

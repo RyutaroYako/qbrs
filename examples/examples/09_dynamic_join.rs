@@ -17,7 +17,7 @@ type UserRow =
 
 fn page(include_orders: bool, page: u32) -> DynSelect<Postgres, UserRow> {
     let base = select((users::id, users::email))
-        .from::<Postgres, _>(users::Table)
+        .from(users::Table)
         .order_by(users::id.asc());
 
     // `order_by` has to happen before `.erase()` — a sort key is a column

@@ -29,12 +29,12 @@ async fn main() {
     // CTE's declared `total` with nothing labelled. It decodes as
     // `Option<i64>`: a sum over zero rows is NULL, whatever the column says.
     let totals = select((orders::user_id, sum(orders::total)))
-        .from::<Postgres, _>(orders::Table)
+        .from(orders::Table)
         .group_by(orders::user_id)
         .having(sum(orders::total).gt(1000i64));
 
     let rows = select((users::email, big_spenders::total))
-        .from::<Postgres, _>(users::Table)
+        .from(users::Table)
         .inner_join(
             cte::with(big_spenders::Table, &totals),
             big_spenders::user_id.eq(users::id),

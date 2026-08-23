@@ -113,10 +113,24 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
     let insert_struct = gen_insert_struct(struct_ident, &mod_ident, &columns);
     let update_struct = gen_update_struct(struct_ident, &mod_ident, &columns);
 
+    // The schema struct is a declaration, not a value: nothing constructs
+    // one, and `dead_code` would say so for every table in a binary crate.
+    // Only a literal counts as a construction, so this is what silences it.
+    let field_names: Vec<&Ident> = columns.iter().map(|c| &c.field_name).collect();
+    let never_constructed = quote! {
+        const _: () = {
+            #[allow(dead_code)]
+            fn __qbrs_schema_is_a_declaration(row: #struct_ident) -> #struct_ident {
+                #struct_ident { #(#field_names: row.#field_names,)* }
+            }
+        };
+    };
+
     Ok(quote! {
         #schema_mod
         #insert_struct
         #update_struct
+        #never_constructed
     })
 }
 
@@ -342,6 +356,9 @@ fn gen_schema_mod(
 
             // One `Idx` for the whole table: every column of it is found at
             // the same place in the scope, with the same nullability.
+            #[doc(hidden)]
+            impl ::qbrs::select::SelectableSealed for Table {}
+
             impl<Scope, Idx> ::qbrs::select::AllColumns<Scope, Idx> for Table
             where
                 #(::qbrs::expr::Column<columns::#col_names>:
@@ -713,6 +730,9 @@ fn expand_with(decl: CteDecl) -> TokenStream2 {
             /// its row the way a real one does.
             pub type AllRow = ::qbrs::row::Row<#declared_row>;
 
+            #[doc(hidden)]
+            impl ::qbrs::select::SelectableSealed for Table {}
+
             impl<Scope, Idx> ::qbrs::select::AllColumns<Scope, Idx> for Table
             where
                 #(::qbrs::expr::Column<columns::#col_idents>:
@@ -887,11 +907,6 @@ fn gen_insert_struct(
             .map(|n| quote! { ::qbrs::insert::Missing<#mod_ident::columns::#n> });
         quote! { <#(#missing),*> }
     };
-    let full_args = if slots.is_empty() {
-        quote! {}
-    } else {
-        quote! { <#(#required_types),*> }
-    };
 
     // Setting a required column moves its slot from `Missing<C>` to its
     // type, leaving the others alone.
@@ -1043,10 +1058,28 @@ fn gen_insert_struct(
             #(#setters)*
         }
 
-        impl #builder_ident #full_args {
-            pub fn build(self) -> #insert_ident {
+        #(
+            impl ::qbrs::insert::Filled<#mod_ident::columns::#required_names> for #required_types {
+                type Value = #required_types;
+                fn filled(self) -> #required_types {
+                    self
+                }
+            }
+        )*
+
+        impl #builder_args #builder_ident #builder_args {
+            /// The bound is on the method rather than on the impl, so a row
+            /// that isn't complete says which column is missing instead of
+            /// making `build` disappear.
+            pub fn build(self) -> #insert_ident
+            where
+                #(#slots: ::qbrs::insert::Filled<
+                    #mod_ident::columns::#required_names,
+                    Value = #required_types,
+                >,)*
+            {
                 #insert_ident {
-                    #(#required_names: self.#required_names,)*
+                    #(#required_names: ::qbrs::insert::Filled::filled(self.#required_names),)*
                     #(#optional_names: self.#optional_names,)*
                 }
             }

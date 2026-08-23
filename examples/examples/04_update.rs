@@ -13,7 +13,7 @@ async fn main() {
     seed(&pool).await;
 
     let ada_id: i64 = select(users::id)
-        .from::<Postgres, _>(users::Table)
+        .from(users::Table)
         .filter(users::email.eq("ada@example.com"))
         .load_one(&pool)
         .await
@@ -25,7 +25,7 @@ async fn main() {
     // left unchanged via a redundant `email = email` self-assignment.
     let requested_email: Option<String> = None;
     let requested_name: Option<String> = Some("Ada, Countess of Lovelace".into());
-    let affected = update::<Postgres, _>(users::Table)
+    let affected = update(users::Table)
         .set(
             Assignments::from_row(
                 UsersUpdate::builder()
@@ -44,7 +44,7 @@ async fn main() {
     // An assignment the database computes: the value never passes through
     // this process, so `now()` is the database's clock and a counter can be
     // bumped without reading it first.
-    let stamped = update::<Postgres, _>(users::Table)
+    let stamped = update(users::Table)
         .set(
             Assignments::from_row(UsersUpdate {
                 display_name: Some(Some("Ada L.".into())),
@@ -62,7 +62,7 @@ async fn main() {
     // Clearing the column is its own call, distinct from having nothing to
     // say about it — the struct literal spells the same two states
     // `Some(None)` and `None`.
-    let cleared = update::<Postgres, _>(users::Table)
+    let cleared = update(users::Table)
         .set(
             Assignments::from_row(UsersUpdate::builder().display_name_null().build())
                 .expect("display_name is set"),
@@ -78,7 +78,7 @@ async fn main() {
     // The same NULL as an assignment rather than a request field, which is
     // where an `Option` has no `None` to be. Assigning a column twice keeps
     // the last assignment, so this one wins over the request's.
-    let relabelled = update::<Postgres, _>(users::Table)
+    let relabelled = update(users::Table)
         .set(
             Assignments::from_row(UsersUpdate {
                 display_name: Some(Some("Overwritten below".into())),

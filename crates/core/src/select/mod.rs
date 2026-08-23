@@ -23,16 +23,33 @@ mod set_op;
 pub use crate::expr::SortDir;
 pub use dyn_select::{CannotFilterAfterErase, DynSelect};
 pub use prepared::{Prepared, PreparedParams, Total, UnresolvedPlaceholder};
-pub use selection::{All, AllColumns, RowField, Selection, SelectionPart};
+pub use selection::{All, AllColumns, RowField, SelectableSealed, Selection, SelectionPart};
 pub use set_op::{Ordinal, OrdinalKey, SetOp, nth};
 
 /// One `name AS (body)` binding, carried in by the `Cte` a query was
-/// entered through.
+/// entered through. Opaque outside this crate: `JoinSource::binding` is the
+/// only way to make one, and it takes the name and columns from the
+/// marker's `CteShape` rather than from anything a caller can vary.
+#[doc(hidden)]
 #[derive(Debug, Clone)]
-struct CteDef {
+pub struct CteDef {
     name: &'static str,
     column_names: &'static [&'static str],
     body: Fragment,
+}
+
+impl CteDef {
+    pub(crate) fn new(
+        name: &'static str,
+        column_names: &'static [&'static str],
+        body: Fragment,
+    ) -> Self {
+        CteDef {
+            name,
+            column_names,
+            body,
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -103,7 +120,7 @@ pub trait JoinSource<D>: join_source::Sealed {
     /// The `WITH` binding this source carries into the statement — `None`
     /// for a schema table, which is already there.
     #[doc(hidden)]
-    fn binding(self) -> Option<Cte<D, Self::Table>>;
+    fn binding(self) -> Option<CteDef>;
 }
 
 mod join_source {
@@ -116,15 +133,19 @@ mod join_source {
 
 impl<D, T: BaseTable> JoinSource<D> for T {
     type Table = T;
-    fn binding(self) -> Option<Cte<D, T>> {
+    fn binding(self) -> Option<CteDef> {
         None
     }
 }
 
 impl<D, Marker: crate::cte::CteShape> JoinSource<D> for Cte<D, Marker> {
     type Table = Marker;
-    fn binding(self) -> Option<Cte<D, Marker>> {
-        Some(self)
+    fn binding(self) -> Option<CteDef> {
+        Some(CteDef::new(
+            <Marker as Table>::NAME,
+            Marker::COLUMN_NAMES,
+            self.into_body(),
+        ))
     }
 }
 
@@ -255,7 +276,7 @@ pub trait Condition<D, Scope, Idxs> {
     /// Discharged against this scope, which for an `Expr` is where its
     /// `Superset` proof is spent and for a `Predicate` already happened.
     #[doc(hidden)]
-    fn into_predicate(self) -> Predicate<Scope>;
+    fn into_predicate(self) -> Predicate<D, Scope>;
 }
 
 impl<D, Scope: Superset<Req, Idxs>, Req, Idxs, T: IntoExpr<Req = Req>> Condition<D, Scope, Idxs>
@@ -263,7 +284,7 @@ impl<D, Scope: Superset<Req, Idxs>, Req, Idxs, T: IntoExpr<Req = Req>> Condition
 where
     T::Sql: BoolLike,
 {
-    fn into_predicate(self) -> Predicate<Scope> {
+    fn into_predicate(self) -> Predicate<D, Scope> {
         Predicate {
             kind: self.into_expr().kind,
             _marker: PhantomData,
@@ -271,8 +292,8 @@ where
     }
 }
 
-impl<D, Scope> Condition<D, Scope, ()> for Predicate<Scope> {
-    fn into_predicate(self) -> Predicate<Scope> {
+impl<D, Scope> Condition<D, Scope, ()> for Predicate<D, Scope> {
+    fn into_predicate(self) -> Predicate<D, Scope> {
         self
     }
 }
@@ -281,16 +302,17 @@ impl<D, Scope> Condition<D, Scope, ()> for Predicate<Scope> {
 /// expression this one is dialect-pinned: the subquery it holds was
 /// capability-checked against its own dialect, and any CTE it binds is
 /// already rendered in that dialect. It is therefore a condition and only a
-/// condition — `.filter(..)` it onto a query of the same dialect, which
-/// still composes conditionally, since `.filter` returns `Self`. It has no
-/// `predicate(..)`, which would trade the dialect away.
+/// condition — `.filter(..)` it, or `predicate(..)` it into a collection,
+/// onto a query of the same dialect. A `Predicate` carries `D` for this
+/// reason: discharging a condition gives up the tables it named, never the
+/// dialect it was built for.
 pub struct Exists<D, Req> {
     kind: ExprKind,
     _marker: PhantomData<fn() -> (D, Req)>,
 }
 
 impl<D, Scope: Superset<Req, Idxs>, Req, Idxs> Condition<D, Scope, Idxs> for Exists<D, Req> {
-    fn into_predicate(self) -> Predicate<Scope> {
+    fn into_predicate(self) -> Predicate<D, Scope> {
         Predicate {
             kind: self.kind,
             _marker: PhantomData,
@@ -303,14 +325,14 @@ impl<D, Scope: Superset<Req, Idxs>, Req, Idxs> Condition<D, Scope, Idxs> for Exi
 /// `Expr` carries the tables it references in its type, which is what makes
 /// `vec![users_cond, orders_cond]` fail to unify; `predicate` trades that
 /// tag for a proof against one concrete scope.
-pub struct Predicate<Scope> {
+pub struct Predicate<D, Scope> {
     kind: ExprKind,
-    _marker: PhantomData<fn() -> Scope>,
+    _marker: PhantomData<fn() -> (D, Scope)>,
 }
 
 // Hand-written for the reason `Expr`'s is: `#[derive(Clone)]` would ask a
 // phantom `Scope` to be `Clone`.
-impl<Scope> Clone for Predicate<Scope> {
+impl<D, Scope> Clone for Predicate<D, Scope> {
     fn clone(&self) -> Self {
         Predicate {
             kind: self.kind.clone(),
@@ -319,22 +341,22 @@ impl<Scope> Clone for Predicate<Scope> {
     }
 }
 
-impl<Scope> Predicate<Scope> {
+impl<D, Scope> Predicate<D, Scope> {
     /// True when any of them is. `expr::any_of` combines conditions that
     /// reference the same tables; this one combines conditions whose scope
     /// requirement is already discharged, which is what lets a search form
     /// OR together conditions from different tables.
-    pub fn any_of(preds: impl IntoIterator<Item = Predicate<Scope>>) -> Self {
+    pub fn any_of(preds: impl IntoIterator<Item = Predicate<D, Scope>>) -> Self {
         Predicate::combine(preds, false)
     }
 
     /// True when all of them are — the AND to `any_of`'s OR, so a group of
     /// them can be nested inside one.
-    pub fn all_of(preds: impl IntoIterator<Item = Predicate<Scope>>) -> Self {
+    pub fn all_of(preds: impl IntoIterator<Item = Predicate<D, Scope>>) -> Self {
         Predicate::combine(preds, true)
     }
 
-    fn combine(preds: impl IntoIterator<Item = Predicate<Scope>>, all: bool) -> Self {
+    fn combine(preds: impl IntoIterator<Item = Predicate<D, Scope>>, all: bool) -> Self {
         Predicate {
             kind: crate::expr::fold_conditions(preds.into_iter().map(Predicate::into_kind), all),
             _marker: PhantomData,
@@ -346,17 +368,11 @@ impl<Scope> Predicate<Scope> {
     }
 }
 
-/// Discharges a condition's scope requirement. `Scope` is inferred from the
-/// query the resulting predicates are eventually given to.
-pub fn predicate<Scope, Req, Idxs, C: IntoExpr<Req = Req>>(cond: C) -> Predicate<Scope>
-where
-    Scope: Superset<Req, Idxs>,
-    C::Sql: BoolLike,
-{
-    Predicate {
-        kind: cond.into_expr().kind,
-        _marker: PhantomData,
-    }
+/// Discharges a condition's scope requirement, so a runtime-length
+/// collection of them can be built and passed around. `Scope` and `D` are
+/// inferred from the query the resulting predicates are eventually given to.
+pub fn predicate<D, Scope, Idxs, C: Condition<D, Scope, Idxs>>(cond: C) -> Predicate<D, Scope> {
+    cond.into_predicate()
 }
 
 /// Holds just the `SELECT` list until `.from(..)` supplies the first table
@@ -452,13 +468,7 @@ impl SelectBody {
     /// Attaches whatever `WITH` binding a join source carries before its
     /// table is named in a FROM or JOIN clause.
     fn bind<D, S: JoinSource<D>>(&mut self, source: S) {
-        if let Some(cte) = source.binding() {
-            self.ctes.push(CteDef {
-                name: cte.name,
-                column_names: cte.column_names,
-                body: cte.body,
-            });
-        }
+        self.ctes.extend(source.binding());
     }
 }
 
@@ -513,7 +523,7 @@ impl<D, Scope, Sel, Outer> Select<D, Scope, Sel, Outer> {
     /// AND-folds a runtime-length collection of already-discharged
     /// conditions — the shape a search form has, where the conditions come
     /// from different tables and so can't share one `Expr` type.
-    pub fn filter_all(mut self, conds: impl IntoIterator<Item = Predicate<Scope>>) -> Self {
+    pub fn filter_all(mut self, conds: impl IntoIterator<Item = Predicate<D, Scope>>) -> Self {
         self.body
             .wheres
             .extend(conds.into_iter().map(Predicate::into_kind));
@@ -569,7 +579,7 @@ impl<D, Scope, Sel, Outer> Select<D, Scope, Sel, Outer> {
 
     /// The same for a runtime-length collection of discharged conditions,
     /// as `filter_all` is to `filter`.
-    pub fn having_all(mut self, conds: impl IntoIterator<Item = Predicate<Scope>>) -> Self {
+    pub fn having_all(mut self, conds: impl IntoIterator<Item = Predicate<D, Scope>>) -> Self {
         self.body
             .having
             .extend(conds.into_iter().map(Predicate::into_kind));

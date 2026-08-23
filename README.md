@@ -56,7 +56,7 @@ struct Orders {
 }
 
 let rows = select((users::email, orders::total))
-    .from::<Postgres, _>(users::Table)
+    .from(users::Table)
     .left_join(orders::Table, orders::user_id.eq(users::id))
     .order_by(users::id.asc())
     .load(&pool)
@@ -207,9 +207,13 @@ A schema is a `#[derive(Table)]` struct, shown in the
   `UsersUpdate::builder()`, whose setters take what the column holds or an
   `Option` of it, so a request struct's fields map across one for one and
   an absent one stays untouched; `.column_null()` is the explicit `NULL`.
-  (The struct literal spells the three states directly, which is easy to
-  nest wrongly: `Some(request.field)` sets `NULL` where the request said
-  nothing.) `update(t).set_to(col, expr)` starts a
+  The struct literal spells the three states directly, which is what a JSON
+  Merge Patch body already holds (`Option<Option<T>>`, serde's
+  `double_option`) — so map that kind of request with the literal, and use
+  the builder where the values are yours to write. What the literal makes
+  easy to get wrong is the halfway case: `Some(request.field)` from a plain
+  `Option<T>` sets `NULL` where the request said nothing.
+  `update(t).set_to(col, expr)` starts a
   statement whose assignments are all computed, and needs no `Result`, since
   one assignment is one. An assignment a value can't say —
   `updated_at = now()`, `version = version + 1` — goes in with
@@ -309,7 +313,7 @@ A schema is a `#[derive(Table)]` struct, shown in the
   does — no separate transactional API to learn:
   ```rust
   let mut tx = pool.begin().await?;
-  insert::<Postgres, _>(users::Table)
+  insert(users::Table)
       .values(UsersInsert::builder().email("ada@example.com").build())
       .execute(&mut *tx)
       .await?;
@@ -361,12 +365,14 @@ A schema is a `#[derive(Table)]` struct, shown in the
 - A `RETURNING` row is decoded as many, so `load_one` hands back an
   `Option`: `ON CONFLICT DO NOTHING` can return no row at all, even for an
   insert of exactly one.
-- The dialect is part of a query's type (`.from::<Postgres, _>(..)`), because
-  what a dialect supports is checked while the query is being built, not when
-  it renders. A project that speaks one dialect can wrap the entry points
-  once rather than repeating the turbofish — `SelectSeed`/`InsertSeed`/
-  `UpdateSeed` and `BaseTable` are in the prelude so that wrapper needs no
-  import beyond it.
+- The dialect is part of a query's type, because what a dialect supports is
+  checked while the query is being built, not when it renders — but it is
+  inferred from the executor the query is eventually given to, so
+  `.from(users::Table)` is the usual spelling and `.from::<Postgres, _>(..)`
+  is only needed where nothing pins it: a query rendered with `.to_sql()`,
+  or one stored before it is run. (A project that would rather write it once
+  can wrap the entry points; `SelectSeed`/`InsertSeed`/`UpdateSeed` and
+  `BaseTable` are in the prelude so that wrapper needs no other import.)
 - `ORDER BY` takes an expression, not an output label: sort by
   `sum(orders::total).desc()`, not by the `label!` it was labelled to.
 - One `label!` per scope — it declares a `label` module, and a scope holds
@@ -401,10 +407,10 @@ A schema is a `#[derive(Table)]` struct, shown in the
   compiles and then renders `FROM "t" JOIN "t"`, which the database refuses.
   Two `#[derive(Table)]` structs must not share a `#[table(name = "..")]`.
 - A correlated `EXISTS` is tagged with the outer query's tables, so it can
-  only be filtered onto that query. It is a condition and not an expression:
-  `.filter(sub.exists())` (conditionally, since `.filter` returns `Self`),
-  but not `predicate(sub.exists())` into a `Vec<Predicate<_>>`, which would
-  drop the dialect it is pinned to.
+  only be filtered onto that query, and only onto one of the same dialect —
+  which `Predicate` carries too, so `predicate(sub.exists())` still goes
+  into a `Vec<Predicate<_, _>>` and an `EXISTS` can sit in an OR beside an
+  ordinary comparison.
 - `prepare!{}` doesn't tie its `Params` struct to the query it was built
   from: running a query with another struct's params is an
   `UnresolvedPlaceholder` at `.load()`, not a compile error. Placeholder

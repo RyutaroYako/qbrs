@@ -16,7 +16,7 @@ async fn main() {
     // written out by the renderer — quoted, table-qualified — and the value
     // is bound as a parameter. Only `lower(..) LIKE ..` is unchecked text.
     let matches: Vec<String> = select(users::email)
-        .from::<Postgres, _>(users::Table)
+        .from(users::Table)
         .filter(sql!(Bool, "lower(?) LIKE ?", users::email, "%@example.com"))
         .filter(users::active.eq(true))
         .load(&pool)
@@ -36,7 +36,7 @@ async fn main() {
         users::email,
         sql!(Nullable<BigInt>, "max(?)", orders::total).label(label::biggest),
     ))
-    .from::<Postgres, _>(users::Table)
+    .from(users::Table)
     .inner_join(orders::Table, orders::user_id.eq(users::id))
     .group_by(users::email)
     .load(&pool)

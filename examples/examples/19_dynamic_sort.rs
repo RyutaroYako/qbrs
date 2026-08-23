@@ -37,7 +37,7 @@ async fn main() {
         .collect();
 
     let rows = select((users::email, orders::total))
-        .from::<Postgres, _>(users::Table)
+        .from(users::Table)
         .inner_join(orders::Table, orders::user_id.eq(users::id))
         .order_by_all(keys)
         .load(&pool)
@@ -57,7 +57,7 @@ async fn main() {
     }
 
     let totals = select((users::email, sum(orders::total)))
-        .from::<Postgres, _>(users::Table)
+        .from(users::Table)
         .inner_join(orders::Table, orders::user_id.eq(users::id))
         .group_by_all(dimensions)
         .order_by(sort_key(users::email.asc()))

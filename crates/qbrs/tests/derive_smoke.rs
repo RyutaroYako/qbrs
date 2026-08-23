@@ -1,7 +1,7 @@
 use qbrs::Table;
 use qbrs::dialect::Postgres;
 use qbrs::expr::ExprMethods;
-use qbrs::select::{OrderExt, select};
+use qbrs::select::{OrderExt, Predicate, predicate, select};
 use qbrs::statement::Statement;
 use qbrs::update::Assignments;
 
@@ -232,4 +232,29 @@ fn all_row_names_what_select_all_decodes_to() {
         *row.get(users::id)
     }
     let _ = take;
+}
+
+#[test]
+fn an_exists_composes_with_other_conditions_once_discharged() {
+    // `Exists` is dialect-pinned, but discharging it doesn't give that up:
+    // a `Predicate` carries the dialect too, so an `EXISTS` can sit in an
+    // OR beside an ordinary comparison.
+    let base = select((users::email,)).from::<Postgres, _>(users::Table);
+    let has_flag = base
+        .correlated(flags::Table, (flags::id,))
+        .filter(flags::id.eq(users::id));
+
+    let (sql, params) = base
+        .clone()
+        .filter(Predicate::any_of([
+            predicate(users::active.eq(false)),
+            predicate(has_flag.exists()),
+        ]))
+        .to_sql();
+
+    assert_eq!(
+        sql,
+        "SELECT \"users\".\"email\" FROM \"users\" WHERE ((\"users\".\"active\" = $1) OR (EXISTS (SELECT \"flags\".\"id\" FROM \"flags\" WHERE (\"flags\".\"id\" = \"users\".\"id\"))))"
+    );
+    assert_eq!(params, vec![qbrs::expr::Value::Bool(false)]);
 }

@@ -11,6 +11,11 @@ async fn main() {
     let (pool, _db) = setup_db().await;
     seed(&pool).await;
 
+    // The dialect is written out here — everywhere else in these examples
+    // it is inferred from the pool `.load(..)` is given — because `RIGHT`
+    // and `FULL JOIN` are gated on what the dialect supports, and this is
+    // the example about that gate.
+    //
     // FROM orders, RIGHT JOIN users: `orders` was in scope first (from the
     // FROM clause) as not-null, but RIGHT JOIN flips every *already*-joined
     // table to nullable before adding the new one — so `orders::total`
@@ -39,7 +44,7 @@ async fn main() {
     // honest about what FULL JOIN can produce in general, independent of
     // what today's data happens to contain.
     let mut full: Vec<(Option<String>, Option<i64>)> = select((users::email, orders::total))
-        .from::<Postgres, _>(users::Table)
+        .from(users::Table)
         .full_join(orders::Table, orders::user_id.eq(users::id))
         .load(&pool)
         .await

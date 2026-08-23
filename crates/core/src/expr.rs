@@ -513,6 +513,11 @@ pub trait LabelExt: Sized {
 }
 impl<C: ColumnKey> LabelExt for Column<C> {}
 impl<K, Req, S: SqlType> LabelExt for Keyed<K, Req, S> {}
+// A bare `Expr` isn't selectable — it has to state its decoded type first —
+// but labelling one has to *reach* that rule to report it. Without this
+// impl, `.label(..)` on an inferred expression is a missing method and the
+// sentence about `.decodes_as::<..>()` is never printed.
+impl<Req, S: SqlType> LabelExt for Expr<Req, S> {}
 
 /// Comparison/boolean-combinator methods, blanket-implemented for anything
 /// convertible to a typed expression (columns, literals, and `Expr` itself).

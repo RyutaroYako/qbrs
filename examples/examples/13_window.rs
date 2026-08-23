@@ -29,7 +29,7 @@ async fn main() {
                 .order_by(orders::total.desc()),
         ),
     ))
-    .from::<Postgres, _>(users::Table)
+    .from(users::Table)
     .inner_join(orders::Table, orders::user_id.eq(users::id))
     .order_by(users::email.asc())
     .load(&pool)
@@ -62,7 +62,7 @@ async fn main() {
             .over(window().order_by(orders::total.desc()))
             .label(label::overall),
     ))
-    .from::<Postgres, _>(users::Table)
+    .from(users::Table)
     .inner_join(orders::Table, orders::user_id.eq(users::id))
     .load(&pool)
     .await
@@ -87,7 +87,7 @@ async fn main() {
         orders::total,
         rank().over(window().order_by(orders::total.desc())),
     ))
-    .from::<Postgres, _>(users::Table)
+    .from(users::Table)
     .inner_join(orders::Table, orders::user_id.eq(users::id))
     .load(&pool)
     .await

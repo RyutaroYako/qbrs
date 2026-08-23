@@ -188,17 +188,19 @@ and its selection unrendered, so its placeholders are numbered by the statement 
 Rendering late is not enough on its own, though — the subquery was capability-checked against
 its own dialect and any CTE it binds is already a `Fragment` in that dialect — so
 `Select::exists` returns a `select::Exists<D, Req>`, which is a `Condition<D, ..>` and
-nothing else. That is why `Condition` carries `D`: it is the one trait every boolean clause
-goes through, and the only place a dialect-pinned condition can be caught. `Exists` has no
-`predicate(..)`, which would trade the dialect away. `sql!{}` is likewise an `ExprKind::Template`, its slots rendered
+nothing else. That is why `Condition` and `Predicate` both carry `D`: every boolean clause
+goes through them, and they are the only places a dialect-pinned condition could otherwise
+be laundered into a dialect-free one. `sql!{}` is likewise an `ExprKind::Template`, its slots rendered
 with everything else. If you add another place that embeds a *query* in an expression, hold
 the query; if you add one that embeds SQL in a dialect-tagged builder, take a `Fragment` —
 don't reintroduce a bare `(String, Vec<Value>)` pair.
 
 Every clause that takes a condition goes through `select::Condition` and comes out a
-`Predicate<Scope>` — `.filter`, `.having`, and all four joins' `ON`, where the scope
+`Predicate<D, Scope>` — `.filter`, `.having`, and all four joins' `ON`, where the scope
 discharged against is the one the join produces. A boolean is `expr::BoolLike`, so a
-`Nullable<Bool>` column is a condition on its own.
+`Nullable<Bool>` column is a condition on its own. A `Predicate` carries `D` because
+discharging gives up the tables a condition named, never the dialect it was built for —
+which is what keeps `select::Exists` pinned once it becomes one.
 
 ### Builder shape
 
@@ -213,6 +215,12 @@ Every clause of a `SELECT` other than the selection list lives in one `SelectBod
 `Select` and `DynSelect` both hold whole and `SelectBody::render` renders. Add a new clause
 there and it flows through `.erase()`, `retype()`, and rendering on its own — don't spread
 clause fields back across the two builders or pass them as separate render arguments.
+
+`select::Selection`/`SelectionPart`/`RowField`/`AllColumns` and `cte::CteShape` are sealed
+for the reason `InsertRow` is: each pairs a type-level claim with the runtime list that is
+supposed to match it, and a hand-written impl could select a row that decodes transposed.
+`select::SelectableSealed` is the `#[doc(hidden)] pub` half, since the derive emits
+`AllColumns`/`CteShape` in the schema's own crate.
 
 ### Derive and codegen (`crates/macros`)
 
@@ -241,8 +249,9 @@ Every column setter takes `insert::IntoColumnValue<Field>` — one trait for all
 shapes, so two same-typed columns accept the same values however they are declared.
 `*Insert` is built through a type-state builder: one generic slot per column that is neither
 nullable nor defaulted, `insert::Missing<C>` until that column is given a value and its own
-type after — named after the column, so the builder's type says which one is still missing — so `build()` exists
-exactly when the row is complete and nothing is unwrapped. Insert fields use `Defaultable<T>`
+type after. `build()`'s bound — `insert::Filled<C>` per slot, on the method rather than on
+the impl — is what makes an incomplete row report *which* column is missing instead of
+making `build` disappear. Insert fields use `Defaultable<T>`
 (and `Defaultable<Option<T>>` for nullable-with-default) so
 omit / explicit-NULL / explicit-value stay distinguishable; update fields use `Option<T>` /
 `Option<Option<T>>` for untouched / set-NULL / set-value — reached through

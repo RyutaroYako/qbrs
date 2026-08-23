@@ -38,7 +38,7 @@ async fn main() {
     seed(&pool).await;
 
     let two_columns = select((users::email, users::active))
-        .from::<Postgres, _>(users::Table)
+        .from(users::Table)
         .order_by(users::id.asc())
         .load(&pool)
         .await
@@ -46,7 +46,7 @@ async fn main() {
 
     // The same helper accepts a wider row from an entirely different query.
     let four_columns = select((users::id, users::email, users::display_name, orders::total))
-        .from::<Postgres, _>(users::Table)
+        .from(users::Table)
         .left_join(orders::Table, orders::user_id.eq(users::id))
         .order_by(users::id.asc())
         .load(&pool)
@@ -65,7 +65,7 @@ async fn main() {
     // tuple would let them be swapped with nothing to catch it. Read by
     // column, the order they were selected in doesn't reach the call site.
     let orders_rows = select((orders::total, orders::user_id))
-        .from::<Postgres, _>(orders::Table)
+        .from(orders::Table)
         .order_by(orders::id.asc())
         .load(&pool)
         .await

@@ -15,7 +15,7 @@ async fn main() {
     seed(&pool).await;
 
     let users_query = select((users::email,))
-        .from::<Postgres, _>(users::Table)
+        .from(users::Table)
         .order_by(users::id.asc());
 
     // `.correlated(..)` borrows the outer query, so `users_query` survives to

@@ -52,10 +52,7 @@ async fn main() {
             active_only: true,
         },
     ] {
-        let query = apply_search(
-            select(users::email).from::<Postgres, _>(users::Table),
-            &search,
-        );
+        let query = apply_search(select(users::email).from(users::Table), &search);
         let rows: Vec<String> = query.load(&pool).await.expect("search users");
         println!(
             "email_contains={:?} active_only={} -> {rows:?}",
@@ -68,7 +65,7 @@ async fn main() {
     // the builder's type never changes, so an arbitrary (including zero)
     // number of iterations is fine.
     let candidate_filters = vec![Some(users::active.eq(true)), None];
-    let mut query = select(users::email).from::<Postgres, _>(users::Table);
+    let mut query = select(users::email).from(users::Table);
     for cond in candidate_filters.into_iter().flatten() {
         query = query.filter(cond);
     }
@@ -85,7 +82,7 @@ async fn main() {
         conds.push(predicate(orders::total.gt(1000i64)));
     }
     let big: Vec<String> = select(users::email)
-        .from::<Postgres, _>(users::Table)
+        .from(users::Table)
         .inner_join(orders::Table, orders::user_id.eq(users::id))
         .filter_all(conds)
         .load(&pool)
@@ -98,7 +95,7 @@ async fn main() {
     // type-check, since each pair widens the tables the expression claims.
     let terms = ["ada", "grace"];
     let searched: Vec<String> = select(users::email)
-        .from::<Postgres, _>(users::Table)
+        .from(users::Table)
         .filter(any_of(
             terms
                 .iter()
@@ -112,7 +109,7 @@ async fn main() {
     // Across tables, the same shape goes through `Predicate`, which `.filter`
     // takes as readily as an `Expr`.
     let any_signal: Vec<String> = select(users::email)
-        .from::<Postgres, _>(users::Table)
+        .from(users::Table)
         .inner_join(orders::Table, orders::user_id.eq(users::id))
         .filter(Predicate::any_of([
             predicate(users::active.eq(false)),
@@ -127,7 +124,7 @@ async fn main() {
     // FROM/JOIN/WHERE, with any ORDER BY/LIMIT/OFFSET ignored, so a
     // paginated endpoint can report a total without cloning the query.
     let page = select(users::email)
-        .from::<Postgres, _>(users::Table)
+        .from(users::Table)
         .filter(users::active.eq(true))
         .order_by(users::id.asc())
         .limit(1u32);

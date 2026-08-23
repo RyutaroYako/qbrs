@@ -32,7 +32,7 @@ use crate::select::{Select, Selection};
 /// (`WITH name (col1, col2) AS (..)`), so the outer query refers to the
 /// declared names rather than to whatever Postgres would have called the
 /// body's columns.
-pub trait CteShape: Table {
+pub trait CteShape: Table + crate::select::SelectableSealed {
     /// The declared columns as a row — the same `RowCons` chain a selection
     /// produces, so a body is checked against it by the one comparison
     /// `UNION` branches already use: same names, same types, same order.
@@ -45,17 +45,21 @@ pub trait CteShape: Table {
 /// clause and puts the pseudo-table in scope: one act, so a CTE cannot be
 /// selected from without being bound, or bound without being used.
 pub struct Cte<D, Marker> {
-    pub(crate) name: &'static str,
-    pub(crate) column_names: &'static [&'static str],
-    pub(crate) body: Fragment,
+    body: Fragment,
     _marker: PhantomData<fn() -> (D, Marker)>,
+}
+
+impl<D, Marker> Cte<D, Marker> {
+    /// The rendered body. What it is bound *as* comes from `Marker`, so a
+    /// `Cte` whose name disagrees with its marker is unrepresentable.
+    pub(crate) fn into_body(self) -> Fragment {
+        self.body
+    }
 }
 
 impl<D, Marker> Clone for Cte<D, Marker> {
     fn clone(&self) -> Self {
         Cte {
-            name: self.name,
-            column_names: self.column_names,
             body: self.body.clone(),
             _marker: PhantomData,
         }
@@ -74,8 +78,6 @@ where
     Sel::Output: SameShape<Row<Marker::Row>>,
 {
     Cte {
-        name: Marker::NAME,
-        column_names: Marker::COLUMN_NAMES,
         body: query.fragment::<Idx>(),
         _marker: PhantomData,
     }

@@ -20,14 +20,14 @@ async fn main() {
 
     // Rendered once. `ByEmail::email()` is a placeholder, not a value yet.
     let query = select((users::id, users::display_name))
-        .from::<Postgres, _>(users::Table)
+        .from(users::Table)
         .filter(users::email.eq(ByEmail::email()))
         .prepare::<ByEmail, _>();
 
     // The same query prepared as its own total: one rendering for the page,
     // one for the count, and the page size bound rather than baked in.
     let total = select((users::id,))
-        .from::<Postgres, _>(users::Table)
+        .from(users::Table)
         .filter(users::email.eq(ByEmail::email()))
         .prepare_count::<ByEmail, _>();
 

@@ -324,7 +324,7 @@ fn an_on_condition_takes_whatever_a_where_condition_takes() {
         "SELECT \"users\".\"id\" FROM \"users\" INNER JOIN \"orders\" ON (\"orders\".\"user_id\" = \"users\".\"id\")"
     );
 
-    let discharged: Predicate<_> = predicate(orders::user_id.eq(users::id));
+    let discharged: Predicate<_, _> = predicate(orders::user_id.eq(users::id));
     let from_predicate = select((users::id,))
         .from::<Postgres, _>(users::Table)
         .inner_join(orders::Table, discharged)

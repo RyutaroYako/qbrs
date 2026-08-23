@@ -59,7 +59,7 @@ async fn main() {
     // simply not wanted, and the fields are matched by name.
     let summaries: Vec<UserSummary> =
         select((users::id, orders::total, users::email, users::display_name))
-            .from::<Postgres, _>(users::Table)
+            .from(users::Table)
             .left_join(orders::Table, orders::user_id.eq(users::id))
             .order_by(users::id.asc())
             .load(&pool)
@@ -82,7 +82,7 @@ async fn main() {
     // A different query — no join, different selection order — fills the
     // other struct with nothing said about either of them at the call site.
     let contacts: Vec<Contact> = select((users::email, users::display_name))
-        .from::<Postgres, _>(users::Table)
+        .from(users::Table)
         .filter(users::active.eq(true))
         .order_by(users::id.asc())
         .load(&pool)
@@ -99,7 +99,7 @@ async fn main() {
     // the schema doesn't leave a query behind — and it counts as one
     // element of the selection tuple however many columns it has.
     let everyone: Vec<WholeUser> = select(users::All)
-        .from::<Postgres, _>(users::Table)
+        .from(users::Table)
         .order_by(users::id.asc())
         .load(&pool)
         .await
@@ -110,7 +110,7 @@ async fn main() {
     // Two whole tables at once: `email` and `total` are still matched by
     // name, and the two `id`s by the column each one means.
     let joined: Vec<UserWithOrder> = select((users::All, orders::All))
-        .from::<Postgres, _>(users::Table)
+        .from(users::Table)
         .inner_join(orders::Table, orders::user_id.eq(users::id))
         .order_by(orders::id.asc())
         .load(&pool)
@@ -123,7 +123,7 @@ async fn main() {
     // When a name doesn't line up, `take` writes the mapping by hand — one
     // field at a time, still moving rather than copying.
     let renamed: Vec<(String, i64)> = select((users::email, orders::total))
-        .from::<Postgres, _>(users::Table)
+        .from(users::Table)
         .inner_join(orders::Table, orders::user_id.eq(users::id))
         .load(&pool)
         .await

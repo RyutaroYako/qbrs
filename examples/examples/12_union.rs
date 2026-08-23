@@ -25,10 +25,10 @@ async fn main() {
     label!(total);
 
     let user_rows = select((users::email, sql!(BigInt, "0").label(label::total)))
-        .from::<Postgres, _>(users::Table)
+        .from(users::Table)
         .filter(users::active.eq(true));
     let order_rows = select((users::email, orders::total))
-        .from::<Postgres, _>(users::Table)
+        .from(users::Table)
         .inner_join(orders::Table, orders::user_id.eq(users::id));
 
     let feed: Vec<(String, i64)> = user_rows
@@ -46,10 +46,10 @@ async fn main() {
     // `INTERSECT`: emails that appear both as an active user and as having
     // placed an order.
     let active_emails = select((users::email,))
-        .from::<Postgres, _>(users::Table)
+        .from(users::Table)
         .filter(users::active.eq(true));
     let ordering_emails = select((users::email,))
-        .from::<Postgres, _>(users::Table)
+        .from(users::Table)
         .inner_join(orders::Table, orders::user_id.eq(users::id));
 
     let both: Vec<(String,)> = active_emails

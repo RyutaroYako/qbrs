@@ -15,7 +15,7 @@ async fn main() {
     // inserts either land together or not at all.
     let mut tx = pool.begin().await.expect("begin transaction");
 
-    let user_id: i64 = insert::<Postgres, _>(users::Table)
+    let user_id: i64 = insert(users::Table)
         .values(
             UsersInsert::builder()
                 .email("nadia@example.com")
@@ -30,7 +30,7 @@ async fn main() {
         .next()
         .expect("returning row");
 
-    insert::<Postgres, _>(orders::Table)
+    insert(orders::Table)
         .values(OrdersInsert::builder().user_id(user_id).total(4200).build())
         .execute(&mut *tx)
         .await
@@ -44,7 +44,7 @@ async fn main() {
     // undo everything since `.begin()`.
     let mut tx = pool.begin().await.expect("begin transaction");
 
-    let doomed_id: i64 = insert::<Postgres, _>(users::Table)
+    let doomed_id: i64 = insert(users::Table)
         .values(UsersInsert::builder().email("temp@example.com").build())
         .returning(users::id)
         .load(&mut *tx)
@@ -57,7 +57,7 @@ async fn main() {
     tx.rollback().await.expect("rollback transaction");
 
     let still_there: Option<i64> = select(users::id)
-        .from::<Postgres, _>(users::Table)
+        .from(users::Table)
         .filter(users::id.eq(doomed_id))
         .load_one(&pool)
         .await

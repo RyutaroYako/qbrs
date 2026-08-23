@@ -100,7 +100,7 @@ pub async fn seed(pool: &sqlx::PgPool) {
     use qbrs::prelude::*;
     use qbrs_sqlx::prelude::*;
 
-    let ids: Vec<i64> = insert::<Postgres, _>(users::Table)
+    let ids: Vec<i64> = insert(users::Table)
         .values(
             UsersInsert::builder()
                 .email("ada@example.com")
@@ -126,7 +126,7 @@ pub async fn seed(pool: &sqlx::PgPool) {
 
     // Dan (ids[1]) intentionally gets no orders and active=false, so the
     // examples have something interesting to filter/outer-join against.
-    update::<Postgres, _>(users::Table)
+    update(users::Table)
         .set(
             Assignments::from_row(UsersUpdate {
                 active: Some(false),
@@ -139,7 +139,7 @@ pub async fn seed(pool: &sqlx::PgPool) {
         .await
         .expect("deactivate dan");
 
-    insert::<Postgres, _>(orders::Table)
+    insert(orders::Table)
         .values(OrdersInsert::builder().user_id(ids[0]).total(1500).build())
         .values(
             OrdersInsert::builder()

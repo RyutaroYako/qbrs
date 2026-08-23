@@ -14,7 +14,7 @@ use qbrs_sqlx::prelude::*;
 async fn main() {
     let (pool, _db) = setup_db().await;
 
-    let (id, display_name): (i64, Option<String>) = insert::<Postgres, _>(users::Table)
+    let (id, display_name): (i64, Option<String>) = insert(users::Table)
         .values(
             UsersInsert::builder()
                 .email("grace@example.com")
@@ -33,7 +33,7 @@ async fn main() {
 
     // `email` already exists — DO NOTHING means this row is silently
     // skipped, so the original `display_name` survives untouched.
-    insert::<Postgres, _>(users::Table)
+    insert(users::Table)
         .values(
             UsersInsert::builder()
                 .email("grace@example.com")
@@ -46,7 +46,7 @@ async fn main() {
         .expect("upsert do-nothing");
 
     let unchanged: Option<String> = select(users::display_name)
-        .from::<Postgres, _>(users::Table)
+        .from(users::Table)
         .filter(users::id.eq(id))
         .load_one(&pool)
         .await
@@ -58,7 +58,7 @@ async fn main() {
     // Same conflicting email, but this time DO UPDATE SET reuses the same
     // `*Update` struct an `UPDATE` assigns from — only the fields actually set on
     // it are updated.
-    let updated: Option<String> = insert::<Postgres, _>(users::Table)
+    let updated: Option<String> = insert(users::Table)
         .values(
             UsersInsert::builder()
                 .email("grace@example.com")

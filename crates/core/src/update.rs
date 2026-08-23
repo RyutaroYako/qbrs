@@ -198,7 +198,7 @@ impl<D, T: Table> Update<D, T> {
     /// however many criteria the request carried.
     pub fn filter_all(
         mut self,
-        conds: impl IntoIterator<Item = Predicate<WrittenTable<T>>>,
+        conds: impl IntoIterator<Item = Predicate<D, WrittenTable<T>>>,
     ) -> Self {
         self.wheres
             .extend(conds.into_iter().map(Predicate::into_kind));

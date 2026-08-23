@@ -30,6 +30,21 @@ pub trait IntoColumnValue<V> {
     fn into_column_value(self) -> V;
 }
 
+/// Proof that a builder's slot for column `C` holds that column's value.
+/// `Missing<C>` doesn't implement it, which is what `build()` is bounded
+/// by — on the method rather than by the slot's type, so an incomplete row
+/// is a sentence naming the column rather than a missing `build`.
+#[diagnostic::on_unimplemented(
+    message = "column `{C}` hasn't been given a value yet",
+    label = "every column that is neither nullable nor defaulted needs one before `.build()`"
+)]
+pub trait Filled<C> {
+    #[doc(hidden)]
+    type Value;
+    #[doc(hidden)]
+    fn filled(self) -> Self::Value;
+}
+
 /// A column an `*Insert` builder hasn't been given a value for yet. Named
 /// after the column so the builder's type says which one is missing, rather
 /// than leaving a bare `()` to be counted by position.
