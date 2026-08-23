@@ -103,6 +103,7 @@ impl qbrs_core::insert::InsertRowSealed for UsersInsert {}
 
 impl InsertRow for UsersInsert {
     type Table = UsersMarker;
+    type Columns = qbrs_core::row::RowCons<users::columns::email, (), qbrs_core::row::RowNil>;
     fn into_values(self) -> Vec<(&'static str, InsertValue)> {
         vec![("email", Defaultable::Value(self.email).into())]
     }

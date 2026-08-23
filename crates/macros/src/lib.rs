@@ -1015,6 +1015,16 @@ fn gen_insert_struct(
             impl ::qbrs::insert::Insertable for #insert_ident {}
         }
     };
+    // The declared column list, as the row chain `ColumnNames` walks —
+    // the same shape a CTE declares, and the reason the statement's header
+    // is a type rather than the first row's opinion.
+    let insert_columns = insertable
+        .iter()
+        .rev()
+        .fold(quote! { ::qbrs::row::RowNil }, |tail, c| {
+            let name = &c.field_name;
+            quote! { ::qbrs::row::RowCons<#mod_ident::columns::#name, (), #tail> }
+        });
     let columns_arr = insertable.iter().map(|c| sql_name(&c.field_name));
     let into_values = insertable.iter().map(|c| {
         let name = &c.field_name;
@@ -1104,6 +1114,8 @@ fn gen_insert_struct(
 
         impl ::qbrs::insert::InsertRow for #insert_ident {
             type Table = #mod_ident::Table;
+            type Columns = #insert_columns;
+
             fn into_values(
                 self,
             ) -> ::std::vec::Vec<(&'static str, ::qbrs::insert::InsertValue)> {

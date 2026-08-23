@@ -126,6 +126,14 @@ impl<T: Into<Value>> From<Defaultable<T>> for InsertValue {
 /// always had this shape.
 pub trait InsertRow: private::Sealed {
     type Table: Table;
+
+    /// The columns this row writes, as the same sealed `RowCons` chain a
+    /// CTE declares its shape with. A *type*, because the statement's
+    /// header is not one row's opinion: taking it from a value meant the
+    /// first row decided it, so an empty first row discarded the rest and a
+    /// later row's extra column vanished.
+    type Columns: crate::row::ColumnNames;
+
     fn into_values(self) -> Vec<(&'static str, InsertValue)>;
 }
 
@@ -295,23 +303,21 @@ fn render_values_clause<D: Dialect, R: InsertRow>(
     sink.text("INSERT INTO ");
     render_ident::<D>(&mut sink, <R::Table as Table>::NAME);
 
+    // The header is the row type's declared columns, so every row is
+    // written against the same list however many pairs it happens to bring.
+    let header = <R::Columns as crate::row::ColumnNames>::names();
+
     // A table whose every column is generated leaves nothing to name, and
     // an empty column list is a syntax error in two of the three dialects.
     // One such row is all SQL can express, which is why `values`/`values_all`
     // take `Insertable`.
-    if rows.first().is_none_or(|row| row.is_empty()) {
+    if header.is_empty() {
         sink.text(D::INSERT_NO_COLUMNS);
         if let Some(clause) = on_conflict {
             render_conflict_clause::<D, _>(clause, &mut sink);
         }
         return sink;
     }
-
-    // The header is the first row's names, and every row is then written
-    // *by that name* rather than by position — so a row that brings its
-    // pairs in another order, or brings fewer of them, still lands each
-    // value under its own column, and the two lists stay one fact.
-    let header: Vec<&'static str> = rows[0].iter().map(|(name, _)| *name).collect();
 
     sink.text(" (");
     for (i, name) in header.iter().enumerate() {

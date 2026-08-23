@@ -113,11 +113,14 @@ impl<T> Assignments<T> {
     /// untouched describes no assignment. Mixed with computed ones as
     /// `Assignments::from_row(patch)?.and_set_to(col, expr)`.
     pub fn from_row<R: UpdateRow<Table = T>>(row: R) -> Result<Self, NothingToSet> {
-        let sets: Vec<_> = row
-            .sets()
-            .into_iter()
-            .map(|(col, value)| (col, ExprKind::Value(value)))
-            .collect();
+        let mut sets: Vec<(&'static str, ExprKind)> = Vec::new();
+        for (col, value) in row.sets() {
+            // Last write wins, as `and_set_to` says: a `SET` list naming one
+            // column twice is a statement no database accepts, and this is
+            // the other place the list is built.
+            sets.retain(|(name, _)| *name != col);
+            sets.push((col, ExprKind::Value(value)));
+        }
         if sets.is_empty() {
             return Err(NothingToSet);
         }

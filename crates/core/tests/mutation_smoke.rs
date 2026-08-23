@@ -69,6 +69,21 @@ mod users {
             const NAME: &'static str = "display_name";
         }
         impl qbrs_core::row::Spelled for display_name {}
+
+        #[derive(Clone, Copy)]
+        pub struct created_at;
+        impl qbrs_core::expr::WritableSealed for created_at {}
+        impl qbrs_core::expr::Writable for created_at {}
+        impl ColumnKey for created_at {
+            type Table = UsersMarker;
+            type Sql = Text;
+        }
+        impl qbrs_core::row::NamedSealed for created_at {}
+        impl qbrs_core::row::Named for created_at {
+            type Name = qbrs_core::type_name!('c', 'r', 'e', 'a', 't', 'e', 'd', '_', 'a', 't');
+            const NAME: &'static str = "created_at";
+        }
+        impl qbrs_core::row::Spelled for created_at {}
     }
 
     pub const id: Column<columns::id> = Column::new();
@@ -119,6 +134,15 @@ impl qbrs_core::insert::Insertable for UsersInsert {}
 
 impl InsertRow for UsersInsert {
     type Table = UsersMarker;
+    type Columns = qbrs_core::row::RowCons<
+        users::columns::email,
+        (),
+        qbrs_core::row::RowCons<
+            users::columns::display_name,
+            (),
+            qbrs_core::row::RowCons<users::columns::created_at, (), qbrs_core::row::RowNil>,
+        >,
+    >;
     fn into_values(self) -> Vec<(&'static str, InsertValue)> {
         vec![
             ("email", InsertValue::Value(self.email.into())),

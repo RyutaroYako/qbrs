@@ -293,11 +293,12 @@ spells `DEFAULT VALUES` (`() VALUES ()` in MySQL) and spells for exactly one row
 bulk paths take `insert::Insertable`, which the derive emits only when there is a column to
 repeat.
 
-`InsertRow::into_values` returns `(column, value)` pairs rather than a `COLUMNS` list beside
-a value list, and `render_values_clause` writes every row *by name* into the header the
-first row spelled — a column a row doesn't mention is `DEFAULT`. Taking the header from one
-row and the values from another positionally is the same pairing one level down, and
-produced `VALUES ($1, $2), ($3)`. This is for the reason `AllColumns` carries one list: its seal is a `#[doc(hidden)]`
+`InsertRow` declares `type Columns` — the same sealed `RowCons` chain a CTE declares its
+shape with — and `into_values` returns `(column, value)` pairs that `render_values_clause`
+writes *by name* into that header, `DEFAULT` for a column a row doesn't mention. The header
+has to be a type: while it came from a value it was one row's opinion, so an empty first row
+discarded every later row and a row's extra column vanished, and before that a `COLUMNS`
+const beside a positional value list produced `VALUES ($1, $2), ($3)`. This is for the reason `AllColumns` carries one list: its seal is a `#[doc(hidden)]`
 door the derive must write in the schema's crate, and two lists that have to line up could
 be made not to — `INSERT INTO t (a, b, c) VALUES ($1)` is malformed whatever the table is.
 
