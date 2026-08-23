@@ -229,13 +229,30 @@ where
     }
 }
 
+mod same_name {
+    /// Sealed with the same bounds the one honest impl has: `Self` is a
+    /// column marker local to whoever derived the schema and `Other` is
+    /// free, so without this a schema crate could write
+    /// `impl SameNameAs<a::columns::one> for b::columns::two {}` and splice
+    /// a `UNION` branch or a CTE body in transposed — the failure
+    /// `SameShape` is here to stop.
+    pub trait Sealed<Other> {}
+
+    impl<A, B> Sealed<B> for A
+    where
+        A: super::Spelled,
+        B: super::Spelled<Name = <A as super::Named>::Name>,
+    {
+    }
+}
+
 /// One column can stand in for another: they are called the same thing.
 #[diagnostic::on_unimplemented(
     message = "`{Self}` can't stand in for `{Other}`",
     label = "these two selected items must have the same name",
     note = "matched by name: `.label(label::..)` whichever side is spelled wrong — and an unnamed expression (`Anon`) has no name to match with at all"
 )]
-pub trait SameNameAs<Other> {}
+pub trait SameNameAs<Other>: same_name::Sealed<Other> {}
 
 #[diagnostic::do_not_recommend]
 impl<A, B> SameNameAs<B> for A

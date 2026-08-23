@@ -224,8 +224,14 @@ Every clause of a `SELECT` other than the selection list lives in one `SelectBod
 there and it flows through `.erase()`, `retype()`, and rendering on its own — don't spread
 clause fields back across the two builders or pass them as separate render arguments.
 
-`select::Selection`/`SelectionPart`/`RowField`/`AllColumns`/`ColumnList`, `expr::RawArg` and
-`cte::CteShape` are sealed
+`select::Selection`/`SelectionPart`/`RowField` carry the same unnameable `Proof` `Find` and
+`Superset` do — a private supertrait alone was not enough, because their seal is blanket
+over `Column<C>` and every tuple, so a forged impl could keep an honest `Self` and fill the
+free `Idx` with a local type, then hand back a `SelectItem` built at another scope.
+`row::SameNameAs` is sealed the same way in spirit (a private supertrait carrying the one
+honest impl's bounds), since without it a schema crate could declare two differently-named
+columns interchangeable and splice a `UNION` branch in transposed.
+`select::AllColumns`/`ColumnList`, `expr::RawArg` and `cte::CteShape` are sealed
 for the reason `InsertRow` is: each pairs a type-level claim with the runtime list that is
 supposed to match it, and a hand-written impl could select a row that decodes transposed.
 `select::SelectableSealed` is the `#[doc(hidden)] pub` half, since the derive emits

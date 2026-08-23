@@ -52,6 +52,14 @@ pub trait SingleColumn {}
     note = "an expression the builder inferred a type for — a comparison, an `is_null`, a `LIKE` — has to state what it decodes to with `.decodes_as::<..>()`, since that inference can contradict the join; a `sql!` fragment already states it"
 )]
 pub trait RowField<Scope, Idx>: RowKey + private::Sealed {
+    /// Unnameable outside this crate, for the reason `scope::proof`
+    /// explains — and needed here for the same reason `Superset` needed it:
+    /// `Idx` is a free slot, so a local type there is all the orphan rule
+    /// asks for, and a forged impl can hand back an honest `SelectItem`
+    /// built at a different scope.
+    #[doc(hidden)]
+    type Proof: crate::scope::proof::Sealed;
+
     type Value;
     fn item(&self) -> SelectItem;
 }
@@ -62,6 +70,7 @@ where
     C::Sql: WrapNullable<<Scope as Find<C::Table, Idx>>::Nullability>,
     <C::Sql as WrapNullable<<Scope as Find<C::Table, Idx>>::Nullability>>::Output: SqlType,
 {
+    type Proof = crate::scope::proof::Proof;
     type Value = <<C::Sql as WrapNullable<
         <Scope as Find<C::Table, Idx>>::Nullability,
     >>::Output as SqlType>::Native;
@@ -77,6 +86,7 @@ impl<K, Req, S: SqlType, Scope, Idx> RowField<Scope, Idx> for Keyed<K, Req, S>
 where
     Scope: Superset<Req, Idx>,
 {
+    type Proof = crate::scope::proof::Proof;
     type Value = S::Native;
     fn item(&self) -> SelectItem {
         SelectItem::bare(self.kind.clone())
@@ -90,6 +100,7 @@ where
 impl<K: LabelKey, Inner: RowField<Scope, Idx>, Scope, Idx> RowField<Scope, Idx>
     for Labeled<K, Inner>
 {
+    type Proof = crate::scope::proof::Proof;
     type Value = Inner::Value;
     fn item(&self) -> SelectItem {
         SelectItem::labeled(self.inner.item().kind, <K as Named>::NAME)
@@ -105,6 +116,9 @@ impl<K: LabelKey, Inner: RowField<Scope, Idx>, Scope, Idx> RowField<Scope, Idx>
     note = "every element has to be in scope — `.from(..)`/`.join(..)` the tables it names — and an expression the builder inferred a type for has to state its decoded type with `.decodes_as::<..>()`"
 )]
 pub trait Selection<Scope, Idx>: private::Sealed {
+    #[doc(hidden)]
+    type Proof: crate::scope::proof::Sealed;
+
     type Output;
     fn items(&self) -> Vec<SelectItem>;
 }
@@ -115,6 +129,7 @@ macro_rules! scalar_selection {
         where
             $ty: RowField<Scope, Idx>,
         {
+            type Proof = crate::scope::proof::Proof;
             type Output = <$ty as RowField<Scope, Idx>>::Value;
             fn items(&self) -> Vec<SelectItem> {
                 vec![RowField::item(self)]
@@ -133,6 +148,9 @@ macro_rules! scalar_selection {
     note = "an expression the builder inferred a type for — a comparison, an `is_null`, a `LIKE` — has to state what it decodes to with `.decodes_as::<..>()`, since that inference can contradict the join"
 )]
 pub trait SelectionPart<Scope, Idx>: private::Sealed {
+    #[doc(hidden)]
+    type Proof: crate::scope::proof::Sealed;
+
     type Fields<Tail>;
     fn push_items(&self, out: &mut Vec<SelectItem>);
 }
@@ -143,6 +161,7 @@ macro_rules! field_part {
         where
             $ty: RowField<Scope, Idx>,
         {
+            type Proof = crate::scope::proof::Proof;
             type Fields<Tail> = RowCons<
                 <$ty as RowKey>::Key,
                 <$ty as RowField<Scope, Idx>>::Value,
@@ -243,6 +262,7 @@ impl<T: AllColumns, Scope, Idx> SelectionPart<Scope, Idx> for All<T>
 where
     T::Columns: ColumnList<Scope, Idx>,
 {
+    type Proof = crate::scope::proof::Proof;
     type Fields<Tail> = <T::Columns as ColumnList<Scope, Idx>>::Fields<Tail>;
     fn push_items(&self, out: &mut Vec<SelectItem>) {
         <T::Columns as ColumnList<Scope, Idx>>::push_items(out);
@@ -253,6 +273,7 @@ impl<T: AllColumns, Scope, Idx> Selection<Scope, Idx> for All<T>
 where
     T::Columns: ColumnList<Scope, Idx>,
 {
+    type Proof = crate::scope::proof::Proof;
     type Output = Row<<T::Columns as ColumnList<Scope, Idx>>::Fields<RowNil>>;
     fn items(&self) -> Vec<SelectItem> {
         let mut out = Vec::new();
@@ -279,6 +300,7 @@ macro_rules! tuple_selection {
         where
             $($n: SelectionPart<Scope, $i>,)+
         {
+            type Proof = crate::scope::proof::Proof;
             type Output = Row<row_chain!($($n $i),+)>;
             fn items(&self) -> Vec<SelectItem> {
                 let ($($n,)+) = self;
