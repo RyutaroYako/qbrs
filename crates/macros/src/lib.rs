@@ -579,6 +579,12 @@ fn expand_from_row(input: DeriveInput) -> syn::Result<TokenStream2> {
         #[doc(hidden)]
         #[allow(non_camel_case_types)]
         mod #fields_mod {
+            // The caller's imports, for the same reason `with!` needs them:
+            // a field's declared type is written in the caller's scope, and
+            // this module is not it.
+            #[allow(unused_imports)]
+            use super::*;
+
             #(#markers)*
         }
 

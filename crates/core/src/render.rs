@@ -275,7 +275,20 @@ impl Fragment {
 }
 
 /// Renders an identifier with the dialect's quoting.
+/// A dotted name is qualified, not one identifier: `analytics.events` is a
+/// table in a schema, and quoting it whole asks the database for a relation
+/// with a dot in its name. Only `#[table(name = "..")]` can contain one —
+/// every other name here comes from a Rust identifier.
 pub(crate) fn render_ident<D: Dialect>(sink: &mut dyn Sink, ident: &str) {
+    for (i, part) in ident.split('.').enumerate() {
+        if i > 0 {
+            sink.ch('.');
+        }
+        render_ident_part::<D>(sink, part);
+    }
+}
+
+fn render_ident_part<D: Dialect>(sink: &mut dyn Sink, ident: &str) {
     sink.ch(D::IDENTIFIER_QUOTE);
     for c in ident.chars() {
         // A quote inside an identifier is escaped by doubling it, in every

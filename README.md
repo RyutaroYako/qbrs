@@ -295,7 +295,10 @@ A schema is a `#[derive(Table)]` struct, shown in the
   at run time, and each is named after its column, so it reads back as
   `row.get(sum(orders::total))` and satisfies a CTE or DTO field called
   `total`. All are nullable except the two counts: an aggregate over zero
-  rows is NULL, but a count of them is `0`.
+  rows is NULL, but a count of them is `0`. `sum`/`avg` take a number
+  (`expr::Summable`) and `min`/`max` an ordered type (`expr::Ordered`) —
+  numbers, text, dates and timestamps, but not booleans, bytes or UUIDs,
+  which Postgres has no such aggregate for.
 - **Raw SQL escape hatch** (`sql!{}`) —
   [`06_raw_sql`](examples/examples/06_raw_sql.rs). A `?` slot takes a value,
   which binds as a parameter, or an expression — a column, an aggregate,
@@ -431,6 +434,9 @@ A schema is a `#[derive(Table)]` struct, shown in the
   `EXISTS` covers what `IN (SELECT ..)` means; the rest is deferred rather
   than half-supported, since a subquery in a slot would have to carry the
   dialect it was checked against, as `exists()` does.
+- `#[table(name = "analytics.events")]` is a schema-qualified name and
+  renders as two identifiers; a table whose name really contains a dot has
+  no spelling.
 - The derives expand to `::qbrs::` paths, so depend on the `qbrs` facade
   rather than on `qbrs-core` + `qbrs-macros` directly.
 - Every `?` in a `sql!{}` text is a slot — there is no escape for a literal

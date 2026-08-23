@@ -230,8 +230,9 @@ supposed to match it, and a hand-written impl could select a row that decodes tr
 
 ### Derive and codegen (`crates/macros`)
 
-A generated module can't see the caller's imports, so nothing the caller wrote is re-resolved
-inside one: `AllRow`'s field types are projected through `<C as ColumnKey>::Sql`'s `Native`
+A generated module can't see the caller's imports, so either the module takes them
+(`use super::*;`, which `with!` and `#[derive(FromRow)]`'s field-marker module do) or
+nothing the caller wrote is re-resolved inside it: `AllRow`'s field types are projected through `<C as ColumnKey>::Sql`'s `Native`
 rather than copied from the field's tokens, which is what lets a column be declared
 `DateTime<Utc>` rather than `chrono::DateTime<chrono::Utc>`. A field's SQL name comes from
 `sql_name`, which takes off the `r#` a Rust keyword needs — `r#type` is a column called

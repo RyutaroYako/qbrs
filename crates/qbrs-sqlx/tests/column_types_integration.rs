@@ -26,6 +26,16 @@ struct Events {
     amount: Decimal,
 }
 
+/// The DTO an API handler would return, with its field types reached the
+/// way anyone reaches them: through `use`. The derive generates a module of
+/// its own, which is not the caller's scope.
+#[derive(Debug, FromRow)]
+#[allow(dead_code)]
+struct EventDto {
+    happened_at: DateTime<Utc>,
+    amount: Decimal,
+}
+
 #[tokio::test]
 async fn timestamp_uuid_and_numeric_columns_survive_a_round_trip() {
     let (pool, guard) = common::test_pool("qbrs_column_types").await;
@@ -80,6 +90,27 @@ async fn timestamp_uuid_and_numeric_columns_survive_a_round_trip() {
         .await
         .expect("select by timestamp and amount");
     assert_eq!(found, vec![id]);
+
+    // The same columns into a DTO, and ordered — `min`/`max` are the two
+    // aggregates a timestamp and a money column want.
+    let dtos: Vec<EventDto> = select((events::happened_at, events::amount))
+        .from(events::Table)
+        .load(&pool)
+        .await
+        .expect("select into a DTO")
+        .into_structs();
+    assert_eq!(dtos.len(), 1);
+
+    let (earliest, largest): (Option<DateTime<Utc>>, Option<Decimal>) =
+        select((min(events::happened_at), max(events::amount)))
+            .from(events::Table)
+            .load_one(&pool)
+            .await
+            .expect("min and max")
+            .expect("one row")
+            .into_tuple();
+    assert_eq!(earliest, Some(happened_at));
+    assert_eq!(largest, Some(amount));
 
     // A money column totals as money and averages as a float, which is what
     // the row declares in each case.

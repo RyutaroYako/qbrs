@@ -321,3 +321,25 @@ fn a_column_named_by_a_rust_keyword_renders_its_sql_name() {
         .to_sql(Postgres);
     assert_eq!(insert_sql, "INSERT INTO \"events\" (\"type\") VALUES ($1)");
 }
+
+#[derive(Table)]
+#[table(name = "analytics.events")]
+#[allow(dead_code)]
+struct Metrics {
+    #[column(primary_key, generated)]
+    id: i64,
+    name: String,
+}
+
+#[test]
+fn a_schema_qualified_table_is_two_identifiers() {
+    // `analytics.events` is a table in a schema, not a table whose name has
+    // a dot in it — quoting it whole asks for a relation nobody created.
+    let (sql, _) = select((metrics::name,))
+        .from(metrics::Table)
+        .to_sql(Postgres);
+    assert_eq!(
+        sql,
+        "SELECT \"analytics\".\"events\".\"name\" FROM \"analytics\".\"events\""
+    );
+}

@@ -1032,6 +1032,34 @@ pub fn count() -> Keyed<Count, Nil, BigInt> {
     Keyed::from_kind(count_star())
 }
 
+/// What `min`/`max` accept: a type the databases order. Its own marker for
+/// the reason `Summable` is one — `WrapNullable<MaybeNull>`, which stood
+/// here before, is implemented for every leaf type, so it gated nothing and
+/// `max(bool_column)` rendered SQL Postgres has no aggregate for.
+///
+/// The set is Postgres's, the narrowest of the three: no `boolean`, no
+/// `bytea`, and no `uuid` before PG 18.
+#[diagnostic::on_unimplemented(
+    message = "`min`/`max` need an ordered expression, and `{Self}` isn't one",
+    label = "numbers, text, and dates/timestamps are ordered; booleans, bytes and UUIDs are not — `bool_or`/`bool_and` are the aggregate a flag wants, and aren't built yet"
+)]
+pub trait Ordered: SqlType + WrapNullable<MaybeNull> {}
+
+impl Ordered for Integer {}
+impl Ordered for BigInt {}
+impl Ordered for Real {}
+impl Ordered for Text {}
+#[cfg(feature = "decimal")]
+impl Ordered for Numeric {}
+#[cfg(feature = "chrono")]
+impl Ordered for Timestamptz {}
+#[cfg(feature = "chrono")]
+impl Ordered for Date {}
+
+/// A nullable column orders like its base type — the NULLs sort, they don't
+/// stop the aggregate from existing.
+impl<S: Ordered> Ordered for crate::scope::Nullable<S> {}
+
 /// What `sum(..)` of a column decodes to. `sum` is NULL over zero rows, so
 /// every result is nullable however the column was declared.
 /// `CAST` keeps the widened type a database picks for a sum inside the
@@ -1145,7 +1173,7 @@ aggregate!(
     min,
     "min",
     <C::Sql as WrapNullable<MaybeNull>>::Output,
-    WrapNullable<MaybeNull>,
+    Ordered,
     None,
     "`min(column)`. NULL over zero rows."
 );
@@ -1154,7 +1182,7 @@ aggregate!(
     max,
     "max",
     <C::Sql as WrapNullable<MaybeNull>>::Output,
-    WrapNullable<MaybeNull>,
+    Ordered,
     None,
     "`max(column)`. NULL over zero rows."
 );
