@@ -405,8 +405,14 @@ A schema is a `#[derive(Table)]` struct, shown in the
   succeeded, and `avg` is `DOUBLE PRECISION` rather than exact.
 - Aggregates take a bare column: `sum(price * qty)`, `count(DISTINCT x)` and
   `sum(CASE WHEN ..)` need `sql!{}`. Nothing relates `GROUP BY` to the
-  selection list, and an aggregate in `WHERE` is accepted by the builder and
-  rejected by the database.
+  selection list, and an aggregate or a window function in `WHERE` is
+  accepted by the builder and rejected by the database.
+- Nothing relates `ORDER BY` to the selection list either, which only shows
+  under `.distinct()`: Postgres requires a `SELECT DISTINCT`'s sort keys to
+  be selected, so `.distinct().order_by(users::id.asc())` on a query that
+  doesn't select `id` renders SQL it rejects — while `.count(&pool)` on the
+  same query succeeds, since a total drops the `ORDER BY`. Sort a distinct
+  query by something it selects.
 - Two selections are compared by column name, so a `UNION` of branches whose
   columns are named differently, or a CTE body with a computed column, needs
   a `label!` label on one side, and both sides have to agree on nullability.

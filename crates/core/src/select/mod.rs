@@ -570,6 +570,15 @@ impl<D, Scope, Sel, Outer> Select<D, Scope, Sel, Outer> {
     /// answer to a one-to-many join that repeats its left side, and unlike a
     /// `GROUP BY` of the whole selection it doesn't have to be restated when
     /// the selection changes. Idempotent — a query is distinct or it isn't.
+    ///
+    /// **Known limitation**: Postgres requires a `SELECT DISTINCT`'s sort
+    /// keys to be in its selection, and nothing here relates the two — the
+    /// same gap `GROUP BY` has. Sorting a distinct query by a column it
+    /// doesn't select renders SQL the database rejects, and `count_sql`
+    /// won't show it, since a total drops the `ORDER BY`. Relating them
+    /// would mean carrying "is distinct" in `Select`'s type and taking sort
+    /// keys by identity (`SetOp::order_by_column`'s shape) — a type
+    /// parameter through every builder signature for one clause.
     pub fn distinct(mut self) -> Self {
         self.body.distinct = true;
         self
