@@ -333,10 +333,19 @@ impl<K, Inner> RowKey for Labeled<K, Inner> {
     type Key = K;
 }
 
+mod column_names {
+    /// Sealed to the two shapes a row has: `CteShape::Row` is bounded by
+    /// `ColumnNames`, so an open impl would let a `WITH` header be spelled
+    /// by something that is not the row `SameShape` checked — and a local
+    /// type in that position is also what makes `SameShape` itself
+    /// forgeable.
+    pub trait Sealed {}
+}
+
 /// The names a declared row spells, in order — read off the row itself so
 /// a `WITH name (..)` header cannot disagree with the shape its body was
 /// checked against. Implemented here only, for `RowNil` and `RowCons`.
-pub trait ColumnNames {
+pub trait ColumnNames: column_names::Sealed {
     /// One `push` per field, so the list is built without an allocation per
     /// level of the chain.
     #[doc(hidden)]
@@ -349,9 +358,13 @@ pub trait ColumnNames {
     }
 }
 
+impl column_names::Sealed for RowNil {}
+
 impl ColumnNames for RowNil {
     fn push_names(_out: &mut Vec<&'static str>) {}
 }
+
+impl<K: Named, V, Tail: ColumnNames> column_names::Sealed for RowCons<K, V, Tail> {}
 
 impl<K: Named, V, Tail: ColumnNames> ColumnNames for RowCons<K, V, Tail> {
     fn push_names(out: &mut Vec<&'static str>) {

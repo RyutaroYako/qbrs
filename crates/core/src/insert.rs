@@ -307,10 +307,14 @@ fn render_values_clause<D: Dialect, R: InsertRow>(
         return sink;
     }
 
-    // The names come from the row that also brings the values, so a column
-    // list and a values list cannot disagree about how many there are.
+    // The header is the first row's names, and every row is then written
+    // *by that name* rather than by position — so a row that brings its
+    // pairs in another order, or brings fewer of them, still lands each
+    // value under its own column, and the two lists stay one fact.
+    let header: Vec<&'static str> = rows[0].iter().map(|(name, _)| *name).collect();
+
     sink.text(" (");
-    for (i, (name, _)) in rows[0].iter().enumerate() {
+    for (i, name) in header.iter().enumerate() {
         if i > 0 {
             sink.text(", ");
         }
@@ -323,13 +327,15 @@ fn render_values_clause<D: Dialect, R: InsertRow>(
             sink.text(", ");
         }
         sink.ch('(');
-        for (i, (_, v)) in row.iter().enumerate() {
+        for (i, name) in header.iter().enumerate() {
             if i > 0 {
                 sink.text(", ");
             }
-            match v {
-                InsertValue::Default => sink.text("DEFAULT"),
-                InsertValue::Value(v) => sink.bind(v),
+            match row.iter().find(|(n, _)| n == name).map(|(_, v)| v) {
+                Some(InsertValue::Value(v)) => sink.bind(v),
+                // A column this row didn't mention is one the database
+                // fills, which is what a missing pair means.
+                Some(InsertValue::Default) | None => sink.text("DEFAULT"),
             }
         }
         sink.ch(')');
