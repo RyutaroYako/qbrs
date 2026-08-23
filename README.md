@@ -201,7 +201,9 @@ A schema is a `#[derive(Table)]` struct, shown in the
   `Defaultable<Option<T>>`, whose third state the builder spells
   `.column_null()`. `*Update` mirrors all this with `Option<T>` /
   `Option<Option<T>>` (untouched / `NULL` / value), and a request struct's
-  `Option<T>` converts into either. An assignment a value can't say —
+  `Option<T>` converts into either. `update(t).set_to(col, expr)` starts a
+  statement whose assignments are all computed, and needs no `Result`, since
+  one assignment is one. An assignment a value can't say —
   `updated_at = now()`, `version = version + 1` — goes in with
   `.set_to(column, expression)` on the statement, or
   `Assignments::set_to(..)` where the whole `SET` list is expressions, which
@@ -407,7 +409,7 @@ A schema is a `#[derive(Table)]` struct, shown in the
   and MySQL only, and SQLite rejects it, which makes `Defaultable::Default`
   unusable there.
 - An expression the *builder* inferred a type for — a comparison, an
-  arithmetic combination — has to say what it decodes to before it can be
+  `is_null`, a `LIKE` — has to say what it decodes to before it can be
   selected: `expr.decodes_as::<Bool>()`. Its NULL-ability doesn't follow from
   any one column's join, and the inferred `S` can contradict it. A `sql!`
   fragment already states its type, so it needs nothing. Either is then read

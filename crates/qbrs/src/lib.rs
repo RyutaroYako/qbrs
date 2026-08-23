@@ -14,7 +14,7 @@ pub mod prelude {
     pub use crate::{FromRow, Table, label, with};
     pub use qbrs_core::cte;
     pub use qbrs_core::delete::{Delete, delete};
-    pub use qbrs_core::dialect::{MySql, Postgres, Sqlite};
+    pub use qbrs_core::dialect::{Dialect, MySql, Postgres, Sqlite};
     pub use qbrs_core::expr::Column;
     #[cfg(feature = "decimal")]
     pub use qbrs_core::expr::Numeric;
@@ -33,9 +33,9 @@ pub mod prelude {
     };
     pub use qbrs_core::select::All;
     pub use qbrs_core::select::{
-        Condition, DynSelect, Grouping, JoinSource, OrderExt, OrderKey, Ordinal, OrdinalKey,
-        Predicate, Prepared, Select, Selection, SetOp, SortKey, grouping, nth, predicate, select,
-        sort_key,
+        Condition, DynSelect, GroupBy, Grouping, JoinSource, OrderExt, OrderKey, Ordinal,
+        OrdinalKey, Predicate, Prepared, Select, Selection, SetOp, SortBy, SortKey, Total,
+        grouping, nth, predicate, select, sort_key,
     };
     pub use qbrs_core::statement::{Returning, Statement, WrittenTable};
     pub use qbrs_core::update::{

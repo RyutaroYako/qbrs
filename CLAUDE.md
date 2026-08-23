@@ -130,7 +130,8 @@ to be proc macros. Keep the spelling out of diagnostics: it lives in `Named::Nam
 `FromRow` is its own trait rather than `From`: the per-field lookup indices have nowhere to
 live in a foreign trait's fixed shape. Hence `into_struct`/`into_structs`.
 
-Two selections are compared by `row::SameShape` — same values *and* same names, in order.
+Two selections are compared by `row::SameShape` — same values *and* same names, in order, walked cell by cell so a
+selection wider than the positional view's 16 fields still compares.
 Values alone would let a `UNION` branch or a CTE body whose columns merely happen to be
 type-compatible splice in transposed, and the result is then read by key. `SameNameAs`
 carries `#[diagnostic::do_not_recommend]` so the reported obligation is the two columns,

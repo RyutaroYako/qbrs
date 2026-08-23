@@ -35,9 +35,9 @@ pub fn window() -> Window<Nil> {
 }
 
 impl<Req> Window<Req> {
-    pub fn partition_by<S: SqlType, Req2>(
+    pub fn partition_by<Req2>(
         self,
-        key: impl IntoExpr<S, Req = Req2>,
+        key: impl IntoExpr<Req = Req2>,
     ) -> Window<<Req as Concat<Req2>>::Output>
     where
         Req: Concat<Req2>,

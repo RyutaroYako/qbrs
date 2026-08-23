@@ -343,13 +343,7 @@ fn gen_schema_mod(
 /// accepted. A helper reading two columns needs two of them — one index
 /// records one position.
 fn accessor_trait(trait_ident: &Ident, method: &Ident, key: &TokenStream2) -> TokenStream2 {
-    let method_str = method.to_string();
-    let missing = format!("this query's rows have no `{method_str}` field");
-    let label = format!(
-        "add `{method_str}` to the query's selection list, or read the field that is there"
-    );
     quote! {
-        #[diagnostic::on_unimplemented(message = #missing, label = #label)]
         pub trait #trait_ident<Idx> {
             type Value;
             fn #method(&self) -> &Self::Value;

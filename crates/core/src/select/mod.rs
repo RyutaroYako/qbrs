@@ -6,7 +6,7 @@ use std::marker::PhantomData;
 
 use crate::cte::Cte;
 use crate::dialect::{Dialect, SupportsFullOuterJoin, SupportsRightJoin};
-use crate::expr::{Bool, Expr, ExprKind, IntoExpr, SqlType, Value};
+use crate::expr::{Bool, Expr, ExprKind, IntoExpr, Value};
 use crate::render::{
     Fragment, FragmentSink, QuerySink, SelectItem, Sink, render_and_list, render_expr,
     render_expr_list, render_order_by, render_select_list,
@@ -66,7 +66,7 @@ impl<Req> OrderKey<Req> {
     }
 }
 
-pub trait OrderExt<S: SqlType>: IntoExpr<S> + Sized {
+pub trait OrderExt: IntoExpr + Sized {
     fn asc(self) -> OrderKey<Self::Req> {
         OrderKey {
             kind: self.into_expr().kind,
@@ -91,7 +91,7 @@ pub trait OrderExt<S: SqlType>: IntoExpr<S> + Sized {
         }
     }
 }
-impl<S: SqlType, T: IntoExpr<S>> OrderExt<S> for T {}
+impl<T: IntoExpr> OrderExt for T {}
 
 /// Something a query can select from or join to. A schema table brings
 /// nothing with it; a `Cte` brings its `WITH` binding, so attaching that
@@ -167,9 +167,7 @@ pub trait GroupBy<Scope, Idxs> {
     fn into_grouping(self) -> Grouping<Scope>;
 }
 
-impl<Scope: Superset<Req, Idxs>, Req, Idxs, S: SqlType, T: IntoExpr<S, Req = Req>>
-    GroupBy<Scope, (Idxs, S)> for T
-{
+impl<Scope: Superset<Req, Idxs>, Req, Idxs, T: IntoExpr<Req = Req>> GroupBy<Scope, Idxs> for T {
     fn into_grouping(self) -> Grouping<Scope> {
         Grouping {
             kind: self.into_expr().kind,
@@ -234,7 +232,7 @@ impl<Scope> Clone for Grouping<Scope> {
 }
 
 /// Discharges a grouping key's scope requirement.
-pub fn grouping<Scope, S: SqlType, Req, Idxs>(key: impl IntoExpr<S, Req = Req>) -> Grouping<Scope>
+pub fn grouping<Scope, Req, Idxs>(key: impl IntoExpr<Req = Req>) -> Grouping<Scope>
 where
     Scope: Superset<Req, Idxs>,
 {
@@ -250,7 +248,8 @@ where
 /// applied.
 #[diagnostic::on_unimplemented(
     message = "`{Self}` isn't a condition",
-    label = "a comparison (`.eq(..)`, `.gt(..)`, `.is_null()`), an `any_of`/`all_of` of them, a `sql!` fragment of type `Bool`, or a `predicate(..)`"
+    label = "a comparison (`.eq(..)`, `.gt(..)`, `.is_null()`), an `any_of`/`all_of` of them, a `sql!` fragment of type `Bool`, or a `predicate(..)`",
+    note = "a `Predicate` also has to have been discharged against *this* scope — a scope lists its tables most-recently-joined first, so two that look alike can still differ in order"
 )]
 pub trait Condition<Scope, Idxs> {
     /// Discharged against this scope, which for an `Expr` is where its
@@ -259,8 +258,8 @@ pub trait Condition<Scope, Idxs> {
     fn into_predicate(self) -> Predicate<Scope>;
 }
 
-impl<Scope: Superset<Req, Idxs>, Req, Idxs, T: IntoExpr<Bool, Req = Req>> Condition<Scope, Idxs>
-    for T
+impl<Scope: Superset<Req, Idxs>, Req, Idxs, T: IntoExpr<Sql = Bool, Req = Req>>
+    Condition<Scope, Idxs> for T
 {
     fn into_predicate(self) -> Predicate<Scope> {
         Predicate {
@@ -326,7 +325,7 @@ impl<Scope> Predicate<Scope> {
 
 /// Discharges a condition's scope requirement. `Scope` is inferred from the
 /// query the resulting predicates are eventually given to.
-pub fn predicate<Scope, Req, Idxs>(cond: impl IntoExpr<Bool, Req = Req>) -> Predicate<Scope>
+pub fn predicate<Scope, Req, Idxs>(cond: impl IntoExpr<Sql = Bool, Req = Req>) -> Predicate<Scope>
 where
     Scope: Superset<Req, Idxs>,
 {

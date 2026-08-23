@@ -126,8 +126,8 @@ conflict_target_tuple!(A, B, C);
 
 enum ConflictAction<T> {
     DoNothing,
-    /// Reuses `UpdateRow`, so `.on_conflict_do_update(..)` takes the same
-    /// `*Update` value `.set(..)` does.
+    /// The same `SET` list `UPDATE` takes: an `*Update` value, or
+    /// `Assignments` of expressions.
     ///
     /// **Known limitation**: only literal/bound values, not
     /// `EXCLUDED.column` (`SET total = users.total + EXCLUDED.total`), which
@@ -275,9 +275,12 @@ impl<D, R: InsertRow> Insert<D, R> {
     }
 }
 
-impl<D: SupportsOnConflict, R: InsertRow> Insert<D, R> {
+impl<D: Dialect, R: InsertRow> Insert<D, R> {
     /// `ON CONFLICT (..) DO NOTHING`.
-    pub fn on_conflict_do_nothing(mut self, target: impl ConflictTarget<R::Table>) -> Self {
+    pub fn on_conflict_do_nothing(mut self, target: impl ConflictTarget<R::Table>) -> Self
+    where
+        D: SupportsOnConflict,
+    {
         self.on_conflict = Some(ConflictClause {
             target: target.column_names(),
             action: ConflictAction::DoNothing,
@@ -291,7 +294,10 @@ impl<D: SupportsOnConflict, R: InsertRow> Insert<D, R> {
         mut self,
         target: impl ConflictTarget<R::Table>,
         set: impl IntoAssignments<R::Table>,
-    ) -> Result<Self, NothingToSet> {
+    ) -> Result<Self, NothingToSet>
+    where
+        D: SupportsOnConflict,
+    {
         self.on_conflict = Some(ConflictClause {
             target: target.column_names(),
             action: ConflictAction::DoUpdate(set.into_assignments()?),

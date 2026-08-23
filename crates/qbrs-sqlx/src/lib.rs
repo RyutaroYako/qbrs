@@ -284,6 +284,11 @@ where
 /// itself: erasure leaves only `Output`, with no `Selection` impl left to
 /// hang decoding off, so this is implemented directly against the closed set
 /// of native types.
+#[diagnostic::on_unimplemented(
+    message = "`{Self}` isn't a value this crate can decode",
+    label = "every selected column has to decode to one of the six built-in natives, or to a type whose feature is on here as well as on `qbrs`",
+    note = "`chrono`/`uuid`/`decimal` have to be enabled on `qbrs-sqlx` too — they are separate `cfg`s over one `Value`"
+)]
 pub trait DecodeRow: Sized {
     #[doc(hidden)]
     fn decode_at(row: &PgRow, idx: &mut usize) -> sqlx::Result<Self>;

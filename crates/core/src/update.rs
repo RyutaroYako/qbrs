@@ -3,7 +3,7 @@
 use std::marker::PhantomData;
 
 use crate::dialect::Dialect;
-use crate::expr::{Assignable, Column, ColumnKey, ExprKind, IntoExpr, SqlType, Value, Writable};
+use crate::expr::{AssignsTo, Column, ColumnKey, ExprKind, IntoExpr, Value, Writable};
 use crate::render::{QuerySink, Sink, render_and_list, render_expr, render_ident};
 use crate::scope::{BaseTable, Superset, Table};
 use crate::select::{Condition, Predicate};
@@ -31,10 +31,16 @@ pub use private::Sealed as UpdateRowSealed;
 /// What a statement's `SET` list can be built from: the `*Update` struct a
 /// request maps onto, or `Assignments` of expressions — so `UPDATE` and
 /// `ON CONFLICT DO UPDATE` take the same two things.
+#[diagnostic::on_unimplemented(
+    message = "`{Self}` isn't a `SET` list for `{T}`",
+    label = "the `*Update` struct `#[derive(Table)]` generated for `{T}`, or `Assignments` of expressions over its columns"
+)]
 pub trait IntoAssignments<T> {
+    #[doc(hidden)]
     fn into_assignments(self) -> Result<Assignments<T>, NothingToSet>;
 }
 
+#[diagnostic::do_not_recommend]
 impl<T: Table, R: UpdateRow<Table = T>> IntoAssignments<T> for R {
     fn into_assignments(self) -> Result<Assignments<T>, NothingToSet> {
         Assignments::from_row(self)
@@ -63,12 +69,12 @@ impl<T: Table> Assignments<T> {
     /// `updated_at = now()`, `version = version + 1`. The expression is
     /// checked against the table being written to, exactly as a `WHERE`
     /// condition is.
-    pub fn set_to<C, S, Req, Idxs>(column: Column<C>, value: impl IntoExpr<S, Req = Req>) -> Self
+    pub fn set_to<C, V, Idxs>(column: Column<C>, value: V) -> Self
     where
         C: ColumnKey<Table = T> + Writable,
-        C::Sql: Assignable<S>,
-        S: SqlType,
-        WrittenTable<T>: Superset<Req, Idxs>,
+        V: IntoExpr,
+        V::Sql: AssignsTo<C::Sql>,
+        WrittenTable<T>: Superset<V::Req, Idxs>,
     {
         Assignments {
             sets: Vec::new(),
@@ -78,16 +84,12 @@ impl<T: Table> Assignments<T> {
     }
 
     /// One more of them, so a statement can assign several expressions.
-    pub fn and_set_to<C, S, Req, Idxs>(
-        mut self,
-        _column: Column<C>,
-        value: impl IntoExpr<S, Req = Req>,
-    ) -> Self
+    pub fn and_set_to<C, V, Idxs>(mut self, _column: Column<C>, value: V) -> Self
     where
         C: ColumnKey<Table = T> + Writable,
-        C::Sql: Assignable<S>,
-        S: SqlType,
-        WrittenTable<T>: Superset<Req, Idxs>,
+        V: IntoExpr,
+        V::Sql: AssignsTo<C::Sql>,
+        WrittenTable<T>: Superset<V::Req, Idxs>,
     {
         self.sets
             .push((<C as crate::row::Named>::NAME, value.into_expr().kind));
@@ -109,7 +111,10 @@ impl<T> Assignments<T> {
         }
     }
 
-    fn from_row<R: UpdateRow<Table = T>>(row: R) -> Result<Self, NothingToSet> {
+    /// The `SET` list a request struct describes. Public so a statement
+    /// that mixes one with computed assignments has somewhere to start:
+    /// `Assignments::from_row(patch)?.and_set_to(col, expr)`.
+    pub fn from_row<R: UpdateRow<Table = T>>(row: R) -> Result<Self, NothingToSet> {
         let sets: Vec<_> = row
             .sets()
             .into_iter()
@@ -153,8 +158,26 @@ pub fn update<D, T: BaseTable>(_table: T) -> UpdateSeed<D, T> {
 }
 
 impl<D, T: Table> UpdateSeed<D, T> {
+    /// `SET column = <expression>` as the statement's first assignment —
+    /// infallible, since one assignment is one assignment. `.set_to(..)`
+    /// again for more.
+    pub fn set_to<C, V, Idxs>(self, column: Column<C>, value: V) -> Update<D, T>
+    where
+        C: ColumnKey<Table = T> + Writable,
+        V: IntoExpr,
+        V::Sql: AssignsTo<C::Sql>,
+        WrittenTable<T>: Superset<V::Req, Idxs>,
+    {
+        Update {
+            sets: Assignments::set_to(column, value),
+            wheres: Vec::new(),
+            _marker: PhantomData,
+        }
+    }
+
     /// The `SET` list, from an `*Update` struct or from `Assignments` of
-    /// expressions.
+    /// expressions. Fallible because an `*Update` whose every field is
+    /// untouched has nothing to assign.
     pub fn set(self, sets: impl IntoAssignments<T>) -> Result<Update<D, T>, NothingToSet> {
         Ok(Update {
             sets: sets.into_assignments()?,
@@ -210,16 +233,12 @@ impl<D, T: Table> Update<D, T> {
 impl<D, T: Table> Update<D, T> {
     /// One more assignment, appended to whatever `.set(..)` already
     /// assigned — see `Assignments::set_to`.
-    pub fn set_to<C, S, Req, Idxs>(
-        mut self,
-        column: Column<C>,
-        value: impl IntoExpr<S, Req = Req>,
-    ) -> Self
+    pub fn set_to<C, V, Idxs>(mut self, column: Column<C>, value: V) -> Self
     where
         C: ColumnKey<Table = T> + Writable,
-        C::Sql: Assignable<S>,
-        S: SqlType,
-        WrittenTable<T>: Superset<Req, Idxs>,
+        V: IntoExpr,
+        V::Sql: AssignsTo<C::Sql>,
+        WrittenTable<T>: Superset<V::Req, Idxs>,
     {
         self.sets.extend(Assignments::set_to(column, value));
         self

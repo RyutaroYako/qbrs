@@ -252,35 +252,49 @@ impl<Req, S: SqlType> Clone for Expr<Req, S> {
 /// tables it references (`Nil` for a plain literal, `Cons<T, Nil>` for a
 /// bare column, or whatever `Req` an already-built `Expr` carries).
 #[diagnostic::on_unimplemented(
-    message = "`{Self}` can't be used as a SQL expression of type `{S}`",
-    label = "a column, a literal, an aggregate, or a `sql!{{}}` fragment can be; a `label!` name is not one, and neither is an `Option` — `= NULL` is never true in SQL, so the question is `.is_null()`"
+    message = "`{Self}` isn't a SQL expression",
+    label = "a column, a literal, an aggregate, or a `sql!{{}}` fragment is; a `label!` name is not, and neither is an `Option` — `= NULL` is never true in SQL, so the question is `.is_null()`"
 )]
-pub trait IntoExpr<S: SqlType> {
+pub trait IntoExpr {
+    /// The SQL type this expression has. An associated type rather than a
+    /// parameter because every implementor has exactly one — a column its
+    /// declared type, a literal its leaf type — which is what lets a
+    /// mismatch report itself as `Comparable`/`Assignable` rather than as
+    /// an inference failure on a type nobody wrote.
+    type Sql: SqlType;
     type Req;
-    fn into_expr(self) -> Expr<Self::Req, S>;
+    fn into_expr(self) -> Expr<Self::Req, Self::Sql>;
 }
 
-impl<Req, S: SqlType> IntoExpr<S> for Expr<Req, S> {
+impl<Req, S: SqlType> IntoExpr for Expr<Req, S> {
+    type Sql = S;
     type Req = Req;
     fn into_expr(self) -> Expr<Req, S> {
         self
     }
 }
 
-/// What a column can be assigned from. Unlike `Comparable`, this relation
-/// has a direction: a `Text` expression assigns to a `Nullable<Text>`
-/// column, and a narrower number to a wider one, but never the reverse — a
-/// NOT NULL column can't take a nullable expression, and a `BigInt` doesn't
-/// fit an `Integer`.
+/// What an expression can be assigned *to*. The value's type is `Self` and
+/// the column's is the parameter, which is the direction assignment runs
+/// in: a `Text` value goes into a `Nullable<Text>` column and a narrower
+/// number into a wider one, never the reverse. (`Comparable` is the
+/// symmetric, nullability-blind relation, and a comparison is symmetric.)
 #[diagnostic::on_unimplemented(
-    message = "a `{Self}` column can't be assigned a `{Value}`",
-    label = "the expression has to fit the column: same type, a narrower number, or a non-null value for a nullable column"
+    message = "a `{Self}` expression can't be assigned to a `{Column}` column",
+    label = "the value has to fit the column: the same type, a narrower number, or a non-null value for a nullable column"
 )]
-pub trait Assignable<Value: SqlType>: SqlType {}
+pub trait AssignsTo<Column: SqlType>: SqlType {}
+
+impl<T: SqlType> AssignsTo<T> for T {}
+impl<T: SqlType> AssignsTo<crate::scope::Nullable<T>> for T {}
 
 /// A column a statement may write to: `#[derive(Table)]` emits this for
 /// every column except the generated and primary-key ones, which are the
 /// same set `*Update` leaves out.
+#[diagnostic::on_unimplemented(
+    message = "`{Self}` isn't a column a statement can assign to",
+    label = "a primary-key or generated column is the database's to write, which is why `*Update` leaves it out too"
+)]
 pub trait Writable {}
 
 /// A column's compile-time identity. One implementor per column in the
@@ -320,7 +334,8 @@ impl<C: ColumnKey> Clone for Column<C> {
 }
 impl<C: ColumnKey> Copy for Column<C> {}
 
-impl<C: ColumnKey> IntoExpr<C::Sql> for Column<C> {
+impl<C: ColumnKey> IntoExpr for Column<C> {
+    type Sql = C::Sql;
     type Req = Cons<C::Table, Nil>;
     fn into_expr(self) -> Expr<Self::Req, C::Sql> {
         Expr::from_kind(ExprKind::Column {
@@ -354,7 +369,8 @@ impl<K, Req, S: SqlType> Clone for Keyed<K, Req, S> {
     }
 }
 
-impl<K, Req, S: SqlType> IntoExpr<S> for Keyed<K, Req, S> {
+impl<K, Req, S: SqlType> IntoExpr for Keyed<K, Req, S> {
+    type Sql = S;
     type Req = Req;
     fn into_expr(self) -> Expr<Req, S> {
         Expr::from_kind(self.kind)
@@ -400,18 +416,18 @@ comparable_across!(
     Real => BigInt,
 );
 
-macro_rules! assignable_across {
+macro_rules! assigns_across {
     ($($from:ty => $to:ty),+ $(,)?) => {
         $(
-            impl Assignable<$from> for $to {}
-            impl Assignable<$from> for crate::scope::Nullable<$to> {}
-            impl Assignable<crate::scope::Nullable<$from>> for crate::scope::Nullable<$to> {}
+            impl AssignsTo<$to> for $from {}
+            impl AssignsTo<crate::scope::Nullable<$to>> for $from {}
+            impl AssignsTo<crate::scope::Nullable<$to>> for crate::scope::Nullable<$from> {}
         )+
     };
 }
 // Widening only: an `Integer` expression fits a `BigInt` column, not the
 // other way round.
-assignable_across!(
+assigns_across!(
     Integer => BigInt,
     Integer => Real,
     BigInt => Real,
@@ -421,7 +437,7 @@ assignable_across!(
 // against another money column, and every database this crate speaks
 // compares numeric with the integers and floats.
 #[cfg(feature = "decimal")]
-assignable_across!(
+assigns_across!(
     Integer => Numeric,
     BigInt => Numeric,
     Real => Numeric,
@@ -501,56 +517,50 @@ impl<K, Req, S: SqlType> LabelExt for Keyed<K, Req, S> {}
 // by-value throughout; `is_null`/`is_in` are combinators, not predicates on
 // an existing value.
 #[allow(clippy::wrong_self_convention)]
-pub trait ExprMethods<S: SqlType>: IntoExpr<S> + Sized {
-    fn eq<Rhs, S2: SqlType>(self, rhs: Rhs) -> Expr<<Self::Req as Concat<Rhs::Req>>::Output, Bool>
+pub trait ExprMethods: IntoExpr + Sized {
+    fn eq<Rhs: IntoExpr>(self, rhs: Rhs) -> Expr<<Self::Req as Concat<Rhs::Req>>::Output, Bool>
     where
-        Rhs: IntoExpr<S2>,
-        S: Comparable<S2>,
+        Self::Sql: Comparable<Rhs::Sql>,
         Self::Req: Concat<Rhs::Req>,
     {
         bin_op(BinOp::Eq, self, rhs)
     }
 
-    fn ne<Rhs, S2: SqlType>(self, rhs: Rhs) -> Expr<<Self::Req as Concat<Rhs::Req>>::Output, Bool>
+    fn ne<Rhs: IntoExpr>(self, rhs: Rhs) -> Expr<<Self::Req as Concat<Rhs::Req>>::Output, Bool>
     where
-        Rhs: IntoExpr<S2>,
-        S: Comparable<S2>,
+        Self::Sql: Comparable<Rhs::Sql>,
         Self::Req: Concat<Rhs::Req>,
     {
         bin_op(BinOp::Ne, self, rhs)
     }
 
-    fn lt<Rhs, S2: SqlType>(self, rhs: Rhs) -> Expr<<Self::Req as Concat<Rhs::Req>>::Output, Bool>
+    fn lt<Rhs: IntoExpr>(self, rhs: Rhs) -> Expr<<Self::Req as Concat<Rhs::Req>>::Output, Bool>
     where
-        Rhs: IntoExpr<S2>,
-        S: Comparable<S2>,
+        Self::Sql: Comparable<Rhs::Sql>,
         Self::Req: Concat<Rhs::Req>,
     {
         bin_op(BinOp::Lt, self, rhs)
     }
 
-    fn lte<Rhs, S2: SqlType>(self, rhs: Rhs) -> Expr<<Self::Req as Concat<Rhs::Req>>::Output, Bool>
+    fn lte<Rhs: IntoExpr>(self, rhs: Rhs) -> Expr<<Self::Req as Concat<Rhs::Req>>::Output, Bool>
     where
-        Rhs: IntoExpr<S2>,
-        S: Comparable<S2>,
+        Self::Sql: Comparable<Rhs::Sql>,
         Self::Req: Concat<Rhs::Req>,
     {
         bin_op(BinOp::Lte, self, rhs)
     }
 
-    fn gt<Rhs, S2: SqlType>(self, rhs: Rhs) -> Expr<<Self::Req as Concat<Rhs::Req>>::Output, Bool>
+    fn gt<Rhs: IntoExpr>(self, rhs: Rhs) -> Expr<<Self::Req as Concat<Rhs::Req>>::Output, Bool>
     where
-        Rhs: IntoExpr<S2>,
-        S: Comparable<S2>,
+        Self::Sql: Comparable<Rhs::Sql>,
         Self::Req: Concat<Rhs::Req>,
     {
         bin_op(BinOp::Gt, self, rhs)
     }
 
-    fn gte<Rhs, S2: SqlType>(self, rhs: Rhs) -> Expr<<Self::Req as Concat<Rhs::Req>>::Output, Bool>
+    fn gte<Rhs: IntoExpr>(self, rhs: Rhs) -> Expr<<Self::Req as Concat<Rhs::Req>>::Output, Bool>
     where
-        Rhs: IntoExpr<S2>,
-        S: Comparable<S2>,
+        Self::Sql: Comparable<Rhs::Sql>,
         Self::Req: Concat<Rhs::Req>,
     {
         bin_op(BinOp::Gte, self, rhs)
@@ -578,11 +588,11 @@ pub trait ExprMethods<S: SqlType>: IntoExpr<S> + Sized {
     /// **Known limitation**: the list holds values, not expressions — a
     /// column reference on the right needs the table it belongs to folded
     /// into `Req`, which is the same design `sql!{}` covers today.
-    fn is_in<I, S2: SqlType>(self, values: I) -> Expr<Self::Req, Bool>
+    fn is_in<I>(self, values: I) -> Expr<Self::Req, Bool>
     where
         I: IntoIterator,
-        I::Item: IntoExpr<S2, Req = Nil>,
-        S: Comparable<S2>,
+        I::Item: IntoExpr<Req = Nil>,
+        Self::Sql: Comparable<<I::Item as IntoExpr>::Sql>,
     {
         let values: Vec<ExprKind> = values.into_iter().map(|v| v.into_expr().kind).collect();
         // `IN ()` is not SQL, and matching nothing is what it would mean.
@@ -601,7 +611,7 @@ pub trait ExprMethods<S: SqlType>: IntoExpr<S> + Sized {
 /// search box needs doesn't have to be folded by hand — folding one by one
 /// grows `Req` and stops type-checking after the first pair. An empty
 /// collection matches nothing, which is what `is_in([])` says too.
-pub fn any_of<Req, C: IntoExpr<Bool, Req = Req>>(
+pub fn any_of<Req, C: IntoExpr<Sql = Bool, Req = Req>>(
     conds: impl IntoIterator<Item = C>,
 ) -> Expr<Req, Bool> {
     combine(conds, false)
@@ -609,13 +619,13 @@ pub fn any_of<Req, C: IntoExpr<Bool, Req = Req>>(
 
 /// True when all of them are. An empty collection matches everything, which
 /// is what a `WHERE` with no conditions does.
-pub fn all_of<Req, C: IntoExpr<Bool, Req = Req>>(
+pub fn all_of<Req, C: IntoExpr<Sql = Bool, Req = Req>>(
     conds: impl IntoIterator<Item = C>,
 ) -> Expr<Req, Bool> {
     combine(conds, true)
 }
 
-fn combine<Req, C: IntoExpr<Bool, Req = Req>>(
+fn combine<Req, C: IntoExpr<Sql = Bool, Req = Req>>(
     conds: impl IntoIterator<Item = C>,
     all: bool,
 ) -> Expr<Req, Bool> {
@@ -641,16 +651,16 @@ pub(crate) fn fold_conditions(kinds: impl IntoIterator<Item = ExprKind>, all: bo
     folded.unwrap_or(ExprKind::Always(all))
 }
 
-impl<S: SqlType, T: IntoExpr<S>> ExprMethods<S> for T {}
+impl<T: IntoExpr> ExprMethods for T {}
 
-fn bin_op<Lhs, Rhs, S: SqlType, S2: SqlType>(
+fn bin_op<Lhs, Rhs>(
     op: BinOp,
     lhs: Lhs,
     rhs: Rhs,
 ) -> Expr<<Lhs::Req as Concat<Rhs::Req>>::Output, Bool>
 where
-    Lhs: IntoExpr<S>,
-    Rhs: IntoExpr<S2>,
+    Lhs: IntoExpr,
+    Rhs: IntoExpr,
     Lhs::Req: Concat<Rhs::Req>,
 {
     Expr::from_kind(ExprKind::BinOp {
@@ -663,24 +673,31 @@ where
 /// `.like()` is text-only, so it's a separate trait rather than part of the
 /// generic `ExprMethods` — still blanket-implemented, so it works directly
 /// on a text column just like `.eq()` does.
+/// What `LIKE` accepts: a text expression, nullable or not. Its own marker
+/// rather than `Comparable<Text>` so the failure says what the operator
+/// needs instead of talking about comparison.
 #[diagnostic::on_unimplemented(
     message = "`LIKE` needs a text expression, and `{Self}` isn't one",
     label = "only `Text` and `Nullable<Text>` columns and expressions accept `.like(..)`"
 )]
-pub trait TextExprMethods<S: Comparable<Text>>: IntoExpr<S> + Sized {
-    fn like<Rhs, S2: Comparable<Text>>(
-        self,
-        rhs: Rhs,
-    ) -> Expr<<Self::Req as Concat<Rhs::Req>>::Output, Bool>
+pub trait TextLike: SqlType {}
+
+impl TextLike for Text {}
+impl TextLike for crate::scope::Nullable<Text> {}
+
+/// `.like(..)`, on any expression — the text requirement is on the method,
+/// so a non-text operand reports `TextLike` rather than a missing method.
+pub trait TextExprMethods: IntoExpr + Sized {
+    fn like<Rhs: IntoExpr>(self, rhs: Rhs) -> Expr<<Self::Req as Concat<Rhs::Req>>::Output, Bool>
     where
-        Rhs: IntoExpr<S2>,
-        S: Comparable<S2>,
+        Self::Sql: TextLike,
+        Rhs::Sql: TextLike,
         Self::Req: Concat<Rhs::Req>,
     {
         bin_op(BinOp::Like, self, rhs)
     }
 }
-impl<S: Comparable<Text>, T: IntoExpr<S>> TextExprMethods<S> for T {}
+impl<T: IntoExpr> TextExprMethods for T {}
 
 impl<Req> Expr<Req, Bool> {
     pub fn and<Req2>(self, rhs: Expr<Req2, Bool>) -> Expr<<Req as Concat<Req2>>::Output, Bool>
@@ -730,7 +747,8 @@ macro_rules! sql_leaf_type {
             type Output = crate::scope::Nullable<$name>;
         }
 
-        impl IntoExpr<$name> for $native {
+        impl IntoExpr for $native {
+            type Sql = $name;
             type Req = Nil;
             fn into_expr(self) -> Expr<Nil, $name> {
                 Expr::from_kind(ExprKind::Value(Value::from(self)))
@@ -805,10 +823,6 @@ macro_rules! sql_leaf_type {
             }
         }
 
-        impl Assignable<$name> for $name {}
-        impl Assignable<$name> for crate::scope::Nullable<$name> {}
-        impl Assignable<crate::scope::Nullable<$name>> for crate::scope::Nullable<$name> {}
-
         impl crate::row::SameShape<$native> for $native {}
         impl crate::row::SameShape<::std::option::Option<$native>>
             for ::std::option::Option<$native>
@@ -849,14 +863,16 @@ sql_leaf_type!(Numeric, rust_decimal::Decimal, NullNumeric);
 
 // Ergonomic extra: allow `&str` literals directly, without forcing
 // `.to_string()` at every call site.
-impl IntoExpr<Text> for &String {
+impl IntoExpr for &String {
+    type Sql = Text;
     type Req = Nil;
     fn into_expr(self) -> Expr<Nil, Text> {
         Expr::from_kind(ExprKind::Value(Value::Text(self.clone())))
     }
 }
 
-impl IntoExpr<Text> for &str {
+impl IntoExpr for &str {
+    type Sql = Text;
     type Req = Nil;
     fn into_expr(self) -> Expr<Nil, Text> {
         Expr::from_kind(ExprKind::Value(Value::Text(self.to_string())))

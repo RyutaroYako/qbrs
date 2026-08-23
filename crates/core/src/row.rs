@@ -252,7 +252,6 @@ pub trait SameNames<Other> {}
 
 impl SameNames<Nil> for Nil {}
 
-#[diagnostic::do_not_recommend]
 impl<A, B, TailA, TailB> SameNames<Cons<B, TailB>> for Cons<A, TailA>
 where
     A: SameNameAs<B>,
@@ -281,8 +280,21 @@ pub trait SameShape<Other> {}
 )]
 pub trait SameValues<Other> {}
 
+// Walked cell by cell rather than compared as tuples: the positional view
+// stops at 16 fields, and two selections agree or don't regardless of how
+// wide they are.
+impl SameValues<RowNil> for RowNil {}
+
 #[diagnostic::do_not_recommend]
-impl<A: RowValues, B: RowValues<Values = <A as RowValues>::Values>> SameValues<B> for A {}
+impl<K1, K2, V, Tail1, Tail2> SameValues<RowCons<K2, V, Tail2>> for RowCons<K1, V, Tail1> where
+    Tail1: SameValues<Tail2>
+{
+}
+
+impl<A, B> SameValues<Row<B>> for Row<A> where A: SameValues<B> {}
+
+// A one-column selection decodes to a bare value, and two of those agree
+// when the values do — `sql_leaf_type!` states that per type.
 
 impl<A, B> SameShape<Row<B>> for Row<A>
 where
