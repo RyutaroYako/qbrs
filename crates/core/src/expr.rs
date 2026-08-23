@@ -253,7 +253,8 @@ impl<Req, S: SqlType> Clone for Expr<Req, S> {
 /// bare column, or whatever `Req` an already-built `Expr` carries).
 #[diagnostic::on_unimplemented(
     message = "`{Self}` isn't a SQL expression",
-    label = "a column, a literal, an aggregate, or a `sql!{{}}` fragment is; a `label!` name is not, and neither is an `Option` — `= NULL` is never true in SQL, so the question is `.is_null()`"
+    label = "a column, a literal, an aggregate, or a `sql!{{}}` fragment is; a `label!` name is not",
+    note = "an `Option` isn't one either: asking about NULL is `.is_null()`, and assigning it is `null::<Text>()` — `= NULL` is never true in SQL"
 )]
 pub trait IntoExpr {
     /// The SQL type this expression has. An associated type rather than a
@@ -622,24 +623,29 @@ pub trait ExprMethods: IntoExpr + Sized {
 /// search box needs doesn't have to be folded by hand — folding one by one
 /// grows `Req` and stops type-checking after the first pair. An empty
 /// collection matches nothing, which is what `is_in([])` says too.
-pub fn any_of<Req, C: IntoExpr<Sql = Bool, Req = Req>>(
-    conds: impl IntoIterator<Item = C>,
-) -> Expr<Req, Bool> {
+pub fn any_of<Req, C: IntoExpr<Req = Req>>(conds: impl IntoIterator<Item = C>) -> Expr<Req, Bool>
+where
+    C::Sql: BoolLike,
+{
     combine(conds, false)
 }
 
 /// True when all of them are. An empty collection matches everything, which
 /// is what a `WHERE` with no conditions does.
-pub fn all_of<Req, C: IntoExpr<Sql = Bool, Req = Req>>(
-    conds: impl IntoIterator<Item = C>,
-) -> Expr<Req, Bool> {
+pub fn all_of<Req, C: IntoExpr<Req = Req>>(conds: impl IntoIterator<Item = C>) -> Expr<Req, Bool>
+where
+    C::Sql: BoolLike,
+{
     combine(conds, true)
 }
 
-fn combine<Req, C: IntoExpr<Sql = Bool, Req = Req>>(
+fn combine<Req, C: IntoExpr<Req = Req>>(
     conds: impl IntoIterator<Item = C>,
     all: bool,
-) -> Expr<Req, Bool> {
+) -> Expr<Req, Bool>
+where
+    C::Sql: BoolLike,
+{
     Expr::from_kind(fold_conditions(
         conds.into_iter().map(|c| c.into_expr().kind),
         all,
@@ -681,9 +687,6 @@ where
     })
 }
 
-/// `.like()` is text-only, so it's a separate trait rather than part of the
-/// generic `ExprMethods` — still blanket-implemented, so it works directly
-/// on a text column just like `.eq()` does.
 /// What `LIKE` accepts: a text expression, nullable or not. Its own marker
 /// rather than `Comparable<Text>` so the failure says what the operator
 /// needs instead of talking about comparison.
@@ -695,6 +698,18 @@ pub trait TextLike: SqlType {}
 
 impl TextLike for Text {}
 impl TextLike for crate::scope::Nullable<Text> {}
+
+/// What a `WHERE`/`HAVING`/`ON` clause accepts. `Nullable<Bool>` belongs
+/// here because SQL takes it: a NULL condition selects no row, which is
+/// the same answer `IS NOT TRUE` would give.
+#[diagnostic::on_unimplemented(
+    message = "a condition has to be a boolean expression, and `{Self}` isn't one",
+    label = "expected `Bool` or `Nullable<Bool>`"
+)]
+pub trait BoolLike: SqlType {}
+
+impl BoolLike for Bool {}
+impl BoolLike for crate::scope::Nullable<Bool> {}
 
 impl<Req> Expr<Req, Bool> {
     pub fn and<Req2>(self, rhs: Expr<Req2, Bool>) -> Expr<<Req as Concat<Req2>>::Output, Bool>
@@ -727,6 +742,14 @@ pub trait NullValue: SqlType {
     const NULL_VALUE: Value;
 }
 
+/// A typed SQL `NULL`, for the one position an `Option` can't say it:
+/// `SET column = NULL` assigns, and an assignment has no `Option` to be
+/// `None`. `null::<Text>()` is `Nullable<Text>`, so only a nullable column
+/// accepts it.
+pub fn null<S: NullValue>() -> Expr<Nil, crate::scope::Nullable<S>> {
+    Expr::from_kind(ExprKind::Value(S::NULL_VALUE))
+}
+
 /// Declares a leaf (base) SQL type: the marker struct, its `SqlType` impl,
 /// its `WrapNullable<MaybeNull>` impl, and `IntoExpr` from its native Rust
 /// type. One concrete, non-generic impl per type — a blanket
@@ -756,51 +779,67 @@ macro_rules! sql_leaf_type {
             const NULL_VALUE: Value = Value::$null_variant;
         }
 
-        impl crate::insert::IntoNullable<$native> for $native {
-            fn into_nullable(self) -> ::std::option::Option<$native> {
-                ::std::option::Option::Some(self)
-            }
-        }
-
-        impl crate::insert::IntoNullable<$native> for ::std::option::Option<$native> {
-            fn into_nullable(self) -> ::std::option::Option<$native> {
+        impl crate::insert::IntoColumnValue<$native> for $native {
+            fn into_column_value(self) -> $native {
                 self
             }
         }
 
-        impl crate::insert::IntoDefaultable<$native> for $native {
-            fn into_defaultable(self) -> crate::insert::Defaultable<$native> {
+        impl crate::insert::IntoColumnValue<::std::option::Option<$native>> for $native {
+            fn into_column_value(self) -> ::std::option::Option<$native> {
+                ::std::option::Option::Some(self)
+            }
+        }
+
+        impl crate::insert::IntoColumnValue<::std::option::Option<$native>>
+            for ::std::option::Option<$native>
+        {
+            fn into_column_value(self) -> ::std::option::Option<$native> {
+                self
+            }
+        }
+
+        impl crate::insert::IntoColumnValue<crate::insert::Defaultable<$native>> for $native {
+            fn into_column_value(self) -> crate::insert::Defaultable<$native> {
                 crate::insert::Defaultable::Value(self)
             }
         }
 
-        impl crate::insert::IntoDefaultable<::std::option::Option<$native>> for $native {
-            fn into_defaultable(
+        impl crate::insert::IntoColumnValue<crate::insert::Defaultable<$native>>
+            for ::std::option::Option<$native>
+        {
+            fn into_column_value(self) -> crate::insert::Defaultable<$native> {
+                match self {
+                    ::std::option::Option::Some(v) => crate::insert::Defaultable::Value(v),
+                    ::std::option::Option::None => crate::insert::Defaultable::Default,
+                }
+            }
+        }
+
+        impl
+            crate::insert::IntoColumnValue<
+                crate::insert::Defaultable<::std::option::Option<$native>>,
+            > for $native
+        {
+            fn into_column_value(
                 self,
             ) -> crate::insert::Defaultable<::std::option::Option<$native>> {
                 crate::insert::Defaultable::Value(::std::option::Option::Some(self))
             }
         }
 
-        impl crate::insert::IntoDefaultable<::std::option::Option<$native>>
-            for ::std::option::Option<$native>
+        impl
+            crate::insert::IntoColumnValue<
+                crate::insert::Defaultable<::std::option::Option<$native>>,
+            > for ::std::option::Option<$native>
         {
-            fn into_defaultable(
+            fn into_column_value(
                 self,
             ) -> crate::insert::Defaultable<::std::option::Option<$native>> {
                 match self {
                     ::std::option::Option::Some(v) => {
                         crate::insert::Defaultable::Value(::std::option::Option::Some(v))
                     }
-                    ::std::option::Option::None => crate::insert::Defaultable::Default,
-                }
-            }
-        }
-
-        impl crate::insert::IntoDefaultable<$native> for ::std::option::Option<$native> {
-            fn into_defaultable(self) -> crate::insert::Defaultable<$native> {
-                match self {
-                    ::std::option::Option::Some(v) => crate::insert::Defaultable::Value(v),
                     ::std::option::Option::None => crate::insert::Defaultable::Default,
                 }
             }
@@ -876,41 +915,40 @@ impl IntoExpr for &str {
     }
 }
 
-impl crate::insert::IntoNullable<String> for &str {
-    fn into_nullable(self) -> Option<String> {
-        Some(self.to_string())
-    }
+/// Text's borrowed forms, at every slot a `String` column has. The leaf
+/// macro can't generate these: only `Text` has a borrowed spelling.
+macro_rules! text_column_value {
+    ($borrowed:ty) => {
+        impl crate::insert::IntoColumnValue<String> for $borrowed {
+            fn into_column_value(self) -> String {
+                self.to_string()
+            }
+        }
+
+        impl crate::insert::IntoColumnValue<Option<String>> for $borrowed {
+            fn into_column_value(self) -> Option<String> {
+                Some(self.to_string())
+            }
+        }
+
+        impl crate::insert::IntoColumnValue<crate::insert::Defaultable<String>> for $borrowed {
+            fn into_column_value(self) -> crate::insert::Defaultable<String> {
+                crate::insert::Defaultable::Value(self.to_string())
+            }
+        }
+
+        impl crate::insert::IntoColumnValue<crate::insert::Defaultable<Option<String>>>
+            for $borrowed
+        {
+            fn into_column_value(self) -> crate::insert::Defaultable<Option<String>> {
+                crate::insert::Defaultable::Value(Some(self.to_string()))
+            }
+        }
+    };
 }
 
-impl crate::insert::IntoDefaultable<String> for &str {
-    fn into_defaultable(self) -> crate::insert::Defaultable<String> {
-        crate::insert::Defaultable::Value(self.to_string())
-    }
-}
-
-impl crate::insert::IntoDefaultable<Option<String>> for &str {
-    fn into_defaultable(self) -> crate::insert::Defaultable<Option<String>> {
-        crate::insert::Defaultable::Value(Some(self.to_string()))
-    }
-}
-
-impl crate::insert::IntoNullable<String> for &String {
-    fn into_nullable(self) -> Option<String> {
-        Some(self.clone())
-    }
-}
-
-impl crate::insert::IntoDefaultable<String> for &String {
-    fn into_defaultable(self) -> crate::insert::Defaultable<String> {
-        crate::insert::Defaultable::Value(self.clone())
-    }
-}
-
-impl crate::insert::IntoDefaultable<Option<String>> for &String {
-    fn into_defaultable(self) -> crate::insert::Defaultable<Option<String>> {
-        crate::insert::Defaultable::Value(Some(self.clone()))
-    }
-}
+text_column_value!(&str);
+text_column_value!(&String);
 
 impl RawArg for &String {
     type Req = Nil;

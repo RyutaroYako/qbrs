@@ -121,12 +121,12 @@ async fn sqlite_executes_every_rendered_statement_shape() {
             )
             .on_conflict_do_update(
                 users::email,
-                UsersUpdate {
+                Assignments::from_row(UsersUpdate {
                     display_name: Some(Some("Ada Lovelace".into())),
                     ..Default::default()
-                },
+                })
+                .expect("display_name is set"),
             )
-            .expect("display_name is set")
             .to_sql(),
     )
     .await;
@@ -134,11 +134,13 @@ async fn sqlite_executes_every_rendered_statement_shape() {
     run(
         &pool,
         update::<Sqlite, _>(users::Table)
-            .set(UsersUpdate {
-                display_name: Some(None),
-                ..Default::default()
-            })
-            .expect("display_name is set")
+            .set(
+                Assignments::from_row(UsersUpdate {
+                    display_name: Some(None),
+                    ..Default::default()
+                })
+                .expect("display_name is set"),
+            )
             .filter(users::email.eq("dan@example.com"))
             .to_sql(),
     )

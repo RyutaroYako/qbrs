@@ -3,6 +3,7 @@ use qbrs::dialect::Postgres;
 use qbrs::expr::ExprMethods;
 use qbrs::select::{OrderExt, select};
 use qbrs::statement::Statement;
+use qbrs::update::Assignments;
 
 #[derive(Table)]
 #[table(name = "users")]
@@ -119,11 +120,13 @@ fn insert_uses_generated_new_and_setters() {
 #[test]
 fn update_only_sends_touched_fields() {
     let (sql, params) = qbrs::update::update::<Postgres, _>(users::Table)
-        .set(UsersUpdate {
-            display_name: Some(Some("New Name".into())),
-            ..Default::default()
-        })
-        .expect("display_name is set")
+        .set(
+            Assignments::from_row(UsersUpdate {
+                display_name: Some(Some("New Name".into())),
+                ..Default::default()
+            })
+            .expect("display_name is set"),
+        )
         .filter(users::id.eq(1i64))
         .to_sql();
 
@@ -137,5 +140,62 @@ fn update_only_sends_touched_fields() {
             qbrs::expr::Value::Text("New Name".into()),
             qbrs::expr::Value::I64(1),
         ]
+    );
+}
+
+#[derive(Table)]
+#[table(name = "flags")]
+#[allow(dead_code)]
+struct Flags {
+    #[column(primary_key, generated)]
+    id: i64,
+    opted_in: Option<bool>,
+}
+
+#[test]
+fn a_nullable_boolean_column_is_a_condition_on_its_own() {
+    let (sql, params) = select((flags::id,))
+        .from::<Postgres, _>(flags::Table)
+        .filter(flags::opted_in)
+        .to_sql();
+
+    assert_eq!(
+        sql,
+        "SELECT \"flags\".\"id\" FROM \"flags\" WHERE \"flags\".\"opted_in\""
+    );
+    assert!(params.is_empty());
+}
+
+#[test]
+fn assigning_a_column_twice_keeps_the_last_assignment() {
+    let (sql, params) = qbrs::update::update::<Postgres, _>(users::Table)
+        .set(
+            Assignments::from_row(UsersUpdate {
+                display_name: Some(Some("From the request".into())),
+                ..Default::default()
+            })
+            .expect("display_name is set"),
+        )
+        .set_to(users::display_name, "Computed")
+        .to_sql();
+
+    assert_eq!(sql, "UPDATE \"users\" SET \"display_name\" = $1");
+    assert_eq!(params, vec![qbrs::expr::Value::Text("Computed".into())]);
+}
+
+#[test]
+fn set_to_assigns_a_typed_sql_null() {
+    let (sql, params) = qbrs::update::update::<Postgres, _>(users::Table)
+        .set_to(users::display_name, qbrs::expr::null::<qbrs::expr::Text>())
+        .filter(users::id.eq(1i64))
+        .to_sql();
+
+    assert_eq!(
+        sql,
+        "UPDATE \"users\" SET \"display_name\" = $1 WHERE (\"users\".\"id\" = $2)"
+    );
+    assert_eq!(
+        params,
+        vec![qbrs::expr::Value::NullText, qbrs::expr::Value::I64(1)]
     );
 }

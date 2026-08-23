@@ -28,37 +28,12 @@ mod private {
 #[doc(hidden)]
 pub use private::Sealed as UpdateRowSealed;
 
-/// What a statement's `SET` list can be built from: the `*Update` struct a
-/// request maps onto, or `Assignments` of expressions — so `UPDATE` and
-/// `ON CONFLICT DO UPDATE` take the same two things.
-#[diagnostic::on_unimplemented(
-    message = "`{Self}` isn't a `SET` list for `{T}`",
-    label = "the `*Update` struct `#[derive(Table)]` generated for `{T}`, or `Assignments` of expressions over its columns"
-)]
-pub trait IntoAssignments<T> {
-    #[doc(hidden)]
-    fn into_assignments(self) -> Result<Assignments<T>, NothingToSet>;
-}
-
-#[diagnostic::do_not_recommend]
-impl<T: Table, R: UpdateRow<Table = T>> IntoAssignments<T> for R {
-    fn into_assignments(self) -> Result<Assignments<T>, NothingToSet> {
-        Assignments::from_row(self)
-    }
-}
-
-impl<T> IntoAssignments<T> for Assignments<T> {
-    fn into_assignments(self) -> Result<Assignments<T>, NothingToSet> {
-        // Non-empty by construction: the only constructor assigns one.
-        Ok(self)
-    }
-}
-
 /// A `SET` list that is known non-empty, which is the only kind that has a
 /// SQL form. Every `*Update` derives `Default`, and that value — what a
 /// PATCH handler holds when the request changed nothing — has no
 /// assignments at all, so the check belongs where such a value enters a
 /// statement rather than at rendering time.
+#[derive(Debug, Clone)]
 pub struct Assignments<T> {
     sets: Vec<(&'static str, ExprKind)>,
     _marker: PhantomData<fn() -> T>,
@@ -90,8 +65,12 @@ impl<T: Table> Assignments<T> {
         V::Sql: AssignsTo<C::Sql>,
         WrittenTable<T>: Superset<V::Req, Idxs>,
     {
-        self.sets
-            .push((<C as crate::row::Named>::NAME, value.into_expr().kind));
+        // A column assigned twice is not a statement any database accepts,
+        // and layering a computed assignment over a request's is exactly
+        // when it happens — so the later one replaces the earlier.
+        let name = <C as crate::row::Named>::NAME;
+        self.sets.retain(|(col, _)| *col != name);
+        self.sets.push((name, value.into_expr().kind));
         self
     }
 }
@@ -110,8 +89,9 @@ impl<T> Assignments<T> {
         }
     }
 
-    /// The `SET` list a request struct describes. Public so a statement
-    /// that mixes one with computed assignments has somewhere to start:
+    /// The `SET` list a request struct describes — the one fallible step
+    /// in building a statement, since a `*Update` whose every field is
+    /// untouched describes no assignment. Mixed with computed ones as
     /// `Assignments::from_row(patch)?.and_set_to(col, expr)`.
     pub fn from_row<R: UpdateRow<Table = T>>(row: R) -> Result<Self, NothingToSet> {
         let sets: Vec<_> = row
@@ -170,15 +150,16 @@ impl<D, T: Table> UpdateSeed<D, T> {
         }
     }
 
-    /// The `SET` list, from an `*Update` struct or from `Assignments` of
-    /// expressions. Fallible because an `*Update` whose every field is
-    /// untouched has nothing to assign.
-    pub fn set(self, sets: impl IntoAssignments<T>) -> Result<Update<D, T>, NothingToSet> {
-        Ok(Update {
-            sets: sets.into_assignments()?,
+    /// The statement's `SET` list. Infallible: an `Assignments` holds at
+    /// least one assignment by construction, and the empty case an
+    /// `*Update` can be lives in `Assignments::from_row`, which is where
+    /// the `?` goes.
+    pub fn set(self, sets: Assignments<T>) -> Update<D, T> {
+        Update {
+            sets,
             wheres: Vec::new(),
             _marker: PhantomData,
-        })
+        }
     }
 }
 

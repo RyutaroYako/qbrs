@@ -127,11 +127,13 @@ pub async fn seed(pool: &sqlx::PgPool) {
     // Dan (ids[1]) intentionally gets no orders and active=false, so the
     // examples have something interesting to filter/outer-join against.
     update::<Postgres, _>(users::Table)
-        .set(UsersUpdate {
-            active: Some(false),
-            ..Default::default()
-        })
-        .expect("active is set")
+        .set(
+            Assignments::from_row(UsersUpdate {
+                active: Some(false),
+                ..Default::default()
+            })
+            .expect("active is set"),
+        )
         .filter(users::id.eq(ids[1]))
         .execute(pool)
         .await

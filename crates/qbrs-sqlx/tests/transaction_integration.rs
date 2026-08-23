@@ -13,6 +13,7 @@ use qbrs::expr::ExprMethods;
 use qbrs::row::IntoTuples;
 use qbrs::select::select;
 use qbrs::statement::Statement;
+use qbrs::update::Assignments;
 use qbrs_sqlx::{ExecuteExt, LoadExt};
 
 #[derive(Table)]
@@ -128,10 +129,12 @@ async fn transactions_against_real_postgres() {
     assert_eq!(ids.len(), 2);
 
     let affected = qbrs::update::update::<Postgres, _>(users::Table)
-        .set(UsersUpdate {
-            email: Some("a2@example.com".to_string()),
-        })
-        .expect("email is set")
+        .set(
+            Assignments::from_row(UsersUpdate {
+                email: Some("a2@example.com".to_string()),
+            })
+            .expect("email is set"),
+        )
         .filter(users::id.eq(ids[0]))
         .execute(&mut *tx)
         .await

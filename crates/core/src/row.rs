@@ -293,9 +293,6 @@ impl<K1, K2, V, Tail1, Tail2> SameValues<RowCons<K2, V, Tail2>> for RowCons<K1, 
 
 impl<A, B> SameValues<Row<B>> for Row<A> where A: SameValues<B> {}
 
-// A one-column selection decodes to a bare value, and two of those agree
-// when the values do — `sql_leaf_type!` states that per type.
-
 impl<A, B> SameShape<Row<B>> for Row<A>
 where
     Row<A>: SameValues<Row<B>> + RowKeys,

@@ -853,9 +853,9 @@ fn gen_insert_struct(
             .collect();
         quote! {
             impl<#(#others),*> #builder_ident<#(#before),*> {
-                pub fn #name(self, value: impl ::std::convert::Into<#base>) -> #builder_ident<#(#after),*> {
+                pub fn #name(self, value: impl ::qbrs::insert::IntoColumnValue<#base>) -> #builder_ident<#(#after),*> {
                     #builder_ident {
-                        #name: ::std::convert::Into::into(value),
+                        #name: ::qbrs::insert::IntoColumnValue::into_column_value(value),
                         #(#carried_required,)*
                         #(#optional_names: self.#optional_names,)*
                     }
@@ -869,15 +869,21 @@ fn gen_insert_struct(
         let base = &c.base_ty;
         if c.nullable && !c.has_default {
             quote! {
-                pub fn #name(mut self, value: impl ::qbrs::insert::IntoNullable<#base>) -> Self {
-                    self.#name = ::qbrs::insert::IntoNullable::into_nullable(value);
+                pub fn #name(
+                    mut self,
+                    value: impl ::qbrs::insert::IntoColumnValue<::std::option::Option<#base>>,
+                ) -> Self {
+                    self.#name = ::qbrs::insert::IntoColumnValue::into_column_value(value);
                     self
                 }
             }
         } else if !c.nullable && c.has_default {
             quote! {
-                pub fn #name(mut self, value: impl ::qbrs::insert::IntoDefaultable<#base>) -> Self {
-                    self.#name = ::qbrs::insert::IntoDefaultable::into_defaultable(value);
+                pub fn #name(
+                    mut self,
+                    value: impl ::qbrs::insert::IntoColumnValue<::qbrs::insert::Defaultable<#base>>,
+                ) -> Self {
+                    self.#name = ::qbrs::insert::IntoColumnValue::into_column_value(value);
                     self
                 }
             }
@@ -889,9 +895,11 @@ fn gen_insert_struct(
             quote! {
                 pub fn #name(
                     mut self,
-                    value: impl ::qbrs::insert::IntoDefaultable<::std::option::Option<#base>>,
+                    value: impl ::qbrs::insert::IntoColumnValue<
+                        ::qbrs::insert::Defaultable<::std::option::Option<#base>>,
+                    >,
                 ) -> Self {
-                    self.#name = ::qbrs::insert::IntoDefaultable::into_defaultable(value);
+                    self.#name = ::qbrs::insert::IntoColumnValue::into_column_value(value);
                     self
                 }
 
@@ -931,6 +939,7 @@ fn gen_insert_struct(
     });
 
     quote! {
+        #[derive(::std::fmt::Debug, ::std::clone::Clone)]
         pub struct #insert_ident {
             #(#fields,)*
         }
@@ -1028,7 +1037,7 @@ fn gen_update_struct(
     });
 
     quote! {
-        #[derive(::std::default::Default)]
+        #[derive(::std::default::Default, ::std::fmt::Debug, ::std::clone::Clone)]
         pub struct #update_ident {
             #(#fields,)*
         }

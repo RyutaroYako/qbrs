@@ -212,6 +212,8 @@ the 16-element limit count tables rather than columns.
 (a second one collides on `mod label`); declaring it inside the function that runs the
 query is the intended usage and sidesteps that. Nullability comes from `Option<T>` wrapping (no
 separate attribute); attributes are only `#[column(primary_key | generated | default)]`.
+Every column setter takes `insert::IntoColumnValue<Field>` — one trait for all four field
+shapes, so two same-typed columns accept the same values however they are declared.
 `*Insert` is built through a type-state builder: one generic slot per column that is neither
 nullable nor defaulted, `insert::Missing<C>` until that column is given a value and its own
 type after — named after the column, so the builder's type says which one is still missing — so `build()` exists
@@ -220,9 +222,12 @@ exactly when the row is complete and nothing is unwrapped. Insert fields use `De
 omit / explicit-NULL / explicit-value stay distinguishable; update fields use `Option<T>` /
 `Option<Option<T>>` for untouched / set-NULL / set-value. A statement with nothing in it —
 `UPDATE .. SET` with no assignments, `INSERT` with no rows — has no SQL form, and both
-shapes are ordinary request-shaped data rather than bugs, so `update().set(..)`,
-`.on_conflict_do_update(..)` and `.values_all(..)` return a `Result` (`NothingToSet` /
-`NothingToInsert`) and the renderers take a non-empty `update::Assignments`.
+shapes are ordinary request-shaped data rather than bugs, so the two places that read such
+data — `Assignments::from_row(..)` and `.values_all(..)` — return a `Result`
+(`NothingToSet` / `NothingToInsert`). Everything downstream takes the non-empty
+`update::Assignments` they produce and is infallible: no builder method returns a `Result`
+that cannot be `Err`. A column assigned twice keeps the last assignment, since a `SET` list
+naming one column twice is SQL no database accepts.
 
 `with!{}` generates the same shape for a CTE pseudo-table — markers, consts, and accessor
 traits alike — so a CTE *is* a real table to `Scope`/`Find`/`Superset` with no separate

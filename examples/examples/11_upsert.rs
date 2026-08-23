@@ -56,7 +56,7 @@ async fn main() {
     println!("after DO NOTHING, display_name is still: {unchanged:?}");
 
     // Same conflicting email, but this time DO UPDATE SET reuses the same
-    // `*Update` struct `.set(..)` takes — only the fields actually set on
+    // `*Update` struct an `UPDATE` assigns from — only the fields actually set on
     // it are updated.
     let updated: Option<String> = insert::<Postgres, _>(users::Table)
         .values(
@@ -67,12 +67,12 @@ async fn main() {
         )
         .on_conflict_do_update(
             users::email,
-            UsersUpdate {
+            Assignments::from_row(UsersUpdate {
                 display_name: Some(Some("Grace Brewster Hopper".into())),
                 ..Default::default()
-            },
+            })
+            .expect("display_name is set"),
         )
-        .expect("display_name is set")
         .returning(users::display_name)
         .load(&pool)
         .await

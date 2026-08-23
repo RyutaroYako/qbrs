@@ -19,6 +19,7 @@ pub mod prelude {
     #[cfg(feature = "decimal")]
     pub use qbrs_core::expr::Numeric;
     pub use qbrs_core::expr::{Agg, Avg, Count, CountOf, Max, Min, Sum};
+    pub use qbrs_core::expr::{AssignsTo, BoolLike, Comparable, SqlType, TextLike, Writable, null};
     pub use qbrs_core::expr::{
         BigInt, Bool, Bytes, ExprMethods, HasCount, Integer, LabelExt, Real, SortDir, Text, Value,
         all_of, any_of, avg, count, count_of, max, min, sum,
@@ -26,10 +27,12 @@ pub mod prelude {
     #[cfg(feature = "chrono")]
     pub use qbrs_core::expr::{Date, Timestamptz};
     pub use qbrs_core::expr::{Declared, Expr, IntoExpr, Keyed, Labeled};
-    pub use qbrs_core::insert::{Defaultable, Insert, InsertRow, Missing, NothingToInsert, insert};
+    pub use qbrs_core::insert::{
+        Defaultable, Insert, InsertRow, IntoColumnValue, Missing, NothingToInsert, insert,
+    };
     pub use qbrs_core::row::{Anon, FromRow, IntoStructs, IntoTuples, Named, Row, RowCons, RowNil};
     pub use qbrs_core::scope::{
-        Cons, Find, Here, MaybeNull, Nil, NotNull, Nullable, Superset, TableSlot, There,
+        Concat, Cons, Find, Here, MaybeNull, Nil, NotNull, Nullable, Superset, TableSlot, There,
     };
     pub use qbrs_core::select::All;
     pub use qbrs_core::select::{
@@ -38,9 +41,7 @@ pub mod prelude {
         grouping, nth, predicate, select, sort_key,
     };
     pub use qbrs_core::statement::{Returning, Statement, WrittenTable};
-    pub use qbrs_core::update::{
-        Assignments, IntoAssignments, NothingToSet, Update, UpdateRow, update,
-    };
+    pub use qbrs_core::update::{Assignments, NothingToSet, Update, UpdateRow, update};
     pub use qbrs_core::window::{
         DenseRank, HasDenseRank, HasRank, HasRowNumber, Rank, RowNumber, Window, WindowFunc,
         dense_rank, rank, row_number, window,

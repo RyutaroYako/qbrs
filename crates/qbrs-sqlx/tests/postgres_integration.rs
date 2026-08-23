@@ -15,6 +15,7 @@ use qbrs::expr::ExprMethods;
 use qbrs::row::{IntoStructs, IntoTuples};
 use qbrs::select::{OrderExt, select};
 use qbrs::statement::Statement;
+use qbrs::update::Assignments;
 use qbrs_sqlx::{ExecuteExt, LoadExt};
 
 #[derive(Table)]
@@ -142,11 +143,13 @@ async fn full_crud_roundtrip_against_real_postgres() {
 
     // UPDATE
     let affected = qbrs::update::update::<Postgres, _>(users::Table)
-        .set(UsersUpdate {
-            display_name: Some(Some("Ada Lovelace".into())),
-            ..Default::default()
-        })
-        .expect("display_name is set")
+        .set(
+            Assignments::from_row(UsersUpdate {
+                display_name: Some(Some("Ada Lovelace".into())),
+                ..Default::default()
+            })
+            .expect("display_name is set"),
+        )
         .filter(users::id.eq(ada_id))
         .execute(&pool)
         .await

@@ -6,7 +6,7 @@ use std::marker::PhantomData;
 
 use crate::cte::Cte;
 use crate::dialect::{Dialect, SupportsFullOuterJoin, SupportsRightJoin};
-use crate::expr::{Bool, Expr, ExprKind, IntoExpr, Value};
+use crate::expr::{Bool, BoolLike, Expr, ExprKind, IntoExpr, Value};
 use crate::render::{
     Fragment, FragmentSink, QuerySink, SelectItem, Sink, render_and_list, render_expr,
     render_expr_list, render_order_by, render_select_list,
@@ -258,8 +258,9 @@ pub trait Condition<Scope, Idxs> {
     fn into_predicate(self) -> Predicate<Scope>;
 }
 
-impl<Scope: Superset<Req, Idxs>, Req, Idxs, T: IntoExpr<Sql = Bool, Req = Req>>
-    Condition<Scope, Idxs> for T
+impl<Scope: Superset<Req, Idxs>, Req, Idxs, T: IntoExpr<Req = Req>> Condition<Scope, Idxs> for T
+where
+    T::Sql: BoolLike,
 {
     fn into_predicate(self) -> Predicate<Scope> {
         Predicate {
@@ -325,9 +326,10 @@ impl<Scope> Predicate<Scope> {
 
 /// Discharges a condition's scope requirement. `Scope` is inferred from the
 /// query the resulting predicates are eventually given to.
-pub fn predicate<Scope, Req, Idxs>(cond: impl IntoExpr<Sql = Bool, Req = Req>) -> Predicate<Scope>
+pub fn predicate<Scope, Req, Idxs, C: IntoExpr<Req = Req>>(cond: C) -> Predicate<Scope>
 where
     Scope: Superset<Req, Idxs>,
+    C::Sql: BoolLike,
 {
     Predicate {
         kind: cond.into_expr().kind,

@@ -7,7 +7,7 @@ use qbrs_core::expr::{ExprMethods, Value};
 use qbrs_core::insert::{Defaultable, InsertRow, InsertValue, insert};
 use qbrs_core::scope::Table as TableTrait;
 use qbrs_core::statement::Statement;
-use qbrs_core::update::{NothingToSet, UpdateRow, update};
+use qbrs_core::update::{Assignments, NothingToSet, UpdateRow, update};
 
 pub struct UsersMarker;
 impl TableTrait for UsersMarker {
@@ -157,14 +157,11 @@ impl UpdateRow for UsersUpdate {
 
 #[test]
 fn a_set_list_can_be_expressions_alone() {
-    use qbrs_core::update::Assignments;
-
     let (sql, params) = update::<Postgres, _>(users::Table)
         .set(Assignments::set_to(
             users::email,
             qbrs_core::sql!(qbrs_core::expr::Text, "lower(?)", users::email),
         ))
-        .expect("one assignment")
         .filter(users::id.eq(1))
         .to_sql();
     assert_eq!(
@@ -177,11 +174,13 @@ fn a_set_list_can_be_expressions_alone() {
 #[test]
 fn set_to_assigns_an_expression_and_appends_to_the_row() {
     let (sql, params) = update::<Postgres, _>(users::Table)
-        .set(UsersUpdate {
-            email: Some("new@example.com".into()),
-            display_name: None,
-        })
-        .expect("email is set")
+        .set(
+            Assignments::from_row(UsersUpdate {
+                email: Some("new@example.com".into()),
+                display_name: None,
+            })
+            .expect("email is set"),
+        )
         .set_to(
             users::display_name,
             qbrs_core::sql!(qbrs_core::expr::Text, "upper(?)", users::email),
@@ -226,23 +225,20 @@ fn insert_bulk_and_returning() {
 
 #[test]
 fn an_update_that_sets_nothing_is_an_error_not_a_panic() {
-    let nothing = update::<Postgres, _>(users::Table).set(UsersUpdate::default());
-    assert!(matches!(nothing, Err(NothingToSet)));
-
-    let nothing = insert::<Postgres, _>(users::Table)
-        .values(UsersInsert::builder().email("a@example.com").build())
-        .on_conflict_do_update(users::email, UsersUpdate::default());
+    let nothing = Assignments::<UsersMarker>::from_row(UsersUpdate::default());
     assert!(matches!(nothing, Err(NothingToSet)));
 }
 
 #[test]
 fn update_only_touches_set_fields() {
     let (sql, params) = update::<Postgres, _>(users::Table)
-        .set(UsersUpdate {
-            email: Some("new@example.com".into()),
-            display_name: None,
-        })
-        .expect("email is set")
+        .set(
+            Assignments::from_row(UsersUpdate {
+                email: Some("new@example.com".into()),
+                display_name: None,
+            })
+            .expect("email is set"),
+        )
         .filter(users::id.eq(1))
         .to_sql();
     assert_eq!(
@@ -277,12 +273,12 @@ fn upsert_do_update_reuses_update_row_and_supports_returning() {
         .values(UsersInsert::builder().email("a@example.com").build())
         .on_conflict_do_update(
             users::email,
-            UsersUpdate {
+            Assignments::from_row(UsersUpdate {
                 display_name: Some(Some("A".into())),
                 ..Default::default()
-            },
+            })
+            .expect("display_name is set"),
         )
-        .expect("display_name is set")
         .returning(users::id)
         .to_sql();
     assert_eq!(

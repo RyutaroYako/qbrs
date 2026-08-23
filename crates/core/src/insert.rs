@@ -14,21 +14,20 @@ use crate::expr::{Column, ColumnKey, Value};
 use crate::render::{QuerySink, Sink, render_ident};
 use crate::scope::{BaseTable, Table};
 use crate::statement::Statement;
-use crate::update::{Assignments, IntoAssignments, NothingToSet};
+use crate::update::Assignments;
 
-/// What a nullable column's setter takes: the value, or the `Option` a
-/// request struct already holds. `None` leaves the column NULL, which is
-/// what not calling the setter would have done.
-pub trait IntoNullable<T> {
-    fn into_nullable(self) -> Option<T>;
-}
-
-/// What a defaulted column's setter takes: the value, or the `Option` a
-/// request struct holds. `None` leaves the schema's default standing, in
-/// every setter that takes an `Option` — a column that is also nullable
-/// says explicit NULL with `.<column>_null()` instead.
-pub trait IntoDefaultable<T> {
-    fn into_defaultable(self) -> Defaultable<T>;
+/// What a column's setter accepts, keyed by what that column's field
+/// holds: the column's own Rust type — `&str` for text — plus the `Option`
+/// a request struct already carries, wherever leaving the column out means
+/// something. `None` is that meaning: NULL for a nullable column, the
+/// schema's default for a defaulted one, and for a column that is both,
+/// `.<column>_null()` says the other one.
+#[diagnostic::on_unimplemented(
+    message = "`{Self}` isn't a value this column accepts",
+    label = "expected the column's own Rust type, or an `Option` of it"
+)]
+pub trait IntoColumnValue<V> {
+    fn into_column_value(self) -> V;
 }
 
 /// A column an `*Insert` builder hasn't been given a value for yet. Named
@@ -290,21 +289,21 @@ impl<D: Dialect, R: InsertRow> Insert<D, R> {
         self
     }
 
-    /// `ON CONFLICT (..) DO UPDATE SET ..`, reusing the same `*Update`
-    /// struct `update().set(..)` takes.
+    /// `ON CONFLICT (..) DO UPDATE SET ..`, taking the same `Assignments`
+    /// an `UPDATE` sets.
     pub fn on_conflict_do_update(
         mut self,
         target: impl ConflictTarget<R::Table>,
-        set: impl IntoAssignments<R::Table>,
-    ) -> Result<Self, NothingToSet>
+        set: Assignments<R::Table>,
+    ) -> Self
     where
         D: SupportsOnConflict,
     {
         self.on_conflict = Some(ConflictClause {
             target: target.column_names(),
-            action: ConflictAction::DoUpdate(set.into_assignments()?),
+            action: ConflictAction::DoUpdate(set),
         });
-        Ok(self)
+        self
     }
 }
 
