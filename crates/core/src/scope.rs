@@ -227,12 +227,21 @@ impl<T: Table, N: Nullability, Tail: MapNullable> MapNullable for Cons<TableSlot
     type Output = Cons<TableSlot<T, MaybeNull>, Tail::Output>;
 }
 
+pub(crate) mod wrap {
+    /// Sealed carrying the nullability, for the reason `proof` explains:
+    /// what a join does to a column is the join's to decide, and `Self` is
+    /// the caller's own type wherever a schema declares one — so an open
+    /// impl lets a schema say a `LEFT JOIN` leaves its column NOT NULL, and
+    /// the row then decodes a NULL into a non-`Option`.
+    pub trait Sealed<N> {}
+}
+
 /// Idempotently wrap a SQL type as nullable-or-not depending on a
 /// `Nullability` marker, without double-wrapping an already-`Nullable<T>`
 /// column. Column accessors compose this with `Find::Nullability` so that
 /// NULL-ability is *derived* from join shape rather than requiring a manual
 /// `.nullable()` assertion (diesel's documented wart).
-pub trait WrapNullable<N: Nullability> {
+pub trait WrapNullable<N: Nullability>: wrap::Sealed<N> {
     type Output;
 }
 
@@ -244,12 +253,16 @@ pub struct Nullable<T>(PhantomData<T>);
 // `NotNull` never changes the type, for *any* `T` (including `Nullable<T>`
 // itself) — a single blanket impl is coherence-safe here because there is
 // no second impl competing for the `NotNull` slot.
+impl<T> wrap::Sealed<NotNull> for T {}
+
 impl<T> WrapNullable<NotNull> for T {
     type Output = T;
 }
 
 // Idempotent: wrapping an already-nullable type as `MaybeNull` again is a
 // no-op, not `Nullable<Nullable<T>>`.
+impl<T> wrap::Sealed<MaybeNull> for Nullable<T> {}
+
 impl<T> WrapNullable<MaybeNull> for Nullable<T> {
     type Output = Nullable<T>;
 }

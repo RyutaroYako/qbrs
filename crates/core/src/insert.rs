@@ -117,13 +117,16 @@ impl<T: Into<Value>> From<Defaultable<T>> for InsertValue {
 }
 
 /// Implemented by the `#[derive(Table)]`-generated `*Insert` struct for each
-/// table, which is what pairs `COLUMNS` with a matching `into_values()`
-/// order and length; a hand-written impl has to keep the two in step
-/// itself.
+/// table. One list of `(column, value)` pairs rather than a name list beside
+/// a value list, for the reason `select::AllColumns` carries one list: the
+/// seal is `#[doc(hidden)] pub` — the derive has to write it in the schema's
+/// own crate — so two lists that have to line up position for position
+/// could be made not to, and `INSERT INTO t (a, b, c) VALUES ($1)` is
+/// malformed whatever the table looks like. `update::UpdateRow::sets` has
+/// always had this shape.
 pub trait InsertRow: private::Sealed {
     type Table: Table;
-    const COLUMNS: &'static [&'static str];
-    fn into_values(self) -> Vec<InsertValue>;
+    fn into_values(self) -> Vec<(&'static str, InsertValue)>;
 }
 
 /// An `ON CONFLICT` target: one or more columns proven by `T` to belong to
@@ -222,7 +225,7 @@ fn render_conflict_clause<D: Dialect, T>(clause: &ConflictClause<T>, sink: &mut 
 }
 
 mod private {
-    /// `COLUMNS` and `into_values()` have to line up position for position;
+    /// The row's `(column, value)` pairs are what a statement writes;
     /// `#[derive(Table)]` is what guarantees that, so it is the only thing
     /// that can produce an `InsertRow`.
     pub trait Sealed {}
@@ -285,7 +288,7 @@ impl std::fmt::Display for NothingToInsert {
 impl std::error::Error for NothingToInsert {}
 
 fn render_values_clause<D: Dialect, R: InsertRow>(
-    rows: &[Vec<InsertValue>],
+    rows: &[Vec<(&'static str, InsertValue)>],
     on_conflict: &Option<ConflictClause<R::Table>>,
 ) -> QuerySink<D> {
     let mut sink = QuerySink::<D>::new();
@@ -296,7 +299,7 @@ fn render_values_clause<D: Dialect, R: InsertRow>(
     // an empty column list is a syntax error in two of the three dialects.
     // One such row is all SQL can express, which is why `values`/`values_all`
     // take `Insertable`.
-    if R::COLUMNS.is_empty() {
+    if rows.first().is_none_or(|row| row.is_empty()) {
         sink.text(D::INSERT_NO_COLUMNS);
         if let Some(clause) = on_conflict {
             render_conflict_clause::<D, _>(clause, &mut sink);
@@ -304,12 +307,14 @@ fn render_values_clause<D: Dialect, R: InsertRow>(
         return sink;
     }
 
+    // The names come from the row that also brings the values, so a column
+    // list and a values list cannot disagree about how many there are.
     sink.text(" (");
-    for (i, c) in R::COLUMNS.iter().enumerate() {
+    for (i, (name, _)) in rows[0].iter().enumerate() {
         if i > 0 {
             sink.text(", ");
         }
-        render_ident::<D>(&mut sink, c);
+        render_ident::<D>(&mut sink, name);
     }
     sink.text(") VALUES ");
 
@@ -318,7 +323,7 @@ fn render_values_clause<D: Dialect, R: InsertRow>(
             sink.text(", ");
         }
         sink.ch('(');
-        for (i, v) in row.iter().enumerate() {
+        for (i, (_, v)) in row.iter().enumerate() {
             if i > 0 {
                 sink.text(", ");
             }
@@ -338,7 +343,7 @@ fn render_values_clause<D: Dialect, R: InsertRow>(
 }
 
 pub struct Insert<D, R: InsertRow> {
-    rows: Vec<Vec<InsertValue>>,
+    rows: Vec<Vec<(&'static str, InsertValue)>>,
     on_conflict: Option<ConflictClause<R::Table>>,
     _marker: PhantomData<fn() -> (D, R)>,
 }

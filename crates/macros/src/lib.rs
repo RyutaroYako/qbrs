@@ -1104,9 +1104,10 @@ fn gen_insert_struct(
 
         impl ::qbrs::insert::InsertRow for #insert_ident {
             type Table = #mod_ident::Table;
-            const COLUMNS: &'static [&'static str] = &[#(#columns_arr),*];
-            fn into_values(self) -> ::std::vec::Vec<::qbrs::insert::InsertValue> {
-                ::std::vec![#(#into_values),*]
+            fn into_values(
+                self,
+            ) -> ::std::vec::Vec<(&'static str, ::qbrs::insert::InsertValue)> {
+                ::std::vec![#((#columns_arr, #into_values)),*]
             }
         }
     }

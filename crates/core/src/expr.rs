@@ -10,9 +10,17 @@ use std::marker::PhantomData;
 
 use crate::scope::{Concat, Cons, MaybeNull, Nil, Table, WrapNullable};
 
+mod sql_type {
+    /// Sealed because the set really is closed: `Value` is a closed enum,
+    /// so a type this crate can't render has nothing to be — and an open
+    /// `SqlType` is what lets a schema crate pair a lying
+    /// `WrapNullable<MaybeNull>` with a column type of its own.
+    pub trait Sealed {}
+}
+
 /// A SQL scalar type. Implemented only by the closed set of leaf types
 /// declared via `sql_leaf_type!` below, plus `Nullable<T>`.
-pub trait SqlType: 'static {
+pub trait SqlType: 'static + sql_type::Sealed {
     type Native;
 }
 
@@ -820,9 +828,13 @@ macro_rules! sql_leaf_type {
     ($name:ident, $native:ty, $null_variant:ident) => {
         pub struct $name;
 
+        impl sql_type::Sealed for $name {}
+
         impl SqlType for $name {
             type Native = $native;
         }
+
+        impl crate::scope::wrap::Sealed<MaybeNull> for $name {}
 
         impl crate::scope::WrapNullable<MaybeNull> for $name {
             type Output = crate::scope::Nullable<$name>;
@@ -1008,6 +1020,8 @@ macro_rules! text_column_value {
 
 text_column_value!(&str);
 text_column_value!(&String);
+
+impl<S: SqlType> sql_type::Sealed for crate::scope::Nullable<S> {}
 
 impl<S: SqlType> SqlType for crate::scope::Nullable<S> {
     type Native = Option<S::Native>;

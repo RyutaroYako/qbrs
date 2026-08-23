@@ -103,9 +103,8 @@ impl qbrs_core::insert::InsertRowSealed for UsersInsert {}
 
 impl InsertRow for UsersInsert {
     type Table = UsersMarker;
-    const COLUMNS: &'static [&'static str] = &["email"];
-    fn into_values(self) -> Vec<InsertValue> {
-        vec![Defaultable::Value(self.email).into()]
+    fn into_values(self) -> Vec<(&'static str, InsertValue)> {
+        vec![("email", Defaultable::Value(self.email).into())]
     }
 }
 

@@ -119,15 +119,17 @@ impl qbrs_core::insert::Insertable for UsersInsert {}
 
 impl InsertRow for UsersInsert {
     type Table = UsersMarker;
-    const COLUMNS: &'static [&'static str] = &["email", "display_name", "created_at"];
-    fn into_values(self) -> Vec<InsertValue> {
+    fn into_values(self) -> Vec<(&'static str, InsertValue)> {
         vec![
-            InsertValue::Value(self.email.into()),
-            match self.display_name {
-                Some(v) => InsertValue::Value(v.into()),
-                None => InsertValue::Value(Value::NullText),
-            },
-            self.created_at.into(),
+            ("email", InsertValue::Value(self.email.into())),
+            (
+                "display_name",
+                match self.display_name {
+                    Some(v) => InsertValue::Value(v.into()),
+                    None => InsertValue::Value(Value::NullText),
+                },
+            ),
+            ("created_at", self.created_at.into()),
         ]
     }
 }

@@ -233,7 +233,10 @@ caller's own type), and a private associated *type* (`type Proof: Sealed`) — p
 does not reach through projection, so `<Nil as Superset<Nil, Nil>>::Proof` names it from
 outside. What holds is a **private supertrait carrying the trait's own parameters**,
 implemented only for the honest combinations: there is no type to project and no trait to
-implement. `row::SameNameAs` is sealed the same way.
+implement. `row::SameNameAs`, `expr::SqlType` and `scope::WrapNullable` are sealed the same
+way — the last two because what a join does to a column is the join's business, and an open
+`WrapNullable<MaybeNull>` let a schema declare that a `LEFT JOIN` leaves its column NOT
+NULL, which decodes a NULL into a non-`Option`.
 `row::SameNameAs` is sealed the same way in spirit (a private supertrait carrying the one
 honest impl's bounds), since without it a schema crate could declare two differently-named
 columns interchangeable and splice a `UNION` branch in transposed.
@@ -287,6 +290,11 @@ A table whose every column is generated leaves an `INSERT` with no column to nam
 spells `DEFAULT VALUES` (`() VALUES ()` in MySQL) and spells for exactly one row — so the
 bulk paths take `insert::Insertable`, which the derive emits only when there is a column to
 repeat.
+
+`InsertRow::into_values` returns `(column, value)` pairs rather than a `COLUMNS` list beside
+a value list, for the reason `AllColumns` carries one list: its seal is a `#[doc(hidden)]`
+door the derive must write in the schema's crate, and two lists that have to line up could
+be made not to — `INSERT INTO t (a, b, c) VALUES ($1)` is malformed whatever the table is.
 
 `*Insert` is built through a type-state builder: one generic slot per column that is neither
 nullable nor defaulted, `insert::Missing<C>` until that column is given a value and its own
