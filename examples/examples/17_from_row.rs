@@ -27,6 +27,20 @@ struct WholeUser {
     active: bool,
 }
 
+/// Both tables have an `id` and both are selected whole, so two fields
+/// can't be told apart by name. `from = <column>` fills them by identity
+/// instead — the same key `row.get(users::id)` uses.
+#[derive(Debug, FromRow)]
+#[allow(dead_code)]
+struct UserWithOrder {
+    #[from_row(from = users::id)]
+    id: i64,
+    email: String,
+    #[from_row(from = orders::id)]
+    order_id: i64,
+    total: i64,
+}
+
 /// A different view, declared independently: fewer fields, opposite order.
 #[derive(Debug, FromRow)]
 #[allow(dead_code)]
@@ -92,6 +106,19 @@ async fn main() {
         .expect("whole users")
         .into_structs();
     println!("whole rows: {everyone:?}");
+
+    // Two whole tables at once: `email` and `total` are still matched by
+    // name, and the two `id`s by the column each one means.
+    let joined: Vec<UserWithOrder> = select((users::All, orders::All))
+        .from::<Postgres, _>(users::Table)
+        .inner_join(orders::Table, orders::user_id.eq(users::id))
+        .order_by(orders::id.asc())
+        .load(&pool)
+        .await
+        .expect("joined")
+        .into_structs();
+    println!("user with order: {joined:?}");
+    assert!(joined.iter().all(|j| j.order_id > 0 && j.id > 0));
 
     // When a name doesn't line up, `take` writes the mapping by hand — one
     // field at a time, still moving rather than copying.

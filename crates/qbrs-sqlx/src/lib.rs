@@ -49,7 +49,7 @@ pub type Result<T> = std::result::Result<T, Error>;
 
 /// Every extension trait that puts a terminal method on a builder, plus the
 /// error type a caller's own signatures have to name and the `DecodeRow`
-/// bound a generic helper over `LoadExt` has to spell. `Result` is
+/// bound a generic helper over `RowQuery` has to spell. `Result` is
 /// deliberately absent: a glob-imported alias of that name shadows
 /// `std::result::Result` in every module that follows, and a service layer
 /// has its own error type in most of them — write `qbrs_sqlx::Result<T>`
@@ -59,7 +59,10 @@ pub type Result<T> = std::result::Result<T, Error>;
 /// `Iterator::count` with a confusing message until `CountExt` is in scope.
 pub mod prelude {
     pub use crate::Error;
-    pub use crate::{CountExt, DecodeRow, ExecuteExt, LoadExt, PreparedCountExt, PreparedExt};
+    pub use crate::{
+        CountExt, CountQuery, DecodeRow, ExecuteExt, LoadExt, PreparedCountExt, PreparedExt,
+        RowQuery,
+    };
 }
 
 /// Binds a `Value` to a Postgres query parameter. `Value`'s typed `NullX`
@@ -161,11 +164,13 @@ async fn execute_only<'e, E: sqlx::PgExecutor<'e>>(
     Ok(result.rows_affected())
 }
 
-/// Everything that produces rows: a `SELECT`, a `RETURNING` clause, an
-/// erased `DynSelect`, a `UNION` chain. One trait for all of them keeps the
-/// terminal vocabulary tied to what a statement yields rather than to which
-/// builder happens to be in hand — `load` for the rows, `load_one` for the
-/// first of them, and `ExecuteExt::execute` where there are none to decode.
+/// What a row-producing query renders to, and what its rows decode to: a
+/// `SELECT`, a `RETURNING` clause, an erased `DynSelect`, a `UNION` chain.
+/// `LoadExt` is the pair of methods over it, and the split is load-bearing
+/// — with the validity bound on the impl instead, an invalid selection
+/// makes `.load(..)` not exist, and the scope error the builder wanted to
+/// report is replaced by a method-resolution failure that never mentions
+/// the table.
 ///
 /// `Idx` is threaded through the trait's parameter list for the reason
 /// `scope::Superset` explains. Callers never see it; it's inferred.
@@ -173,30 +178,44 @@ async fn execute_only<'e, E: sqlx::PgExecutor<'e>>(
     message = "`{Self}` isn't a query this crate can run",
     label = "a `Select`, a `RETURNING`, a `DynSelect` or a set operation, whose values are all types `DecodeRow` covers"
 )]
-pub trait LoadExt<Idx> {
+pub trait RowQuery<Idx> {
     type Output: DecodeRow;
 
     #[doc(hidden)]
     fn rendered(&self) -> (String, Vec<Value>);
+}
 
-    fn load<'e, E: sqlx::PgExecutor<'e>>(
+/// `load` for the rows, `load_one` for the first of them, and
+/// `ExecuteExt::execute` where there are none to decode. One trait for
+/// every row-producing builder keeps the terminal vocabulary tied to what a
+/// statement yields rather than to which builder happens to be in hand.
+pub trait LoadExt {
+    fn load<'e, Idx, E: sqlx::PgExecutor<'e>>(
         &self,
         executor: E,
-    ) -> impl std::future::Future<Output = Result<Vec<Self::Output>>> {
+    ) -> impl std::future::Future<Output = Result<Vec<<Self as RowQuery<Idx>>::Output>>>
+    where
+        Self: RowQuery<Idx>,
+    {
         let (sql, params) = self.rendered();
-        async move { fetch_all::<Self::Output, E>(executor, &sql, params).await }
+        async move { fetch_all::<<Self as RowQuery<Idx>>::Output, E>(executor, &sql, params).await }
     }
 
-    fn load_one<'e, E: sqlx::PgExecutor<'e>>(
+    fn load_one<'e, Idx, E: sqlx::PgExecutor<'e>>(
         &self,
         executor: E,
-    ) -> impl std::future::Future<Output = Result<Option<Self::Output>>> {
+    ) -> impl std::future::Future<Output = Result<Option<<Self as RowQuery<Idx>>::Output>>>
+    where
+        Self: RowQuery<Idx>,
+    {
         let (sql, params) = self.rendered();
-        async move { fetch_optional::<Self::Output, E>(executor, &sql, params).await }
+        async move { fetch_optional::<<Self as RowQuery<Idx>>::Output, E>(executor, &sql, params).await }
     }
 }
 
-impl<Scope, Sel, Idx> LoadExt<Idx> for Select<Postgres, Scope, Sel>
+impl<Scope, Sel> LoadExt for Select<Postgres, Scope, Sel> {}
+
+impl<Scope, Sel, Idx> RowQuery<Idx> for Select<Postgres, Scope, Sel>
 where
     Sel: Selection<Scope, Idx>,
     Sel::Output: DecodeRow,
@@ -216,31 +235,48 @@ where
     message = "`{Self}` isn't a query this crate can count",
     label = "a `Select` or a set operation is; a writing statement reports rows affected through `.execute(..)` instead"
 )]
-pub trait CountExt<Idx> {
-    fn count<'e, E: sqlx::PgExecutor<'e>>(
-        &self,
-        executor: E,
-    ) -> impl std::future::Future<Output = Result<i64>>;
+pub trait CountQuery<Idx> {
+    #[doc(hidden)]
+    fn count_rendered(&self) -> (String, Vec<Value>);
 }
 
-impl<Scope, Sel: Selection<Scope, Idx>, Idx> CountExt<Idx> for Select<Postgres, Scope, Sel> {
-    async fn count<'e, E: sqlx::PgExecutor<'e>>(&self, executor: E) -> Result<i64> {
-        count_rows(executor, self.count_sql::<Idx>()).await
+/// The bound is on the method for the reason `RowQuery` explains.
+pub trait CountExt {
+    fn count<'e, Idx, E: sqlx::PgExecutor<'e>>(
+        &self,
+        executor: E,
+    ) -> impl std::future::Future<Output = Result<i64>>
+    where
+        Self: CountQuery<Idx>,
+    {
+        count_rows(executor, self.count_rendered())
+    }
+}
+
+impl<Scope, Sel> CountExt for Select<Postgres, Scope, Sel> {}
+
+impl<Scope, Sel: Selection<Scope, Idx>, Idx> CountQuery<Idx> for Select<Postgres, Scope, Sel> {
+    fn count_rendered(&self) -> (String, Vec<Value>) {
+        self.count_sql::<Idx>()
     }
 }
 
 /// Erasure is for a query whose joins depend on a condition, and such a
 /// query is paged like any other, so it counts like any other. The same
 /// goes for a set-operation chain.
-impl<Output> CountExt<()> for DynSelect<Postgres, Output> {
-    async fn count<'e, E: sqlx::PgExecutor<'e>>(&self, executor: E) -> Result<i64> {
-        count_rows(executor, self.count_sql()).await
+impl<Output> CountExt for DynSelect<Postgres, Output> {}
+
+impl<Output> CountQuery<()> for DynSelect<Postgres, Output> {
+    fn count_rendered(&self) -> (String, Vec<Value>) {
+        self.count_sql()
     }
 }
 
-impl<Output> CountExt<()> for SetOp<Postgres, Output> {
-    async fn count<'e, E: sqlx::PgExecutor<'e>>(&self, executor: E) -> Result<i64> {
-        count_rows(executor, self.count_sql()).await
+impl<Output> CountExt for SetOp<Postgres, Output> {}
+
+impl<Output> CountQuery<()> for SetOp<Postgres, Output> {
+    fn count_rendered(&self) -> (String, Vec<Value>) {
+        self.count_sql()
     }
 }
 
@@ -275,7 +311,9 @@ impl<S: Statement<Dialect = Postgres>> ExecuteExt for S {
 
 /// One impl for every `RETURNING`: what a statement returns is decided by
 /// its selection, not by which statement it was.
-impl<S: Statement<Dialect = Postgres>, Sel, Idx> LoadExt<Idx> for Returning<S, Sel>
+impl<S, Sel> LoadExt for Returning<S, Sel> {}
+
+impl<S: Statement<Dialect = Postgres>, Sel, Idx> RowQuery<Idx> for Returning<S, Sel>
 where
     Sel: Selection<WrittenTable<S::Table>, Idx>,
     Sel::Output: DecodeRow,
@@ -355,15 +393,19 @@ impl<L: DecodeRow> DecodeRow for Row<L> {
 
 /// An erased query and a set-op chain were both rendered before their
 /// selection type was gone, leaving nothing for `Idx` to index — hence
-/// `LoadExt<()>`, the same trait with an empty proof.
-impl<Output: DecodeRow> LoadExt<()> for DynSelect<Postgres, Output> {
+/// `RowQuery<()>`, the same trait with an empty proof.
+impl<Output> LoadExt for DynSelect<Postgres, Output> {}
+
+impl<Output: DecodeRow> RowQuery<()> for DynSelect<Postgres, Output> {
     type Output = Output;
     fn rendered(&self) -> (String, Vec<Value>) {
         self.to_sql()
     }
 }
 
-impl<Output: DecodeRow> LoadExt<()> for SetOp<Postgres, Output> {
+impl<Output> LoadExt for SetOp<Postgres, Output> {}
+
+impl<Output: DecodeRow> RowQuery<()> for SetOp<Postgres, Output> {
     type Output = Output;
     fn rendered(&self) -> (String, Vec<Value>) {
         self.to_sql()

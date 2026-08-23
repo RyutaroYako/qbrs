@@ -127,6 +127,14 @@ is one of the three types stable const generics accept — a `&'static str` para
 to be proc macros. Keep the spelling out of diagnostics: it lives in `Named::Name`, and
 `TakeNamed` reports the `FromRow` field marker instead.
 
+A field says which column fills it by name, by `#[from_row(rename = "..")]`, or by
+`#[from_row(from = users::id)]`, which routes that one field through `Field` (identity)
+instead of `TakeNamed` (name) — the only lookup that stays unambiguous when a selection
+holds two columns of the same name, and what makes `select((a::All, b::All))` fillable.
+The attribute takes the column path a call site writes; `<table>::<column>` and
+`<table>::columns::<column>` are the value and the type of one thing, and every generator
+of a schema puts them in that relation.
+
 `FromRow` is its own trait rather than `From`: the per-field lookup indices have nowhere to
 live in a foreign trait's fixed shape. Hence `into_struct`/`into_structs`.
 

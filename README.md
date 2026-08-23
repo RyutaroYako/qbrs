@@ -99,9 +99,9 @@ error[E0277]: `orders::Table` is not available in this query's scope
 
 (rustc prints the underlying `Find`/`RowField`/`Selection` obligation chain after
 that, as it does for any unsatisfied trait bound. Ending the query with
-`.load(&pool)` instead reports the same unsatisfied `Selection` bound as an
-`E0599` — a message on a trait is only rendered when the obligation is
-reached directly, not through method resolution.)
+`.load(&pool)`/`.count(&pool)` reports the same thing: the execution traits
+carry that bound on the method rather than on the impl, so the terminal a
+real application writes is not a method-resolution failure.)
 
 ## Why qbrs?
 
@@ -184,7 +184,8 @@ A schema is a `#[derive(Table)]` struct, shown in the
 - **Rows into your own structs** —
   [`17_from_row`](examples/examples/17_from_row.rs). `#[derive(FromRow)]`
   fills a plain struct by matching field *names* — or the name given by
-  `#[from_row(rename = "..")]` where the two differ. The struct declares no
+  `#[from_row(rename = "..")]` where the two differ, or the column named by
+  `#[from_row(from = users::id)]` where two selected columns share a name. The struct declares no
   column path, no table, and no join, so it can live in a domain module with
   `#[derive(Serialize)]` and be filled from any query that selects columns of
   those names and types. Selection order doesn't matter and extra columns are
@@ -329,15 +330,14 @@ A schema is a `#[derive(Table)]` struct, shown in the
   positionally until `label!` gives it one — passing one to `row.get(..)` is
   a compile error, not a lookup of some other unnamed field. The same applies wherever two
   selections are compared by name — a CTE body and a `UNION` branch.
-- Selecting the same name twice is ambiguous at the point it's read by name
-  — `#[derive(FromRow)]` — rather than resolving to the first.
-  It surfaces as `error[E0284]: type annotations needed`, and the fix is to
-  `label!` one of them. Reading either by its own column value
-  (`row.get(users::id)`) is unaffected.
-- `select((a::All, b::All))` where both tables have a column of the same
-  name can't be read by name: `#[derive(FromRow)]` reports `E0284`, and the
-  usual fix — `label!` one of them — has nowhere to attach inside `All`.
-  Select the columns of one of the two by hand.
+- Selecting the same name twice is ambiguous at the point it's read by
+  *name* — `#[derive(FromRow)]` — rather than resolving to the first. It
+  surfaces as `error[E0284]: type annotations needed`, and the fix is to say
+  which column that field means: `#[from_row(from = users::id)]`, the same
+  key `row.get(users::id)` uses. `label!` renames one of them instead, where
+  the name is what should differ. Reading by column value is unaffected —
+  which is why `select((a::All, b::All))` into a struct needs `from = ..` on
+  the fields whose names collide and nothing on the rest.
 - An aggregate is read back by the value that selected it
   (`row.get(sum(orders::total))`) or by name (`#[derive(FromRow)]`), but not
   through the column's generated accessor: `sum(orders::total)` is its own
@@ -355,14 +355,16 @@ A schema is a `#[derive(Table)]` struct, shown in the
 - The dialect is part of a query's type (`.from::<Postgres, _>(..)`), because
   what a dialect supports is checked while the query is being built, not when
   it renders. A project that speaks one dialect can wrap the entry points
-  once rather than repeating the turbofish.
+  once rather than repeating the turbofish — `SelectSeed`/`InsertSeed`/
+  `UpdateSeed` and `BaseTable` are in the prelude so that wrapper needs no
+  import beyond it.
 - `ORDER BY` takes an expression, not an output label: sort by
   `sum(orders::total).desc()`, not by the `label!` it was labelled to.
 - One `label!` per scope — it declares a `label` module, and a scope holds
   one. List every name that scope needs in the one invocation.
 - A helper generic over rows needs one index type parameter per column it
-  reads (`fn f<I1, I2, R>(..) where R: HasEmail<I1> + HasTotal<I2>`). Sharing
-  one across two columns compiles and then matches no row.
+  reads (`fn f<I1, I2, R>(..) where R: HasEmail<I1> + HasTotal<I2>`); sharing
+  one across two columns is a compile error that says so.
 - A `#[derive(FromRow)]` field's type is the column's decoded type, so a DTO
   filled from a `LEFT JOIN` declares `Option<T>` where one filled from an
   `INNER JOIN` declares `T`. It names no column and no table, but it does

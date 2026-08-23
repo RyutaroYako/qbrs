@@ -398,6 +398,18 @@ impl<L> Row<L> {
         self.0.peek()
     }
 
+    /// `take` by key type rather than by the value that selected it —
+    /// what a `#[from_row(from = ..)]` field uses, since identity is the
+    /// one lookup that stays unambiguous when two columns share a name.
+    #[doc(hidden)]
+    pub fn take_key<K, Idx>(self) -> (<L as Field<K, Idx>>::Value, Row<<L as Field<K, Idx>>::Rest>)
+    where
+        L: Field<K, Idx>,
+    {
+        let (value, rest) = self.0.pluck();
+        (value, Row::new(rest))
+    }
+
     #[doc(hidden)]
     pub fn take_named<F, Idx>(
         self,

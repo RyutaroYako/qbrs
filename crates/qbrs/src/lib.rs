@@ -8,7 +8,9 @@ pub use qbrs_macros::{FromRow, Table, label, with};
 /// points, the extension traits whose methods would otherwise be
 /// unreachable, the dialect markers, the macros, and every type that turns
 /// up in a signature or a type alias a user may have to write — a `Scope`
-/// list, a `Row` list, a `Predicate`, an insert field's `Defaultable`.
+/// list, a `Row` list, a `Predicate`, an insert field's `Defaultable`, and
+/// the three `*Seed`s a single-dialect app wraps to stop repeating
+/// `::<Postgres, _>`.
 /// Nothing that only ever appears as `impl Trait` in an argument position.
 pub mod prelude {
     pub use crate::{FromRow, Table, label, with};
@@ -28,20 +30,22 @@ pub mod prelude {
     pub use qbrs_core::expr::{Date, Timestamptz};
     pub use qbrs_core::expr::{Declared, Expr, IntoExpr, Keyed, Labeled};
     pub use qbrs_core::insert::{
-        Defaultable, Insert, InsertRow, IntoColumnValue, Missing, NothingToInsert, insert,
+        Defaultable, Insert, InsertRow, InsertSeed, IntoColumnValue, Missing, NothingToInsert,
+        insert,
     };
     pub use qbrs_core::row::{Anon, FromRow, IntoStructs, IntoTuples, Named, Row, RowCons, RowNil};
     pub use qbrs_core::scope::{
-        Concat, Cons, Find, Here, MaybeNull, Nil, NotNull, Nullable, Superset, TableSlot, There,
+        BaseTable, Concat, Cons, Find, Here, MaybeNull, Nil, NotNull, Nullable, Superset,
+        TableSlot, There,
     };
     pub use qbrs_core::select::All;
     pub use qbrs_core::select::{
         Condition, DynSelect, GroupBy, Grouping, JoinSource, OrderExt, OrderKey, Ordinal,
-        OrdinalKey, Predicate, Prepared, Select, Selection, SetOp, SortBy, SortKey, Total,
-        grouping, nth, predicate, select, sort_key,
+        OrdinalKey, Predicate, Prepared, Select, SelectSeed, Selection, SetOp, SortBy, SortKey,
+        Total, grouping, nth, predicate, select, sort_key,
     };
     pub use qbrs_core::statement::{Returning, Statement, WrittenTable};
-    pub use qbrs_core::update::{Assignments, NothingToSet, Update, UpdateRow, update};
+    pub use qbrs_core::update::{Assignments, NothingToSet, Update, UpdateRow, UpdateSeed, update};
     pub use qbrs_core::window::{
         DenseRank, HasDenseRank, HasRank, HasRowNumber, Rank, RowNumber, Window, WindowFunc,
         dense_rank, rank, row_number, window,

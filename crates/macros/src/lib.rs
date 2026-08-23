@@ -374,25 +374,66 @@ pub fn derive_from_row(input: TokenStream) -> TokenStream {
         .into()
 }
 
-/// `#[from_row(rename = "column_name")]` on a field.
-fn rename_attr(field: &syn::Field) -> syn::Result<Option<String>> {
+/// How one field says which column fills it: by name (its own, or a
+/// `rename`), or by the column itself, which is the only way to say it when
+/// two selected columns share a name.
+enum FieldSource {
+    Named(String),
+    Column(syn::Path),
+}
+
+fn field_source(field: &syn::Field, field_name: &Ident) -> syn::Result<FieldSource> {
+    let mut renamed = None;
+    let mut from = None;
     for attr in &field.attrs {
         if !attr.path().is_ident("from_row") {
             continue;
         }
-        let mut renamed = None;
         attr.parse_nested_meta(|meta| {
             if meta.path.is_ident("rename") {
                 let value: syn::LitStr = meta.value()?.parse()?;
                 renamed = Some(value.value());
                 Ok(())
+            } else if meta.path.is_ident("from") {
+                from = Some(meta.value()?.parse::<syn::Path>()?);
+                Ok(())
             } else {
-                Err(meta.error("unknown #[from_row(..)] option, expected `rename = \"...\"`"))
+                Err(meta.error(
+                    "unknown #[from_row(..)] option, expected `rename = \"...\"` or `from = <table>::<column>`",
+                ))
             }
         })?;
-        return Ok(renamed);
     }
-    Ok(None)
+    match (renamed, from) {
+        (Some(_), Some(path)) => Err(syn::Error::new_spanned(
+            path,
+            "a field is filled by name or by column, not both: drop the `rename`",
+        )),
+        (_, Some(path)) => Ok(FieldSource::Column(path)),
+        (Some(renamed), None) => Ok(FieldSource::Named(renamed)),
+        (None, None) => Ok(FieldSource::Named(field_name.to_string())),
+    }
+}
+
+/// `users::id` names the column; `users::columns::id` is its identity, the
+/// type a row is keyed by. Every generator of a schema — `#[derive(Table)]`,
+/// `with!`, `label!` — puts the two in that relation.
+fn column_key_path(path: &syn::Path) -> syn::Result<syn::Path> {
+    let mut key = path.clone();
+    let last = key
+        .segments
+        .pop()
+        .ok_or_else(|| syn::Error::new_spanned(path, "expected `<table>::<column>`"))?;
+    if key.segments.is_empty() {
+        return Err(syn::Error::new_spanned(
+            path,
+            "expected `<table>::<column>`, so the column's table is named too",
+        ));
+    }
+    key.segments
+        .push(syn::PathSegment::from(format_ident!("columns")));
+    key.segments.push(last);
+    Ok(key)
 }
 
 fn expand_from_row(input: DeriveInput) -> syn::Result<TokenStream2> {
@@ -442,37 +483,47 @@ fn expand_from_row(input: DeriveInput) -> syn::Result<TokenStream2> {
     for (position, f) in fields.iter().enumerate() {
         let field_name = f.ident.clone().expect("named field");
         let field_ty = &f.ty;
-        let field_name_str = match rename_attr(f)? {
-            Some(renamed) => renamed,
-            None => field_name.to_string(),
-        };
-        let type_name = type_level_name(&field_name_str);
-        markers.push(quote! {
-            pub struct #field_name;
-            #[doc(hidden)]
-            impl ::qbrs::row::NamedSealed for #field_name {}
-
-            impl ::qbrs::row::Named for #field_name {
-                type Name = #type_name;
-                const NAME: &'static str = #field_name_str;
-            }
-            #[doc(hidden)]
-            impl ::qbrs::row::Spelled for #field_name {}
-        });
-
         let idx = format_ident!("Idx{position}");
-        let marker = quote! { #fields_mod::#field_name };
-        bounds.push(quote! {
-            #receiver: ::qbrs::row::TakeNamed<#marker, #idx, Value = #field_ty>
-        });
-        receiver = quote! { <#receiver as ::qbrs::row::TakeNamed<#marker, #idx>>::Rest };
-
         // Numbered bindings: a bare identifier pattern resolves to a unit
         // struct of that name when one is in scope.
         let binding = format_ident!("__field{position}");
-        steps.push(quote! {
-            let (#binding, row) = row.take_named::<#marker, #idx>();
-        });
+
+        match field_source(f, &field_name)? {
+            FieldSource::Named(field_name_str) => {
+                let type_name = type_level_name(&field_name_str);
+                markers.push(quote! {
+                    pub struct #field_name;
+                    #[doc(hidden)]
+                    impl ::qbrs::row::NamedSealed for #field_name {}
+
+                    impl ::qbrs::row::Named for #field_name {
+                        type Name = #type_name;
+                        const NAME: &'static str = #field_name_str;
+                    }
+                    #[doc(hidden)]
+                    impl ::qbrs::row::Spelled for #field_name {}
+                });
+
+                let marker = quote! { #fields_mod::#field_name };
+                bounds.push(quote! {
+                    #receiver: ::qbrs::row::TakeNamed<#marker, #idx, Value = #field_ty>
+                });
+                receiver = quote! { <#receiver as ::qbrs::row::TakeNamed<#marker, #idx>>::Rest };
+                steps.push(quote! {
+                    let (#binding, row) = row.take_named::<#marker, #idx>();
+                });
+            }
+            FieldSource::Column(path) => {
+                let key = column_key_path(&path)?;
+                bounds.push(quote! {
+                    #receiver: ::qbrs::row::Field<#key, #idx, Value = #field_ty>
+                });
+                receiver = quote! { <#receiver as ::qbrs::row::Field<#key, #idx>>::Rest };
+                steps.push(quote! {
+                    let (#binding, row) = row.take_key::<#key, #idx>();
+                });
+            }
+        }
         inits.push(quote! { #field_name: #binding });
         idx_params.push(idx);
     }
