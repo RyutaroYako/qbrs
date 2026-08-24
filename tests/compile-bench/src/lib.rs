@@ -1,8 +1,11 @@
-//! Phase 0 spike: synthetic schema + escalating join-count scope chains, to
-//! empirically test whether the flat cons-list `Find<T, Idx>` design avoids
-//! diesel's documented exponential `cargo check` blowup (diesel#3223) as
-//! join count grows. See `/home/ryutaro/.claude/plans/async-inventing-snail.md`
-//! Phase 0 for the go/no-go criteria this is gating.
+//! Synthetic schema plus escalating join-count scope chains, measuring
+//! whether the flat cons-list `Find<T, Idx>` design keeps `cargo check`
+//! linear as join count grows — diesel's join-tree is documented to blow up
+//! exponentially past ~7 joins (diesel#3223).
+//!
+//! `cols_*` binaries measure the other axis: `row::Field` walks a
+//! selection's key list the same way `Find` walks a scope, so selection
+//! width has its own linear cost that join count doesn't cover.
 
 use qbrs_core::scope::{MapNullable, Superset, Table};
 
@@ -13,15 +16,15 @@ macro_rules! declare_tables {
             impl Table for $name {
                 const NAME: &'static str = stringify!($name);
             }
+            impl qbrs_core::scope::BaseTableSealed for $name {}
+            impl qbrs_core::scope::BaseTable for $name {}
         )*
     };
 }
 
-// 100 synthetic tables — enough headroom to stress-test well past diesel's
-// documented ~7-join blowup point (diesel#3223), including a full-superset
-// worst case where every single table is required at once (O(n^2) Find
-// resolutions if this design is merely polynomial, astronomically worse if
-// it's exponential like diesel's join-tree).
+// 100 synthetic tables: headroom to stress-test well past diesel's ~7-join
+// blowup point, including a full-superset worst case where every table is
+// required at once.
 declare_tables!(
     T00, T01, T02, T03, T04, T05, T06, T07, T08, T09, T10, T11, T12, T13, T14, T15, T16, T17, T18,
     T19, T20, T21, T22, T23, T24, T25, T26, T27, T28, T29, T30, T31, T32, T33, T34, T35, T36, T37,
@@ -41,15 +44,11 @@ macro_rules! scope_of {
     };
 }
 
-/// Build a bare `Cons<Head, ...>` list of table types with *no* `TableSlot`
-/// wrapper — this is what `Superset`'s `Req` argument expects, since a
-/// "which tables does this expression touch" requirement doesn't carry
-/// nullability the way an actual query `Scope` does. Mixing the two up
-/// (reusing `scope_of!` to build a `Req`) is a real mistake this spike
-/// caught: `Superset`'s `Head: Table` bound would then require
-/// `TableSlot<T, N>: Table`, which is never implemented, so every
-/// `Superset` check silently fails with a "not in scope" error that looks
-/// like a missing join instead of a Req/Scope type confusion.
+/// Build a bare `Cons<Head, ...>` list of table types with no `TableSlot`
+/// wrapper: this is what `Superset`'s `Req` expects, since "which tables
+/// does this expression touch" carries no nullability. Passing a
+/// `scope_of!` list here instead fails `Superset`'s `Head: Table` bound and
+/// reports as a missing join.
 #[macro_export]
 macro_rules! req_of {
     () => { $crate::__private::Nil };
@@ -58,11 +57,55 @@ macro_rules! req_of {
     };
 }
 
-// Re-exported under a stable path so the `scope_of!` macro above can refer
-// to these types hygienically regardless of what the calling crate has
-// imported.
+/// Declares `n` columns on table `$table`: a `ColumnKey` marker per column
+/// plus the `Column` const that selects it, exactly what
+/// `#[derive(Table)]` emits minus the accessor traits.
+#[macro_export]
+macro_rules! declare_columns {
+    ($table:ty, $($name:ident),* $(,)?) => {
+        #[allow(non_camel_case_types)]
+        pub mod columns {
+            use super::*;
+            $(
+                #[derive(Clone, Copy)]
+                pub struct $name;
+                impl $crate::__private::ColumnKey for $name {
+                    type Table = $table;
+                    type Sql = $crate::__private::BigInt;
+                }
+                impl $crate::__private::NamedSealed for $name {}
+                impl $crate::__private::Spelled for $name {}
+                impl $crate::__private::Named for $name {
+                    type Name = $crate::__private::NameEnd;
+                    const NAME: &'static str = stringify!($name);
+                }
+            )*
+        }
+
+        $(
+            #[allow(non_upper_case_globals)]
+            pub const $name: $crate::__private::Column<columns::$name> =
+                $crate::__private::Column::new();
+        )*
+    };
+}
+
+/// Build a `Row<RowCons<..>>` type from a list of column keys, so the
+/// `Field` walk can be measured past the arity a tuple selection allows.
+#[macro_export]
+macro_rules! row_of {
+    () => { $crate::__private::RowNil };
+    ($head:ty $(, $tail:ty)* $(,)?) => {
+        $crate::__private::RowCons<$head, i64, row_of!($($tail),*)>
+    };
+}
+
+// Re-exported under a stable path so the macros above resolve these types
+// regardless of what the calling crate imported.
 #[doc(hidden)]
 pub mod __private {
+    pub use qbrs_core::expr::{BigInt, Column, ColumnKey};
+    pub use qbrs_core::row::{NameEnd, Named, NamedSealed, RowCons, RowNil, Spelled};
     pub use qbrs_core::scope::{Cons, Nil, NotNull, TableSlot};
 }
 
@@ -84,3 +127,11 @@ where
 /// Exercises `MapNullable` (the RIGHT/FULL JOIN nullability-flip operation)
 /// over a scope of arbitrary depth.
 pub fn assert_map_nullable<S: MapNullable>() {}
+
+/// Exercises `row::Field<K, _>` at whatever depth `L` puts `K` at — the
+/// selection-width counterpart to `assert_contains`.
+pub fn assert_field<L, K, I>()
+where
+    L: qbrs_core::row::Field<K, I>,
+{
+}

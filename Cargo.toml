@@ -7,6 +7,7 @@ members = [
     "crates/qbrs-sqlx",
     "examples",
     "tests/compile-bench",
+    "tests/dialect-exec",
 ]
 
 [workspace.package]

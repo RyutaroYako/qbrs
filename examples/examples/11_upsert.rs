@@ -6,38 +6,47 @@
 //! Known limitation: no typed way yet to reference `EXCLUDED.column`.
 //! Run: `cargo run -p qbrs-examples --example 11_upsert`
 
-use qbrs::dialect::Postgres;
-use qbrs::expr::ExprMethods;
-use qbrs_examples::{UsersInsert, UsersUpdate, setup_db, users};
-use qbrs_sqlx::{ExecuteExt, LoadExt, LoadReturningExt};
+use qbrs::prelude::*;
+use qbrs_examples::*;
+use qbrs_sqlx::prelude::*;
 
 #[tokio::main]
 async fn main() {
     let (pool, _db) = setup_db().await;
 
-    let (id, display_name): (i64, Option<String>) =
-        qbrs::insert::insert::<Postgres, _>(users::Table)
-            .values(UsersInsert::new("grace@example.com").display_name("Grace Hopper"))
-            .returning((users::id, users::display_name))
-            .load(&pool)
-            .await
-            .expect("insert grace")
-            .into_iter()
-            .next()
-            .expect("returning row");
+    let (id, display_name): (i64, Option<String>) = insert(users::Table)
+        .values(
+            UsersInsert::builder()
+                .email("grace@example.com")
+                .display_name("Grace Hopper")
+                .build(),
+        )
+        .returning((users::id, users::display_name))
+        .load(&pool)
+        .await
+        .expect("insert grace")
+        .into_iter()
+        .next()
+        .expect("returning row")
+        .into_tuple();
     println!("inserted: id={id} display_name={display_name:?}");
 
     // `email` already exists — DO NOTHING means this row is silently
     // skipped, so the original `display_name` survives untouched.
-    qbrs::insert::insert::<Postgres, _>(users::Table)
-        .values(UsersInsert::new("grace@example.com").display_name("Someone Else"))
+    insert(users::Table)
+        .values(
+            UsersInsert::builder()
+                .email("grace@example.com")
+                .display_name("Someone Else")
+                .build(),
+        )
         .on_conflict_do_nothing(users::email)
         .execute(&pool)
         .await
         .expect("upsert do-nothing");
 
-    let (unchanged,): (Option<String>,) = qbrs::select::select((users::display_name,))
-        .from::<Postgres, _>(users::Table)
+    let unchanged: Option<String> = select(users::display_name)
+        .from(users::Table)
         .filter(users::id.eq(id))
         .load_one(&pool)
         .await
@@ -47,16 +56,22 @@ async fn main() {
     println!("after DO NOTHING, display_name is still: {unchanged:?}");
 
     // Same conflicting email, but this time DO UPDATE SET reuses the same
-    // `*Update` struct `.set(..)` takes — only the fields actually set on
+    // `*Update` struct an `UPDATE` assigns from — only the fields actually set on
     // it are updated.
-    let updated: Option<String> = qbrs::insert::insert::<Postgres, _>(users::Table)
-        .values(UsersInsert::new("grace@example.com").display_name("Someone Else"))
+    let updated: Option<String> = insert(users::Table)
+        .values(
+            UsersInsert::builder()
+                .email("grace@example.com")
+                .display_name("Someone Else")
+                .build(),
+        )
         .on_conflict_do_update(
             users::email,
-            UsersUpdate {
+            Assignments::from_row(UsersUpdate {
                 display_name: Some(Some("Grace Brewster Hopper".into())),
                 ..Default::default()
-            },
+            })
+            .expect("display_name is set"),
         )
         .returning(users::display_name)
         .load(&pool)

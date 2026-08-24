@@ -2,11 +2,9 @@
 //! become nullable, mirroring Drizzle's `AppendToNullabilityMap` rule.
 //! Run: `cargo run -p qbrs-examples --example 08_right_full_join`
 
-use qbrs::dialect::Postgres;
-use qbrs::expr::ExprMethods;
-use qbrs::select::select;
-use qbrs_examples::{orders, seed, setup_db, users};
-use qbrs_sqlx::LoadExt;
+use qbrs::prelude::*;
+use qbrs_examples::*;
+use qbrs_sqlx::prelude::*;
 
 #[tokio::main]
 async fn main() {
@@ -19,11 +17,12 @@ async fn main() {
     // decodes as `Option<i64>` here even though it was the FROM table,
     // purely because of how it ends up on the outer side of this RIGHT JOIN.
     let mut rows: Vec<(String, Option<i64>)> = select((users::email, orders::total))
-        .from::<Postgres, _>(orders::Table)
+        .from(orders::Table)
         .right_join(users::Table, orders::user_id.eq(users::id))
         .load(&pool)
         .await
-        .expect("right join select");
+        .expect("right join select")
+        .into_tuples();
     rows.sort();
 
     println!("orders RIGHT JOIN users (email, total):");
@@ -40,11 +39,12 @@ async fn main() {
     // honest about what FULL JOIN can produce in general, independent of
     // what today's data happens to contain.
     let mut full: Vec<(Option<String>, Option<i64>)> = select((users::email, orders::total))
-        .from::<Postgres, _>(users::Table)
+        .from(users::Table)
         .full_join(orders::Table, orders::user_id.eq(users::id))
         .load(&pool)
         .await
-        .expect("full join select");
+        .expect("full join select")
+        .into_tuples();
     full.sort();
 
     println!("\nusers FULL JOIN orders (email, total):");

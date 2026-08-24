@@ -1,98 +1,88 @@
 //! Common table expressions: `WITH name AS (..) SELECT .. FROM name ..`.
 //!
-//! The hard part the design plan flagged here isn't rendering the `WITH`
-//! clause itself (that's a small, mechanical addition to
-//! `select::render_select_body`) — it's that a CTE needs to become usable
-//! as a real "table" in an outer query's `.from()`/`.join()` chain, with
-//! named, typed column accessors, exactly like a real schema table gets
-//! from `#[derive(Table)]`. A CTE's column *names* don't exist anywhere at
-//! the type level on their own (they're just positions in a `SELECT` list),
-//! so there is nothing for `.from(some_cte)` to type-check against unless
-//! something declares them.
+//! A CTE's column names are just positions in a `SELECT` list, with nothing
+//! at the type level for `.from(some_cte)` to check against. `with!{}`
+//! declares them, generating everything `#[derive(Table)]` does — so a bound
+//! CTE *is* a real table to `Scope`/`Find`/`Superset`/`Selection`, with no
+//! parallel virtual-table machinery.
 //!
-//! `with!{}` (a declarative macro, `core/src/with_macro.rs`) is that
-//! "something": it generates a `scope::Table` marker plus one
-//! `Column<Marker, S>` const per declared field, structurally identical to
-//! what `#[derive(Table)]` generates for a real table — so once bound, a CTE
-//! *is* a real table as far as `Scope`/`Find`/`Superset`/`Selection` are
-//! concerned, no separate "virtual table" machinery needed anywhere else in
-//! the crate.
+//! Being syntactic, `with!{}` can't see the query it will be paired with.
+//! `with()` checks that the body produces the declared columns — the same
+//! types *and* the same names, in the same order — through `row::SameShape`,
+//! the one comparison a `UNION` branch also goes through. Checking only
+//! types would accept a body whose columns are type-compatible but
+//! transposed, and the outer query reads those columns by key.
 //!
-//! What `with!{}` *can't* do (being a purely syntactic declarative macro,
-//! with no visibility into the actual query it'll eventually be paired
-//! with) is verify that its declared column list actually matches the CTE
-//! body's real `SELECT` list. That check happens here, at `with()`, via
-//! `Selection::Output = Marker::Shape` — an ordinary associated-type-equality
-//! bound, the same mechanism `select::SetOp` uses to check two `UNION`
-//! branches share an output shape. A `with!{}` declaration whose column
-//! types/count/order don't match the query passed to `with()` is a compile
-//! error, not a "column 3 doesn't exist" surprise the first time the CTE is
-//! queried against a real database.
-//!
-//! **Known limitations**: only non-recursive, single-level CTEs are
-//! supported — `WITH RECURSIVE` (a later CTE definition self-referencing
-//! its own name) and a later CTE referencing an earlier one bound in the
-//! same `.with().with()` chain both need the CTE to be nameable *inside*
-//! another query being built, which is real design work of its own,
-//! deferred rather than half-supported.
+//! **Known limitations**: non-recursive, single-level CTEs only.
+//! `WITH RECURSIVE` and a CTE body referencing another CTE both need a CTE
+//! to be nameable *inside* another query being built.
 
 use std::marker::PhantomData;
 
-use crate::dialect::{Dialect, RawEmbed};
-use crate::expr::Value;
+use crate::dialect::Dialect;
+use crate::render::Fragment;
+use crate::row::{Row, SameShape};
 use crate::scope::Table;
 use crate::select::{Select, Selection};
 
 /// Implemented by a `with!{}`-generated pseudo-table's `Table` marker,
 /// pinning down the exact tuple of native types its CTE body must produce.
-/// See this module's doc comment for why this check exists and what
-/// mechanism enforces it.
 ///
-/// `COLUMN_NAMES` is rendered as the CTE's explicit column-name list
-/// (`WITH name (col1, col2) AS (..)`) rather than relying on the inner
-/// query's own column names/aliases — necessary because a computed
-/// expression (`sql!(BigInt, "sum(orders.total)")`, or any window
-/// function) has no real column name of its own for Postgres to expose to
-/// the outer query, only whatever the inner `SELECT` naturally produces
-/// (often nothing usable, e.g. a bare `sum` for an unaliased aggregate).
-/// The explicit list sidesteps that entirely: the outer query only ever
-/// sees the `with!{}`-declared names, regardless of what the inner query's
-/// own columns happen to be named.
-pub trait CteShape: Table {
-    type Shape;
-    const COLUMN_NAMES: &'static [&'static str];
+/// The declared row is also where the rendered column list
+/// (`WITH name (col1, col2) AS (..)`) comes from, so the header the outer
+/// query reads by and the shape the body was checked against are one fact,
+/// not two that can disagree.
+#[diagnostic::on_unimplemented(
+    message = "`{Self}` isn't a `with!{{}}` pseudo-table",
+    label = "only a `with!{{}}`-declared name can be bound as a CTE",
+    note = "a schema table is already a table — it is selected from directly, with no `WITH` clause to bind"
+)]
+pub trait CteShape: Table + crate::select::SelectableSealed {
+    /// The declared columns as a row — the same `RowCons` chain a selection
+    /// produces, so a body is checked against it by the one comparison
+    /// `UNION` branches already use: same names, same types, same order.
+    type Row: crate::row::ColumnNames;
 }
 
-/// A `WITH name AS (..)` binding, ready to attach to an outer query via
-/// `select(..).with(cte).from(name::Table)...`. Once bound, `name::Table`
-/// (the same zero-sized value `with!{}` generated) behaves exactly like a
-/// real table anywhere else in the query — there is no `CteSelect` or
-/// similar parallel type, because there is nothing left that needs one.
+/// A `WITH name AS (..)` binding. It goes where a table goes — `.from(..)`,
+/// `.inner_join(..)` — and passing it is what both attaches the `WITH`
+/// clause and puts the pseudo-table in scope: one act, so a CTE cannot be
+/// selected from without being bound, or bound without being used.
 pub struct Cte<D, Marker> {
-    pub(crate) name: &'static str,
-    pub(crate) column_names: &'static [&'static str],
-    pub(crate) sql: String,
-    pub(crate) params: Vec<Value>,
+    body: Fragment,
     _marker: PhantomData<fn() -> (D, Marker)>,
 }
 
-/// Builds a `Cte` from `query`, checking at compile time that `query`'s
-/// selected columns match `Marker`'s `with!{}`-declared shape exactly (same
-/// count, same order, same native types) via the `Output = Marker::Shape`
-/// bound — see this module's doc comment.
+impl<D, Marker> Cte<D, Marker> {
+    /// The rendered body. What it is bound *as* comes from `Marker`, so a
+    /// `Cte` whose name disagrees with its marker is unrepresentable.
+    pub(crate) fn into_body(self) -> Fragment {
+        self.body
+    }
+}
+
+impl<D, Marker> Clone for Cte<D, Marker> {
+    fn clone(&self) -> Self {
+        Cte {
+            body: self.body.clone(),
+            _marker: PhantomData,
+        }
+    }
+}
+
+/// Builds a `Cte` from `query`, checking that `query`'s selected columns
+/// match `Marker`'s `with!{}`-declared shape exactly — same count, order,
+/// names, and native types.
 pub fn with<D: Dialect, Marker: CteShape, Scope, Sel, Idx>(
     _marker: Marker,
     query: &Select<D, Scope, Sel>,
 ) -> Cte<D, Marker>
 where
-    Sel: Selection<Scope, Idx, Output = Marker::Shape>,
+    Sel: Selection<Scope, Idx>,
+    Sel::Output: SameShape<Row<Marker::Row>>,
 {
-    let (sql, params) = query.render_as::<RawEmbed<D>, Idx>();
     Cte {
-        name: Marker::NAME,
-        column_names: Marker::COLUMN_NAMES,
-        sql,
-        params,
+        body: query.fragment::<Idx>(),
         _marker: PhantomData,
     }
 }

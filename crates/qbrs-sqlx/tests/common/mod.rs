@@ -1,20 +1,12 @@
-//! Shared setup for real-Postgres integration tests. `tests/common/mod.rs`
-//! (rather than a shared library crate) is the standard way to share code
-//! between `cargo test` integration-test binaries without publishing it as
-//! part of the crate's own API surface — each test binary that does `mod
-//! common;` gets its own compiled copy, but the *source* isn't duplicated.
+//! Shared setup for real-Postgres integration tests.
 
 /// Either connects to `DATABASE_URL` directly (external-Postgres path) or
 /// starts a throwaway embedded Postgres (default path), returning a pool
 /// plus a guard that shuts the embedded instance down.
 pub enum PgGuard {
     External,
-    // Both the server and its data directory have to outlive the pool, so
-    // the guard owns them. Boxed for the same reason the previous guard
-    // was: the running-server variant is far larger than the unit
-    // `External` one, and clippy's `large_enum_variant` lint is right that
-    // leaving it unboxed makes every `PgGuard` pay the biggest variant's
-    // size.
+    // The server and its data directory both have to outlive the pool, so
+    // the guard owns them. Boxed to keep the unit variant small.
     Embedded(Box<(pglite::PGlite, tempfile::TempDir)>),
 }
 
@@ -27,11 +19,9 @@ pub async fn test_pool(_db_name: &str) -> (sqlx::PgPool, PgGuard) {
     }
 
     let dir = tempfile::tempdir().expect("create temp data dir");
-    // Multi-process mode (a real postmaster over a unix socket) rather than
-    // the single in-process backend: the in-process one can only ever be
-    // opened once per process and serves a single connection, so it would
-    // cap every pool at 1 and quietly break the moment a second real-DB
-    // test lands in the same test binary.
+    // Multi-process mode (a real postmaster over a unix socket): the
+    // in-process backend opens once per process and serves one connection,
+    // which would cap every pool at 1.
     let db = pglite::PGlite::open_multi_process(dir.path(), pglite::MultiProcessOptions::default())
         .await
         .expect("start embedded postgres");
@@ -45,9 +35,8 @@ pub async fn test_pool(_db_name: &str) -> (sqlx::PgPool, PgGuard) {
 pub async fn shutdown(pool: sqlx::PgPool, guard: PgGuard) {
     pool.close().await;
     if let PgGuard::Embedded(embedded) = guard {
-        // Not just tidiness: the postmaster is a child process, so skipping
-        // this would leave it (and its workers) running after the test
-        // binary exits.
+        // The postmaster is a child process: without this it outlives the
+        // test binary.
         let (db, dir) = *embedded;
         db.close().await.ok();
         drop(dir);

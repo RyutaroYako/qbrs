@@ -5,7 +5,6 @@ use qbrs::Table;
 
 #[derive(Table)]
 #[table(name = "users")]
-#[allow(dead_code)]
 pub struct Users {
     #[column(primary_key, generated)]
     pub id: i64,
@@ -17,7 +16,6 @@ pub struct Users {
 
 #[derive(Table)]
 #[table(name = "orders")]
-#[allow(dead_code)]
 pub struct Orders {
     #[column(primary_key, generated)]
     pub id: i64,
@@ -27,11 +25,9 @@ pub struct Orders {
     pub shipped: bool,
 }
 
-/// Keeps the embedded Postgres — and the temp directory holding its data —
-/// alive for as long as an example is running. Dropping it stops the
-/// server, so examples bind it (`let (pool, _db) = ...`) rather than
-/// discarding it; the postmaster is a child process and would otherwise
-/// outlive the example.
+/// Keeps the embedded Postgres and its data directory alive for as long as
+/// an example runs. Dropping it stops the server, so examples bind it
+/// (`let (pool, _db) = ...`) rather than discarding it.
 pub struct Db(#[allow(dead_code)] Option<(pglite::PGlite, tempfile::TempDir)>);
 
 /// Connects to `DATABASE_URL` if set, otherwise starts a throwaway embedded
@@ -99,14 +95,28 @@ pub async fn setup_db() -> (sqlx::PgPool, Db) {
 /// inactive, one with no orders) and a handful of orders — enough to make
 /// filters/joins/nullability actually demonstrate something.
 pub async fn seed(pool: &sqlx::PgPool) {
-    use qbrs::dialect::Postgres;
-    use qbrs::expr::ExprMethods;
-    use qbrs_sqlx::{ExecuteExt, LoadReturningExt};
+    use qbrs::prelude::*;
+    use qbrs_sqlx::prelude::*;
 
-    let ids: Vec<i64> = qbrs::insert::insert::<Postgres, _>(users::Table)
-        .values(UsersInsert::new("ada@example.com").display_name("Ada Lovelace"))
-        .values(UsersInsert::new("dan@example.com").display_name("Dan"))
-        .values(UsersInsert::new("grace@example.com").display_name("Grace Hopper"))
+    let ids: Vec<i64> = insert(users::Table)
+        .values(
+            UsersInsert::builder()
+                .email("ada@example.com")
+                .display_name("Ada Lovelace")
+                .build(),
+        )
+        .values(
+            UsersInsert::builder()
+                .email("dan@example.com")
+                .display_name("Dan")
+                .build(),
+        )
+        .values(
+            UsersInsert::builder()
+                .email("grace@example.com")
+                .display_name("Grace Hopper")
+                .build(),
+        )
         .returning(users::id)
         .load(pool)
         .await
@@ -114,20 +124,29 @@ pub async fn seed(pool: &sqlx::PgPool) {
 
     // Dan (ids[1]) intentionally gets no orders and active=false, so the
     // examples have something interesting to filter/outer-join against.
-    qbrs::update::update::<Postgres, _>(users::Table)
-        .set(UsersUpdate {
-            active: Some(false),
-            ..Default::default()
-        })
+    update(users::Table)
+        .set(
+            Assignments::from_row(UsersUpdate {
+                active: Some(false),
+                ..Default::default()
+            })
+            .expect("active is set"),
+        )
         .filter(users::id.eq(ids[1]))
         .execute(pool)
         .await
         .expect("deactivate dan");
 
-    qbrs::insert::insert::<Postgres, _>(orders::Table)
-        .values(OrdersInsert::new(ids[0], 1500))
-        .values(OrdersInsert::new(ids[0], 2500).shipped(true))
-        .values(OrdersInsert::new(ids[2], 999))
+    insert(orders::Table)
+        .values(OrdersInsert::builder().user_id(ids[0]).total(1500).build())
+        .values(
+            OrdersInsert::builder()
+                .user_id(ids[0])
+                .total(2500)
+                .shipped(true)
+                .build(),
+        )
+        .values(OrdersInsert::builder().user_id(ids[2]).total(999).build())
         .execute(pool)
         .await
         .expect("seed orders");

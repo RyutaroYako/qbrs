@@ -1,0 +1,22 @@
+// Deliberately-broken example: an `EXISTS` built for one dialect, filtered
+// onto a statement of another. Used to eyeball `Condition`'s message. Not
+// meant to compile — copy into `tests/compile-bench/examples/` and run:
+//   cargo build -p compile-bench --example exists_across_dialects
+use qbrs::prelude::*;
+
+#[derive(Table)]
+#[table(name = "users")]
+struct Users {
+    #[column(primary_key, generated)]
+    id: i64,
+    email: String,
+}
+
+fn main() {
+    let subquery = select((users::id,)).from::<Postgres, _>(users::Table);
+    let (sql, _) = select((users::email,))
+        .from::<MySql, _>(users::Table)
+        .filter(subquery.exists())
+        .to_sql();
+    println!("{sql}");
+}

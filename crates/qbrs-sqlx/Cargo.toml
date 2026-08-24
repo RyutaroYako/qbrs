@@ -5,9 +5,20 @@ edition.workspace = true
 license.workspace = true
 description = "sqlx-based execution integration for qbrs (Postgres)."
 
+[features]
+# Each mirrors the `qbrs-core` feature of the same name and turns on the
+# matching `sqlx` support, so a column type that renders can also be bound
+# and decoded.
+chrono = ["qbrs-core/chrono", "sqlx/chrono", "dep:chrono"]
+uuid = ["qbrs-core/uuid", "sqlx/uuid", "dep:uuid"]
+decimal = ["qbrs-core/decimal", "sqlx/rust_decimal", "dep:rust_decimal"]
+
 [dependencies]
 qbrs-core = { path = "../core" }
 thiserror = "2"
+chrono = { version = "0.4", default-features = false, features = ["std"], optional = true }
+uuid = { version = "1", default-features = false, optional = true }
+rust_decimal = { version = "1", default-features = false, optional = true }
 
 [dependencies.sqlx]
 version = "0.9"

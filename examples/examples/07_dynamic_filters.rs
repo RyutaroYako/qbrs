@@ -3,12 +3,9 @@
 //! be called conditionally, in a loop, or from a shared helper function.
 //! Run: `cargo run -p qbrs-examples --example 07_dynamic_filters`
 
-use qbrs::dialect::Postgres;
-use qbrs::expr::{ExprMethods, TextExprMethods};
-use qbrs::scope::Find;
-use qbrs::select::{Select, select};
-use qbrs_examples::{seed, setup_db, users};
-use qbrs_sqlx::LoadExt;
+use qbrs::prelude::*;
+use qbrs_examples::*;
+use qbrs_sqlx::prelude::*;
 
 /// A search form's optional fields — in a real app these would come from
 /// query-string params, most of them usually absent.
@@ -55,11 +52,8 @@ async fn main() {
             active_only: true,
         },
     ] {
-        let query = apply_search(
-            select((users::email,)).from::<Postgres, _>(users::Table),
-            &search,
-        );
-        let rows: Vec<(String,)> = query.load(&pool).await.expect("search users");
+        let query = apply_search(select(users::email).from(users::Table), &search);
+        let rows: Vec<String> = query.load(&pool).await.expect("search users");
         println!(
             "email_contains={:?} active_only={} -> {rows:?}",
             search.email_contains, search.active_only
@@ -71,10 +65,72 @@ async fn main() {
     // the builder's type never changes, so an arbitrary (including zero)
     // number of iterations is fine.
     let candidate_filters = vec![Some(users::active.eq(true)), None];
-    let mut query = select((users::email,)).from::<Postgres, _>(users::Table);
+    let mut query = select(users::email).from(users::Table);
     for cond in candidate_filters.into_iter().flatten() {
         query = query.filter(cond);
     }
-    let rows: Vec<(String,)> = query.load(&pool).await.expect("looped filters");
+    let rows: Vec<String> = query.load(&pool).await.expect("looped filters");
     println!("looped-filter result: {rows:?}");
+
+    // Conditions from *different* tables can't share one `Expr` type — the
+    // tables an expression references are part of it. `predicate(..)`
+    // discharges that requirement against the query's scope, so a collection
+    // of them is buildable and passable.
+    let mut conds = Vec::new();
+    conds.push(predicate(users::active.eq(true)));
+    if true {
+        conds.push(predicate(orders::total.gt(1000i64)));
+    }
+    let big: Vec<String> = select(users::email)
+        .from(users::Table)
+        .inner_join(orders::Table, orders::user_id.eq(users::id))
+        .filter_all(conds)
+        .load(&pool)
+        .await
+        .expect("collected predicates");
+    println!("active users with a big order: {big:?}");
+
+    // A loop ANDs. For a runtime-length OR — a search box with N terms —
+    // `any_of` folds the collection instead; folding `.or()` by hand can't
+    // type-check, since each pair widens the tables the expression claims.
+    let terms = ["ada", "grace"];
+    let searched: Vec<String> = select(users::email)
+        .from(users::Table)
+        .filter(any_of(
+            terms
+                .iter()
+                .map(|t| sql!(Bool, "? LIKE ?", users::email, format!("{t}%"))),
+        ))
+        .load(&pool)
+        .await
+        .expect("searched");
+    println!("search hits: {searched:?}");
+
+    // Across tables, the same shape goes through `Predicate`, which `.filter`
+    // takes as readily as an `Expr`.
+    let any_signal: Vec<String> = select(users::email)
+        .from(users::Table)
+        .inner_join(orders::Table, orders::user_id.eq(users::id))
+        .filter(Predicate::any_of([
+            predicate(users::active.eq(false)),
+            predicate(orders::total.gt(2000i64)),
+        ]))
+        .load(&pool)
+        .await
+        .expect("either signal");
+    println!("inactive or big-spending: {any_signal:?}");
+
+    // `.count()` answers "how many rows would this return" — the same
+    // FROM/JOIN/WHERE, with any ORDER BY/LIMIT/OFFSET ignored, so a
+    // paginated endpoint can report a total without cloning the query.
+    let page = select(users::email)
+        .from(users::Table)
+        .filter(users::active.eq(true))
+        .order_by(users::id.asc())
+        .limit(1u32);
+    println!(
+        "page of {} shows {:?}",
+        page.count(&pool).await.expect("total"),
+        page.load(&pool).await.expect("page")
+    );
 }

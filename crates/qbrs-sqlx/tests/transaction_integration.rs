@@ -8,10 +8,12 @@
 mod common;
 
 use qbrs::Table;
-use qbrs::dialect::Postgres;
 use qbrs::expr::ExprMethods;
+use qbrs::row::IntoTuples;
 use qbrs::select::select;
-use qbrs_sqlx::{ExecuteExt, LoadExt, LoadReturningExt};
+use qbrs::statement::Statement;
+use qbrs::update::Assignments;
+use qbrs_sqlx::{ExecuteExt, LoadExt};
 
 #[derive(Table)]
 #[table(name = "tx_users")]
@@ -43,8 +45,8 @@ async fn transactions_against_real_postgres() {
     // Committed transaction: writes made through `&mut *tx` persist once
     // `.commit()` succeeds.
     let mut tx = pool.begin().await.expect("begin transaction");
-    let ada_id: i64 = qbrs::insert::insert::<Postgres, _>(users::Table)
-        .values(UsersInsert::new("ada@example.com"))
+    let ada_id: i64 = qbrs::insert::insert(users::Table)
+        .values(UsersInsert::builder().email("ada@example.com").build())
         .returning(users::id)
         .load(&mut *tx)
         .await
@@ -54,19 +56,19 @@ async fn transactions_against_real_postgres() {
         .expect("returning row");
     tx.commit().await.expect("commit transaction");
 
-    let row: Option<(String,)> = select((users::email,))
-        .from::<Postgres, _>(users::Table)
+    let row: Option<String> = select(users::email)
+        .from(users::Table)
         .filter(users::id.eq(ada_id))
         .load_one(&pool)
         .await
         .expect("select after commit");
-    assert_eq!(row, Some(("ada@example.com".to_string(),)));
+    assert_eq!(row, Some("ada@example.com".to_string()));
 
     // Explicit rollback: the insert is visible inside the transaction but
     // never lands once rolled back.
     let mut tx = pool.begin().await.expect("begin transaction");
-    let dan_id: i64 = qbrs::insert::insert::<Postgres, _>(users::Table)
-        .values(UsersInsert::new("dan@example.com"))
+    let dan_id: i64 = qbrs::insert::insert(users::Table)
+        .values(UsersInsert::builder().email("dan@example.com").build())
         .returning(users::id)
         .load(&mut *tx)
         .await
@@ -74,17 +76,17 @@ async fn transactions_against_real_postgres() {
         .into_iter()
         .next()
         .expect("returning row");
-    let visible_in_tx: Option<(String,)> = select((users::email,))
-        .from::<Postgres, _>(users::Table)
+    let visible_in_tx: Option<String> = select(users::email)
+        .from(users::Table)
         .filter(users::id.eq(dan_id))
         .load_one(&mut *tx)
         .await
         .expect("select inside transaction");
-    assert_eq!(visible_in_tx, Some(("dan@example.com".to_string(),)));
+    assert_eq!(visible_in_tx, Some("dan@example.com".to_string()));
     tx.rollback().await.expect("rollback transaction");
 
-    let row: Option<(String,)> = select((users::email,))
-        .from::<Postgres, _>(users::Table)
+    let row: Option<String> = select(users::email)
+        .from(users::Table)
         .filter(users::id.eq(dan_id))
         .load_one(&pool)
         .await
@@ -95,8 +97,8 @@ async fn transactions_against_real_postgres() {
     // same as plain sqlx.
     let grace_id = {
         let mut tx = pool.begin().await.expect("begin transaction");
-        let id: i64 = qbrs::insert::insert::<Postgres, _>(users::Table)
-            .values(UsersInsert::new("grace@example.com"))
+        let id: i64 = qbrs::insert::insert(users::Table)
+            .values(UsersInsert::builder().email("grace@example.com").build())
             .returning(users::id)
             .load(&mut *tx)
             .await
@@ -106,8 +108,8 @@ async fn transactions_against_real_postgres() {
             .expect("returning row");
         id
     };
-    let row: Option<(String,)> = select((users::email,))
-        .from::<Postgres, _>(users::Table)
+    let row: Option<String> = select(users::email)
+        .from(users::Table)
         .filter(users::id.eq(grace_id))
         .load_one(&pool)
         .await
@@ -116,26 +118,29 @@ async fn transactions_against_real_postgres() {
 
     // Insert + update + delete inside one transaction, committed together.
     let mut tx = pool.begin().await.expect("begin transaction");
-    let ids: Vec<i64> = qbrs::insert::insert::<Postgres, _>(users::Table)
-        .values(UsersInsert::new("a@example.com"))
-        .values(UsersInsert::new("b@example.com"))
+    let ids: Vec<i64> = qbrs::insert::insert(users::Table)
+        .values(UsersInsert::builder().email("a@example.com").build())
+        .values(UsersInsert::builder().email("b@example.com").build())
         .returning(users::id)
         .load(&mut *tx)
         .await
         .expect("bulk insert inside transaction");
     assert_eq!(ids.len(), 2);
 
-    let affected = qbrs::update::update::<Postgres, _>(users::Table)
-        .set(UsersUpdate {
-            email: Some("a2@example.com".to_string()),
-        })
+    let affected = qbrs::update::update(users::Table)
+        .set(
+            Assignments::from_row(UsersUpdate {
+                email: Some("a2@example.com".to_string()),
+            })
+            .expect("email is set"),
+        )
         .filter(users::id.eq(ids[0]))
         .execute(&mut *tx)
         .await
         .expect("update inside transaction");
     assert_eq!(affected, 1);
 
-    let deleted = qbrs::delete::delete::<Postgres, _>(users::Table)
+    let deleted = qbrs::delete::delete(users::Table)
         .filter(users::id.eq(ids[1]))
         .execute(&mut *tx)
         .await
@@ -144,10 +149,11 @@ async fn transactions_against_real_postgres() {
     tx.commit().await.expect("commit transaction");
 
     let mut remaining: Vec<(i64, String)> = select((users::id, users::email))
-        .from::<Postgres, _>(users::Table)
+        .from(users::Table)
         .load(&pool)
         .await
-        .expect("select remaining users");
+        .expect("select remaining users")
+        .into_tuples();
     remaining.sort();
     assert_eq!(
         remaining,

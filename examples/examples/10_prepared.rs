@@ -1,16 +1,13 @@
-//! `prepare!{}`: a query rendered once, reused across many `.execute(params)`
+//! `prepare!{}`: a query rendered once, reused across many `.load(.., params)`
 //! calls with different, compile-time-typed values — closing the gap
 //! Drizzle's own `sql.placeholder()` leaves (its `.execute()` takes an
 //! untyped `Record<string, unknown>`, so a missing/misspelled key is only
 //! a runtime error; here it's the exact struct `prepare!{}` generated).
 //! Run: `cargo run -p qbrs-examples --example 10_prepared`
 
-use qbrs::dialect::Postgres;
-use qbrs::expr::{ExprMethods, Text};
-use qbrs::prepare;
-use qbrs::select::select;
-use qbrs_examples::{seed, setup_db, users};
-use qbrs_sqlx::PreparedExt;
+use qbrs::prelude::*;
+use qbrs_examples::*;
+use qbrs_sqlx::prelude::*;
 
 prepare! {
     struct ByEmail { email: Text }
@@ -23,9 +20,16 @@ async fn main() {
 
     // Rendered once. `ByEmail::email()` is a placeholder, not a value yet.
     let query = select((users::id, users::display_name))
-        .from::<Postgres, _>(users::Table)
+        .from(users::Table)
         .filter(users::email.eq(ByEmail::email()))
-        .prepare::<ByEmail, _>();
+        .prepare::<ByEmail, _>(Postgres);
+
+    // The same query prepared as its own total: one rendering for the page,
+    // one for the count, and the page size bound rather than baked in.
+    let total = select((users::id,))
+        .from(users::Table)
+        .filter(users::email.eq(ByEmail::email()))
+        .prepare_count::<ByEmail, _>(Postgres);
 
     for email in [
         "ada@example.com",
@@ -33,14 +37,24 @@ async fn main() {
         "no-such-user@example.com",
     ] {
         let rows: Vec<(i64, Option<String>)> = query
-            .execute(
+            .load(
                 &pool,
                 ByEmail {
                     email: email.to_string(),
                 },
             )
             .await
-            .expect("execute prepared query");
-        println!("{email} -> {rows:?}");
+            .expect("load prepared query")
+            .into_tuples();
+        let matching = total
+            .count(
+                &pool,
+                ByEmail {
+                    email: email.to_string(),
+                },
+            )
+            .await
+            .expect("count prepared query");
+        println!("{email} -> {rows:?} ({matching} row(s))");
     }
 }

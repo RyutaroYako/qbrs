@@ -6,50 +6,61 @@ use super::{Select, Selection};
 use crate::dialect::Dialect;
 use crate::expr::Value;
 
-/// Implemented by the `prepare!{}`-generated `Params` struct. `self` is
-/// consumed (not borrowed) so a value field can move straight into its
-/// `Value` without cloning — a `Prepared` query is meant to be reused
-/// across many `.execute(params)` calls, but each call gets its own fresh
-/// `Params` value, not a shared one.
+/// Implemented by the `prepare!{}`-generated `Params` struct. Consuming
+/// `self` lets each field move straight into its `Value`; a `Prepared` query
+/// is reused across calls, but each call brings its own `Params`.
 pub trait PreparedParams {
     fn into_named_values(self) -> Vec<(&'static str, Value)>;
 }
 
-/// A query rendered once, with some `Value::Placeholder(name)` slots left
-/// unresolved, reusable across many `.execute(params)` calls with different
-/// `Params` values — this is the reusable-prepared-statement half of what
-/// Drizzle's `.prepare()` + `sql.placeholder()` does, with one concrete
-/// improvement: `execute` takes the exact `Params` struct `prepare!{}`
-/// generated for this query, not an untyped `Record<string, unknown>`, so a
-/// missing or mistyped value is a compile error rather than a runtime one
-/// (Drizzle's own documented gap — see the design plan's "Prepared
-/// Statements" section).
+/// A query rendered once, with its `Value::Placeholder(name)` slots left
+/// unresolved, reusable across many `.load(executor, params)` calls. `load`
+/// takes the exact `Params` struct `prepare!{}` generated for this query, so
+/// a missing or mistyped value is caught. The dialect it was
+/// rendered in stays in its type, so it can only be run by an executor of
+/// that dialect — the same rule `Select` and `DynSelect` follow.
 ///
-/// **Soundness note**: this guarantee holds as long as every placeholder in
-/// the query was built via `Params::field()` accessors from the *same*
-/// `prepare!{}` invocation as `Params` — the low-level `placeholder(name)`
-/// function is `#[doc(hidden)]` for exactly this reason, since a
-/// hand-written mismatched name would only fail at `.execute()` time (an
-/// error, not a panic — see `execute`'s doc comment).
-pub struct Prepared<Params, Output> {
+/// `Params` is a free parameter, though — nothing ties the placeholder names
+/// baked into the template to the struct that fills them — so a query built
+/// from one `prepare!` struct and run with another is caught at `resolve`
+/// rather than at compile time. Placeholder names are qualified by the
+/// module and struct they were declared in, so that mismatch is always an
+/// `UnresolvedPlaceholder` and never a value bound to the wrong slot.
+pub struct Prepared<D, Params, Output> {
     sql: String,
     template: Vec<Value>,
-    _marker: PhantomData<fn() -> (Params, Output)>,
+    _marker: PhantomData<fn() -> (D, Params, Output)>,
 }
 
 impl<D, Scope, Sel> Select<D, Scope, Sel> {
-    /// Renders this query once, leaving any `Value::Placeholder` slots
-    /// (built via `Params::field()` accessors) unresolved — see
-    /// `Prepared`'s doc comment. `Output` (the decoded row type) is
-    /// captured here, the same way `.erase()` captures it for `DynSelect`,
-    /// so the execution layer knows what to decode into without needing
-    /// `Sel` (and therefore `Scope`) to still be around.
-    pub fn prepare<Params, Idx>(&self) -> Prepared<Params, Sel::Output>
+    /// Renders this query once, leaving its `Value::Placeholder` slots
+    /// unresolved. `Output` is captured here, as `.erase()` does for
+    /// `DynSelect`, so the execution layer can decode rows without `Sel`
+    /// (and therefore `Scope`) still being around.
+    pub fn prepare<Params, Idx>(&self, _dialect: D) -> Prepared<D, Params, Sel::Output>
     where
         D: Dialect,
         Sel: Selection<Scope, Idx>,
     {
-        let (sql, template) = self.render_as::<D, Idx>();
+        let (sql, template) = self.render_as::<Idx>();
+        Prepared {
+            sql,
+            template,
+            _marker: PhantomData,
+        }
+    }
+
+    /// The same query prepared as its own total — `count_sql` with the
+    /// placeholders still unresolved, so a paginated endpoint reuses one
+    /// rendering for the page and one for the count. `Total` rather than
+    /// `i64`: what a statement produces is what decides how it is run, and a
+    /// total is a number, not a row.
+    pub fn prepare_count<Params, Idx>(&self, _dialect: D) -> Prepared<D, Params, Total>
+    where
+        D: Dialect,
+        Sel: Selection<Scope, Idx>,
+    {
+        let (sql, template) = self.count_sql::<Idx>(D::default());
         Prepared {
             sql,
             template,
@@ -58,11 +69,16 @@ impl<D, Scope, Sel> Select<D, Scope, Sel> {
     }
 }
 
-/// Returned by `Prepared::execute`/`resolve` when a placeholder in the
-/// template has no matching field in the `Params` value passed in — only
-/// reachable by hand-constructing a mismatched `placeholder(name)` outside
-/// the `prepare!{}` macro's generated accessors, see `Prepared`'s doc
-/// comment.
+/// The output of a `prepare_count()`-built query: deliberately not a
+/// decodable row, so a total is counted and never loaded, and a prepared
+/// `SELECT` of one `i64` column is never mistaken for one.
+pub struct Total;
+
+/// Returned by `Prepared::resolve` — and so by the `.load()` that calls
+/// it — when a placeholder in the
+/// template has no matching field in the `Params` passed in: a query
+/// prepared with one `prepare!` struct and run with another, or a
+/// hand-constructed `expr::placeholder` name.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct UnresolvedPlaceholder(pub &'static str);
 
@@ -73,11 +89,10 @@ impl std::fmt::Display for UnresolvedPlaceholder {
 }
 impl std::error::Error for UnresolvedPlaceholder {}
 
-impl<Params: PreparedParams, Output> Prepared<Params, Output> {
-    /// Substitutes every named placeholder in the template with the
-    /// matching value from `params`, producing the same `(String,
-    /// Vec<Value>)` shape `to_sql()` returns — the execution layer
-    /// (`qbrs-sqlx`) binds this exactly like any other rendered query.
+impl<D, Params: PreparedParams, Output> Prepared<D, Params, Output> {
+    /// Substitutes every named placeholder with the matching value from
+    /// `params`, producing the same `(String, Vec<Value>)` shape `to_sql()`
+    /// returns.
     pub fn resolve(&self, params: Params) -> Result<(String, Vec<Value>), UnresolvedPlaceholder> {
         let named = params.into_named_values();
         let mut resolved = Vec::with_capacity(self.template.len());

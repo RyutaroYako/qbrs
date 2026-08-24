@@ -1,5 +1,5 @@
 //! `prepare!{}`: named, typed placeholders resolved at `.execute()` time
-//! rather than baked in at query-build time — the last Phase 2 item.
+//! rather than baked in at query-build time.
 
 use qbrs_core::dialect::Postgres;
 use qbrs_core::expr::{ExprMethods, Text};
@@ -11,13 +11,35 @@ pub struct UsersMarker;
 impl TableTrait for UsersMarker {
     const NAME: &'static str = "users";
 }
+impl qbrs_core::scope::BaseTableSealed for UsersMarker {}
+impl qbrs_core::scope::BaseTable for UsersMarker {}
 
 #[allow(non_upper_case_globals)]
 mod users {
     use super::UsersMarker;
     use qbrs_core::expr::{Column, Text};
     pub const Table: UsersMarker = UsersMarker;
-    pub const email: Column<UsersMarker, Text> = Column::new("email");
+    #[allow(non_camel_case_types)]
+    pub mod columns {
+        use super::*;
+        use qbrs_core::expr::ColumnKey;
+        #[derive(Clone, Copy)]
+        pub struct email;
+        impl qbrs_core::expr::WritableSealed for email {}
+        impl qbrs_core::expr::Writable for email {}
+        impl ColumnKey for email {
+            type Table = UsersMarker;
+            type Sql = Text;
+        }
+        impl qbrs_core::row::NamedSealed for email {}
+        impl qbrs_core::row::Named for email {
+            type Name = qbrs_core::type_name!('e', 'm', 'a', 'i', 'l');
+            const NAME: &'static str = "email";
+        }
+        impl qbrs_core::row::Spelled for email {}
+    }
+
+    pub const email: Column<columns::email> = Column::new();
 }
 
 prepare! {
@@ -27,9 +49,9 @@ prepare! {
 #[test]
 fn prepared_query_resolves_named_placeholder() {
     let query = select((users::email,))
-        .from::<Postgres, _>(users::Table)
+        .from(users::Table)
         .filter(users::email.eq(ByEmail::email()))
-        .prepare::<ByEmail, _>();
+        .prepare::<ByEmail, _>(Postgres);
 
     let (sql, params) = query
         .resolve(ByEmail {
@@ -67,9 +89,9 @@ fn missing_placeholder_is_a_typed_error_not_a_panic() {
     // mismatch is a recoverable `Result::Err`, not a panic.
     let bogus = qbrs_core::expr::placeholder::<Text>("not_email");
     let query = select((users::email,))
-        .from::<Postgres, _>(users::Table)
+        .from(users::Table)
         .filter(users::email.eq(bogus))
-        .prepare::<ByEmail, _>();
+        .prepare::<ByEmail, _>(Postgres);
 
     let err = query
         .resolve(ByEmail {
@@ -77,4 +99,24 @@ fn missing_placeholder_is_a_typed_error_not_a_panic() {
         })
         .unwrap_err();
     assert_eq!(err.0, "not_email");
+}
+
+prepare! {
+    struct ByOtherEmail { email: Text }
+}
+
+#[test]
+fn a_query_run_with_another_prepare_structs_params_is_refused() {
+    // `Params` is a free parameter of `.prepare()`, so this type-checks;
+    // the placeholder names carry where they were declared, so it can't
+    // bind one struct's value into another's slot.
+    let query = select((users::email,))
+        .from(users::Table)
+        .filter(users::email.eq(ByEmail::email()))
+        .prepare::<ByOtherEmail, _>(Postgres);
+
+    let resolved = query.resolve(ByOtherEmail {
+        email: "a@example.com".into(),
+    });
+    assert!(resolved.is_err(), "{resolved:?}");
 }

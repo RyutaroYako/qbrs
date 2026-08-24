@@ -5,6 +5,12 @@ edition.workspace = true
 license.workspace = true
 description = "A Drizzle-style, type-safe SQL query builder for Rust."
 
+[features]
+# Column types beyond the six a database always has; see `qbrs-core`.
+chrono = ["qbrs-core/chrono"]
+uuid = ["qbrs-core/uuid"]
+decimal = ["qbrs-core/decimal"]
+
 [dependencies]
 qbrs-core = { path = "../core" }
 qbrs-macros = { path = "../macros" }

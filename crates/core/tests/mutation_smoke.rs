@@ -6,12 +6,15 @@ use qbrs_core::dialect::Postgres;
 use qbrs_core::expr::{ExprMethods, Value};
 use qbrs_core::insert::{Defaultable, InsertRow, InsertValue, insert};
 use qbrs_core::scope::Table as TableTrait;
-use qbrs_core::update::{UpdateRow, update};
+use qbrs_core::statement::Statement;
+use qbrs_core::update::{Assignments, NothingToSet, UpdateRow, update};
 
 pub struct UsersMarker;
 impl TableTrait for UsersMarker {
     const NAME: &'static str = "users";
 }
+impl qbrs_core::scope::BaseTableSealed for UsersMarker {}
+impl qbrs_core::scope::BaseTable for UsersMarker {}
 
 #[allow(non_upper_case_globals, dead_code)]
 mod users {
@@ -19,9 +22,73 @@ mod users {
     use qbrs_core::expr::{Column, Integer, Text};
 
     pub const Table: UsersMarker = UsersMarker;
-    pub const id: Column<UsersMarker, Integer> = Column::new("id");
-    pub const email: Column<UsersMarker, Text> = Column::new("email");
-    pub const display_name: Column<UsersMarker, Text> = Column::new("display_name");
+    #[allow(non_camel_case_types)]
+    pub mod columns {
+        use super::*;
+        use qbrs_core::expr::ColumnKey;
+        #[derive(Clone, Copy)]
+        pub struct id;
+        impl qbrs_core::expr::WritableSealed for id {}
+        impl qbrs_core::expr::Writable for id {}
+        impl ColumnKey for id {
+            type Table = UsersMarker;
+            type Sql = Integer;
+        }
+        impl qbrs_core::row::NamedSealed for id {}
+        impl qbrs_core::row::Named for id {
+            type Name = qbrs_core::type_name!('i', 'd');
+            const NAME: &'static str = "id";
+        }
+        impl qbrs_core::row::Spelled for id {}
+        #[derive(Clone, Copy)]
+        pub struct email;
+        impl qbrs_core::expr::WritableSealed for email {}
+        impl qbrs_core::expr::Writable for email {}
+        impl ColumnKey for email {
+            type Table = UsersMarker;
+            type Sql = Text;
+        }
+        impl qbrs_core::row::NamedSealed for email {}
+        impl qbrs_core::row::Named for email {
+            type Name = qbrs_core::type_name!('e', 'm', 'a', 'i', 'l');
+            const NAME: &'static str = "email";
+        }
+        impl qbrs_core::row::Spelled for email {}
+        #[derive(Clone, Copy)]
+        pub struct display_name;
+        impl qbrs_core::expr::WritableSealed for display_name {}
+        impl qbrs_core::expr::Writable for display_name {}
+        impl ColumnKey for display_name {
+            type Table = UsersMarker;
+            type Sql = Text;
+        }
+        impl qbrs_core::row::NamedSealed for display_name {}
+        impl qbrs_core::row::Named for display_name {
+            type Name =
+                qbrs_core::type_name!('d', 'i', 's', 'p', 'l', 'a', 'y', '_', 'n', 'a', 'm', 'e');
+            const NAME: &'static str = "display_name";
+        }
+        impl qbrs_core::row::Spelled for display_name {}
+
+        #[derive(Clone, Copy)]
+        pub struct created_at;
+        impl qbrs_core::expr::WritableSealed for created_at {}
+        impl qbrs_core::expr::Writable for created_at {}
+        impl ColumnKey for created_at {
+            type Table = UsersMarker;
+            type Sql = Text;
+        }
+        impl qbrs_core::row::NamedSealed for created_at {}
+        impl qbrs_core::row::Named for created_at {
+            type Name = qbrs_core::type_name!('c', 'r', 'e', 'a', 't', 'e', 'd', '_', 'a', 't');
+            const NAME: &'static str = "created_at";
+        }
+        impl qbrs_core::row::Spelled for created_at {}
+    }
+
+    pub const id: Column<columns::id> = Column::new();
+    pub const email: Column<columns::email> = Column::new();
+    pub const display_name: Column<columns::display_name> = Column::new();
 }
 
 // What #[derive(Table)] will generate for:
@@ -35,8 +102,18 @@ struct UsersInsert {
     created_at: Defaultable<String>,
 }
 
+/// Stands in for the type-state builder `#[derive(Table)]` emits; this file
+/// hand-writes the schema so `qbrs-core` can be tested without the macros.
+struct UsersInsertBuilder;
+
 impl UsersInsert {
-    fn new(email: impl Into<String>) -> Self {
+    fn builder() -> UsersInsertBuilder {
+        UsersInsertBuilder
+    }
+}
+
+impl UsersInsertBuilder {
+    fn email(self, email: impl Into<String>) -> UsersInsert {
         UsersInsert {
             email: email.into(),
             display_name: None,
@@ -45,18 +122,43 @@ impl UsersInsert {
     }
 }
 
+impl UsersInsert {
+    fn build(self) -> Self {
+        self
+    }
+}
+
+impl qbrs_core::insert::InsertRowSealed for UsersInsert {}
+impl qbrs_core::insert::InsertableSealed for UsersInsert {}
+impl qbrs_core::insert::Insertable for UsersInsert {}
+
 impl InsertRow for UsersInsert {
     type Table = UsersMarker;
-    const COLUMNS: &'static [&'static str] = &["email", "display_name", "created_at"];
-    fn into_values(self) -> Vec<InsertValue> {
-        vec![
+    type Values = qbrs_core::row::RowCons<
+        users::columns::email,
+        InsertValue,
+        qbrs_core::row::RowCons<
+            users::columns::display_name,
+            InsertValue,
+            qbrs_core::row::RowCons<
+                users::columns::created_at,
+                InsertValue,
+                qbrs_core::row::RowNil,
+            >,
+        >,
+    >;
+
+    fn into_values(self) -> Self::Values {
+        qbrs_core::row::RowCons::new(
             InsertValue::Value(self.email.into()),
-            match self.display_name {
-                Some(v) => InsertValue::Value(v.into()),
-                None => InsertValue::Value(Value::NullText),
-            },
-            self.created_at.into(),
-        ]
+            qbrs_core::row::RowCons::new(
+                match self.display_name {
+                    Some(v) => InsertValue::Value(v.into()),
+                    None => InsertValue::Value(Value::NullText),
+                },
+                qbrs_core::row::RowCons::new(self.created_at.into(), qbrs_core::row::RowNil),
+            ),
+        )
     }
 }
 
@@ -65,6 +167,8 @@ struct UsersUpdate {
     email: Option<String>,
     display_name: Option<Option<String>>,
 }
+
+impl qbrs_core::update::UpdateRowSealed for UsersUpdate {}
 
 impl UpdateRow for UsersUpdate {
     type Table = UsersMarker;
@@ -87,10 +191,50 @@ impl UpdateRow for UsersUpdate {
 }
 
 #[test]
+fn a_set_list_can_be_expressions_alone() {
+    let (sql, params) = update(users::Table)
+        .set(Assignments::set_to(
+            users::email,
+            qbrs_core::sql!(qbrs_core::expr::Text, "lower(?)", users::email),
+        ))
+        .filter(users::id.eq(1))
+        .to_sql(Postgres);
+    assert_eq!(
+        sql,
+        "UPDATE \"users\" SET \"email\" = (lower(\"users\".\"email\")) WHERE (\"users\".\"id\" = $1)"
+    );
+    assert_eq!(params.len(), 1);
+}
+
+#[test]
+fn set_to_assigns_an_expression_and_appends_to_the_row() {
+    let (sql, params) = update(users::Table)
+        .set(
+            Assignments::from_row(UsersUpdate {
+                email: Some("new@example.com".into()),
+                display_name: None,
+            })
+            .expect("email is set"),
+        )
+        .set_to(
+            users::display_name,
+            qbrs_core::sql!(qbrs_core::expr::Text, "upper(?)", users::email),
+        )
+        .filter(users::id.eq(1))
+        .to_sql(Postgres);
+    assert_eq!(
+        sql,
+        "UPDATE \"users\" SET \"email\" = $1, \"display_name\" = (upper(\"users\".\"email\")) \
+         WHERE (\"users\".\"id\" = $2)"
+    );
+    assert_eq!(params.len(), 2);
+}
+
+#[test]
 fn insert_omits_default_as_the_default_keyword() {
-    let (sql, params) = insert::<Postgres, _>(users::Table)
-        .values(UsersInsert::new("a@example.com"))
-        .to_sql();
+    let (sql, params) = insert(users::Table)
+        .values(UsersInsert::builder().email("a@example.com").build())
+        .to_sql(Postgres);
     assert_eq!(
         sql,
         "INSERT INTO \"users\" (\"email\", \"display_name\", \"created_at\") VALUES ($1, $2, DEFAULT)"
@@ -103,11 +247,11 @@ fn insert_omits_default_as_the_default_keyword() {
 
 #[test]
 fn insert_bulk_and_returning() {
-    let (sql, _params) = insert::<Postgres, _>(users::Table)
-        .values(UsersInsert::new("a@example.com"))
-        .values(UsersInsert::new("b@example.com"))
+    let (sql, _params) = insert(users::Table)
+        .values(UsersInsert::builder().email("a@example.com").build())
+        .values(UsersInsert::builder().email("b@example.com").build())
         .returning(users::id)
-        .to_sql();
+        .to_sql(Postgres);
     assert_eq!(
         sql,
         "INSERT INTO \"users\" (\"email\", \"display_name\", \"created_at\") VALUES ($1, $2, DEFAULT), ($3, $4, DEFAULT) RETURNING \"users\".\"id\""
@@ -115,14 +259,40 @@ fn insert_bulk_and_returning() {
 }
 
 #[test]
+fn values_all_appends_to_a_statement_that_already_has_a_row() {
+    let (sql, params) = insert(users::Table)
+        .values(UsersInsert::builder().email("a@example.com").build())
+        .values_all(
+            ["b@example.com", "c@example.com"]
+                .into_iter()
+                .map(|email| UsersInsert::builder().email(email).build()),
+        )
+        .to_sql(Postgres);
+    assert_eq!(
+        sql,
+        "INSERT INTO \"users\" (\"email\", \"display_name\", \"created_at\") VALUES ($1, $2, DEFAULT), ($3, $4, DEFAULT), ($5, $6, DEFAULT)"
+    );
+    assert_eq!(params.len(), 6);
+}
+
+#[test]
+fn an_update_that_sets_nothing_is_an_error_not_a_panic() {
+    let nothing = Assignments::<UsersMarker>::from_row(UsersUpdate::default());
+    assert!(matches!(nothing, Err(NothingToSet)));
+}
+
+#[test]
 fn update_only_touches_set_fields() {
-    let (sql, params) = update::<Postgres, _>(users::Table)
-        .set(UsersUpdate {
-            email: Some("new@example.com".into()),
-            display_name: None,
-        })
+    let (sql, params) = update(users::Table)
+        .set(
+            Assignments::from_row(UsersUpdate {
+                email: Some("new@example.com".into()),
+                display_name: None,
+            })
+            .expect("email is set"),
+        )
         .filter(users::id.eq(1))
-        .to_sql();
+        .to_sql(Postgres);
     assert_eq!(
         sql,
         "UPDATE \"users\" SET \"email\" = $1 WHERE (\"users\".\"id\" = $2)"
@@ -135,10 +305,10 @@ fn update_only_touches_set_fields() {
 
 #[test]
 fn upsert_do_nothing_renders_conflict_target() {
-    let (sql, params) = insert::<Postgres, _>(users::Table)
-        .values(UsersInsert::new("a@example.com"))
+    let (sql, params) = insert(users::Table)
+        .values(UsersInsert::builder().email("a@example.com").build())
         .on_conflict_do_nothing(users::email)
-        .to_sql();
+        .to_sql(Postgres);
     assert_eq!(
         sql,
         "INSERT INTO \"users\" (\"email\", \"display_name\", \"created_at\") VALUES ($1, $2, DEFAULT) ON CONFLICT (\"email\") DO NOTHING"
@@ -151,17 +321,18 @@ fn upsert_do_nothing_renders_conflict_target() {
 
 #[test]
 fn upsert_do_update_reuses_update_row_and_supports_returning() {
-    let (sql, params) = insert::<Postgres, _>(users::Table)
-        .values(UsersInsert::new("a@example.com"))
+    let (sql, params) = insert(users::Table)
+        .values(UsersInsert::builder().email("a@example.com").build())
         .on_conflict_do_update(
             users::email,
-            UsersUpdate {
+            Assignments::from_row(UsersUpdate {
                 display_name: Some(Some("A".into())),
                 ..Default::default()
-            },
+            })
+            .expect("display_name is set"),
         )
         .returning(users::id)
-        .to_sql();
+        .to_sql(Postgres);
     assert_eq!(
         sql,
         "INSERT INTO \"users\" (\"email\", \"display_name\", \"created_at\") VALUES ($1, $2, DEFAULT) \
@@ -179,9 +350,9 @@ fn upsert_do_update_reuses_update_row_and_supports_returning() {
 
 #[test]
 fn delete_renders_where() {
-    let (sql, params) = delete::<Postgres, _>(users::Table)
+    let (sql, params) = delete(users::Table)
         .filter(users::id.eq(1))
-        .to_sql();
+        .to_sql(Postgres);
     assert_eq!(sql, "DELETE FROM \"users\" WHERE (\"users\".\"id\" = $1)");
     assert_eq!(params, vec![Value::I32(1)]);
 }

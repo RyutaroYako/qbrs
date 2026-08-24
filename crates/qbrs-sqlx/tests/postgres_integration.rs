@@ -1,27 +1,21 @@
-//! End-to-end test against a *real* Postgres. Revisiting the design plan's
-//! DB-setup decision: PGlite was passed over because it needed a Node.js
-//! sidecar to speak the Postgres wire protocol
-//! (`@electric-sql/pglite-socket`). That is no longer true — `pglite-rs`
-//! links the `postgres-pglite` engine straight into the test binary and
-//! serves it over a unix socket, so no Node and no Docker are involved.
+//! End-to-end test against a *real* Postgres.
 //!
 //! - **Default (no setup)**: with `DATABASE_URL` unset, a throwaway
-//!   PostgreSQL 17.5 is started in a temp directory and torn down after.
-//!   The engine is linked in at build time, so nothing is downloaded at
-//!   test time — which matters, because this crate's own development
-//!   environment blocks the CDN `postgresql_embedded` used to fetch from.
-//! - **External Postgres**: set `DATABASE_URL` to run the same tests
-//!   against a real server (a local install, a CI service, ...).
-//!
-//! See `common::test_pool` for why this uses multi-process mode.
+//!   PostgreSQL 17.5 runs in a temp directory and is torn down after. The
+//!   engine is linked in at build time, so nothing is downloaded at test
+//!   time.
+//! - **External Postgres**: set `DATABASE_URL` to run the same tests against
+//!   a real server.
 
 mod common;
 
 use qbrs::Table;
-use qbrs::dialect::Postgres;
 use qbrs::expr::ExprMethods;
+use qbrs::row::{IntoStructs, IntoTuples};
 use qbrs::select::{OrderExt, select};
-use qbrs_sqlx::{ExecuteExt, LoadExt, LoadReturningExt};
+use qbrs::statement::Statement;
+use qbrs::update::Assignments;
+use qbrs_sqlx::{CountExt, ExecuteExt, LoadExt};
 
 #[derive(Table)]
 #[table(name = "users")]
@@ -32,6 +26,17 @@ struct Users {
     email: String,
     display_name: Option<String>,
     #[column(default)]
+    active: bool,
+}
+
+/// The same shape `#[derive(Table)]` describes, filled by name from a
+/// `select(users::All)` row.
+#[derive(qbrs::FromRow, Debug)]
+#[allow(dead_code)]
+struct UserRow {
+    id: i64,
+    email: String,
+    display_name: Option<String>,
     active: bool,
 }
 
@@ -83,9 +88,14 @@ async fn full_crud_roundtrip_against_real_postgres() {
     .expect("create orders table");
 
     // INSERT .. RETURNING
-    let inserted_ids: Vec<i64> = qbrs::insert::insert::<Postgres, _>(users::Table)
-        .values(UsersInsert::new("ada@example.com").display_name("Ada"))
-        .values(UsersInsert::new("dan@example.com"))
+    let inserted_ids: Vec<i64> = qbrs::insert::insert(users::Table)
+        .values(
+            UsersInsert::builder()
+                .email("ada@example.com")
+                .display_name("Ada")
+                .build(),
+        )
+        .values(UsersInsert::builder().email("dan@example.com").build())
         .returning(users::id)
         .load(&pool)
         .await
@@ -94,16 +104,16 @@ async fn full_crud_roundtrip_against_real_postgres() {
     let ada_id = inserted_ids[0];
     let dan_id = inserted_ids[1];
 
-    qbrs::insert::insert::<Postgres, _>(orders::Table)
-        .values(OrdersInsert::new(ada_id, 1000))
-        .values(OrdersInsert::new(ada_id, 2500))
+    qbrs::insert::insert(orders::Table)
+        .values(OrdersInsert::builder().user_id(ada_id).total(1000).build())
+        .values(OrdersInsert::builder().user_id(ada_id).total(2500).build())
         .execute(&pool)
         .await
         .expect("insert orders");
 
     // Plain SELECT with WHERE + ORDER BY + LIMIT
-    let names: Vec<(String,)> = select((users::email,))
-        .from::<Postgres, _>(users::Table)
+    let names: Vec<String> = select(users::email)
+        .from(users::Table)
         .filter(users::active.eq(true))
         .order_by(users::id.asc())
         .limit(10)
@@ -112,60 +122,99 @@ async fn full_crud_roundtrip_against_real_postgres() {
         .expect("select users");
     assert_eq!(
         names,
-        vec![
-            ("ada@example.com".to_string(),),
-            ("dan@example.com".to_string(),)
-        ]
+        vec!["ada@example.com".to_string(), "dan@example.com".to_string()]
     );
 
     // LEFT JOIN — dan has no orders, so his row's total must come back NULL,
     // proving the join actually reaches Postgres and NULL round-trips.
     let mut rows: Vec<(String, Option<i64>)> = select((users::email, orders::total))
-        .from::<Postgres, _>(users::Table)
+        .from(users::Table)
         .left_join(orders::Table, orders::user_id.eq(users::id))
         .order_by(users::id.asc())
         .load(&pool)
         .await
-        .expect("left join select");
+        .expect("left join select")
+        .into_tuples();
     rows.sort();
     assert!(rows.contains(&("dan@example.com".to_string(), None)));
     assert!(rows.contains(&("ada@example.com".to_string(), Some(1000))));
     assert!(rows.contains(&("ada@example.com".to_string(), Some(2500))));
 
     // UPDATE
-    let affected = qbrs::update::update::<Postgres, _>(users::Table)
-        .set(UsersUpdate {
-            display_name: Some(Some("Ada Lovelace".into())),
-            ..Default::default()
-        })
+    let affected = qbrs::update::update(users::Table)
+        .set(
+            Assignments::from_row(UsersUpdate {
+                display_name: Some(Some("Ada Lovelace".into())),
+                ..Default::default()
+            })
+            .expect("display_name is set"),
+        )
         .filter(users::id.eq(ada_id))
         .execute(&pool)
         .await
         .expect("update user");
     assert_eq!(affected, 1);
 
-    let updated_name: Option<(Option<String>,)> = select((users::display_name,))
-        .from::<Postgres, _>(users::Table)
+    let updated_name: Option<Option<String>> = select(users::display_name)
+        .from(users::Table)
         .filter(users::id.eq(ada_id))
         .load_one(&pool)
         .await
         .expect("select updated user");
-    assert_eq!(updated_name, Some((Some("Ada Lovelace".to_string()),)));
+    assert_eq!(updated_name, Some(Some("Ada Lovelace".to_string())));
+
+    // Whole-table selection, decoded into the schema struct itself: the
+    // column list is the derive's, so it cannot drift from the table.
+    let whole: Vec<UserRow> = select(users::All)
+        .from(users::Table)
+        .filter(users::id.eq(ada_id))
+        .load(&pool)
+        .await
+        .expect("select every column")
+        .into_structs();
+    assert_eq!(whole.len(), 1);
+    assert_eq!(whole[0].email, "ada@example.com");
+    assert_eq!(whole[0].display_name.as_deref(), Some("Ada Lovelace"));
+
+    // The nullable side of a LEFT JOIN reaches the row as `Option`, one
+    // whole table at a time.
+    let joined = select((users::email, orders::All))
+        .from(users::Table)
+        .left_join(orders::Table, orders::user_id.eq(users::id))
+        .filter(users::id.eq(dan_id))
+        .load_one(&pool)
+        .await
+        .expect("left join every order column")
+        .expect("dan is there");
+    assert_eq!(joined.get(users::email), "dan@example.com");
+    assert_eq!(joined.get(orders::total), &None);
 
     // DELETE
-    let deleted = qbrs::delete::delete::<Postgres, _>(users::Table)
+    let deleted = qbrs::delete::delete(users::Table)
         .filter(users::id.eq(dan_id))
         .execute(&pool)
         .await
         .expect("delete user");
     assert_eq!(deleted, 1);
 
-    let remaining: Vec<(i64,)> = select((users::id,))
-        .from::<Postgres, _>(users::Table)
+    let remaining: Vec<i64> = select(users::id)
+        .from(users::Table)
         .load(&pool)
         .await
         .expect("select remaining users");
-    assert_eq!(remaining, vec![(ada_id,)]);
+    assert_eq!(remaining, vec![ada_id]);
+
+    // A total is its own rendering — the page's `ORDER BY`/`LIMIT` dropped
+    // and the rest wrapped — so Postgres runs it here rather than a string
+    // assertion standing in for it.
+    let total = select((users::id,))
+        .from(users::Table)
+        .order_by(users::id.desc())
+        .limit(1)
+        .count(&pool)
+        .await
+        .expect("count users");
+    assert_eq!(total, 1);
 
     common::shutdown(pool, guard).await;
 }

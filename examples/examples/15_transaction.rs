@@ -3,11 +3,9 @@
 //! `&PgPool` does — pass `&mut *tx`, exactly like plain sqlx usage.
 //! Run: `cargo run -p qbrs-examples --example 15_transaction`
 
-use qbrs::dialect::Postgres;
-use qbrs::expr::ExprMethods;
-use qbrs::select::select;
-use qbrs_examples::{OrdersInsert, UsersInsert, orders, setup_db, users};
-use qbrs_sqlx::{ExecuteExt, LoadExt, LoadReturningExt};
+use qbrs::prelude::*;
+use qbrs_examples::*;
+use qbrs_sqlx::prelude::*;
 
 #[tokio::main]
 async fn main() {
@@ -17,8 +15,13 @@ async fn main() {
     // inserts either land together or not at all.
     let mut tx = pool.begin().await.expect("begin transaction");
 
-    let user_id: i64 = qbrs::insert::insert::<Postgres, _>(users::Table)
-        .values(UsersInsert::new("nadia@example.com").display_name("Nadia"))
+    let user_id: i64 = insert(users::Table)
+        .values(
+            UsersInsert::builder()
+                .email("nadia@example.com")
+                .display_name("Nadia")
+                .build(),
+        )
         .returning(users::id)
         .load(&mut *tx)
         .await
@@ -27,8 +30,8 @@ async fn main() {
         .next()
         .expect("returning row");
 
-    qbrs::insert::insert::<Postgres, _>(orders::Table)
-        .values(OrdersInsert::new(user_id, 4200))
+    insert(orders::Table)
+        .values(OrdersInsert::builder().user_id(user_id).total(4200).build())
         .execute(&mut *tx)
         .await
         .expect("insert order");
@@ -41,8 +44,8 @@ async fn main() {
     // undo everything since `.begin()`.
     let mut tx = pool.begin().await.expect("begin transaction");
 
-    let doomed_id: i64 = qbrs::insert::insert::<Postgres, _>(users::Table)
-        .values(UsersInsert::new("temp@example.com"))
+    let doomed_id: i64 = insert(users::Table)
+        .values(UsersInsert::builder().email("temp@example.com").build())
         .returning(users::id)
         .load(&mut *tx)
         .await
@@ -53,8 +56,8 @@ async fn main() {
 
     tx.rollback().await.expect("rollback transaction");
 
-    let still_there: Option<(i64,)> = select((users::id,))
-        .from::<Postgres, _>(users::Table)
+    let still_there: Option<i64> = select(users::id)
+        .from(users::Table)
         .filter(users::id.eq(doomed_id))
         .load_one(&pool)
         .await

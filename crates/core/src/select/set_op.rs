@@ -1,27 +1,22 @@
 //! `UNION`/`UNION ALL`/`INTERSECT`/`EXCEPT` between two `SELECT`s that may
 //! have entirely different `Scope`s (different tables, different JOINs) —
-//! the only thing that must line up is their *output shape*. Rather than
-//! inventing a separate `SameShape<A, B>` trait (as the design plan
-//! originally sketched), this reuses `Selection::Output` associated-type
-//! equality directly: `SelB: Selection<ScopeB, IdxB, Output = Sel::Output>`
-//! already means "decodes to the exact same Rust tuple", which is exactly
-//! what a SQL set operation requires (same column count, compatible types)
-//! — no new trait needed.
-//!
-//! Each branch is rendered independently via `RawEmbed<D>` (see its doc
-//! comment) into `?`-placeholder text, then spliced together and renumbered
-//! into the outer dialect's placeholder style at `.to_sql()` time via
-//! `render::splice_raw` — the same mechanism `Select::exists`/`not_exists`
-//! use to embed a subquery, generalized to top-level branches joined by a
-//! set operator instead of by `EXISTS (..)`.
+//! the only thing that must line up is their *output shape*: `row::SameShape`
+//! requires the same column names, in the same order, decoding to the same
+//! types. Names as well as types, because the combined result is read by key
+//! — a branch whose columns merely happen to be type-compatible would
+//! otherwise splice in transposed. Keys from different tables still match,
+//! since the comparison is on names, and SQL itself takes a `UNION`'s column
+//! names from the first branch.
 
 use std::marker::PhantomData;
 
 use super::{Select, Selection, SortDir};
-use crate::dialect::{Dialect, RawEmbed};
+use crate::dialect::Dialect;
 use crate::expr::Value;
-use crate::render::splice_raw;
+use crate::render::{Fragment, QuerySink, Sink};
+use crate::row::SameShape;
 
+#[derive(Clone, Copy, PartialEq, Eq)]
 enum SetOpKind {
     Union,
     UnionAll,
@@ -40,23 +35,48 @@ impl SetOpKind {
     }
 }
 
-/// A chain of `SELECT`s combined by set operators, all decoding to the same
-/// `Output` type. `ORDER BY` here is necessarily by **ordinal position**
+/// A chain of `SELECT`s combined by set operators, all decoding to the first
+/// branch's `Output` — which is also where SQL itself takes the combined
+/// result's column names from. `ORDER BY` here is necessarily by **ordinal position**
 /// (`ORDER BY 1`, 1-indexed) rather than a typed column — the branches can
 /// have entirely different `Scope`s, so there is no single scope left to
 /// check a column reference against once they're combined; ordinal position
 /// is the only reference SQL itself allows in this position.
 pub struct SetOp<D, Output> {
-    first: (String, Vec<Value>),
-    rest: Vec<(SetOpKind, String, Vec<Value>)>,
+    first: Fragment,
+    rest: Vec<(SetOpKind, Fragment)>,
     order_by: Vec<(u32, SortDir)>,
-    limit: Option<i64>,
-    offset: Option<i64>,
+    limit: Option<super::RowCount>,
+    offset: Option<super::RowCount>,
     _marker: PhantomData<fn() -> (D, Output)>,
 }
 
+impl<D: Dialect, L> SetOp<D, crate::row::Row<L>> {
+    /// `ORDER BY` naming the column instead of counting to it: the position
+    /// is `row::Field`'s index, which the row already carries. A column the
+    /// combined result doesn't select is a compile error, which is the whole
+    /// reason no `ORDER BY <n>` is spellable here. Callable multiple times
+    /// like `Select::order_by`, each call appending a key.
+    pub fn order_by_column<K, Idx>(self, _key: K, dir: SortDir) -> Self
+    where
+        K: crate::row::LookupKey,
+        L: crate::row::Field<K::Key, Idx>,
+        Idx: crate::scope::Position,
+    {
+        self.order_by_ordinal(<Idx as crate::scope::Position>::POSITION, dir)
+    }
+}
+
+/// A set operation whose branches select one un-tupled column: its output
+/// is a bare value, so there is one position and nothing to name.
+impl<D: Dialect, V: crate::select::SingleColumn> SetOp<D, V> {
+    pub fn order_by(self, dir: SortDir) -> Self {
+        self.order_by_ordinal(1, dir)
+    }
+}
+
 impl<D: Dialect, Output> SetOp<D, Output> {
-    fn new(first: (String, Vec<Value>)) -> Self {
+    fn new(first: Fragment) -> Self {
         SetOp {
             first,
             rest: Vec::new(),
@@ -67,8 +87,8 @@ impl<D: Dialect, Output> SetOp<D, Output> {
         }
     }
 
-    fn push(mut self, kind: SetOpKind, branch: (String, Vec<Value>)) -> Self {
-        self.rest.push((kind, branch.0, branch.1));
+    fn push(mut self, kind: SetOpKind, branch: Fragment) -> Self {
+        self.rest.push((kind, branch));
         self
     }
 
@@ -76,9 +96,10 @@ impl<D: Dialect, Output> SetOp<D, Output> {
     /// removed, same as plain SQL `UNION`).
     pub fn union<ScopeB, SelB, IdxB>(self, other: &Select<D, ScopeB, SelB>) -> Self
     where
-        SelB: Selection<ScopeB, IdxB, Output = Output>,
+        SelB: Selection<ScopeB, IdxB>,
+        SelB::Output: SameShape<Output>,
     {
-        self.push(SetOpKind::Union, other.render_as::<RawEmbed<D>, IdxB>())
+        self.push(SetOpKind::Union, other.fragment::<IdxB>())
     }
 
     /// Appends another branch via `UNION ALL` (no deduplication — cheaper
@@ -86,85 +107,126 @@ impl<D: Dialect, Output> SetOp<D, Output> {
     /// duplicates are meaningful).
     pub fn union_all<ScopeB, SelB, IdxB>(self, other: &Select<D, ScopeB, SelB>) -> Self
     where
-        SelB: Selection<ScopeB, IdxB, Output = Output>,
+        SelB: Selection<ScopeB, IdxB>,
+        SelB::Output: SameShape<Output>,
     {
-        self.push(SetOpKind::UnionAll, other.render_as::<RawEmbed<D>, IdxB>())
+        self.push(SetOpKind::UnionAll, other.fragment::<IdxB>())
     }
 
     /// Appends another branch via `INTERSECT` (rows present in both).
     pub fn intersect<ScopeB, SelB, IdxB>(self, other: &Select<D, ScopeB, SelB>) -> Self
     where
-        SelB: Selection<ScopeB, IdxB, Output = Output>,
+        SelB: Selection<ScopeB, IdxB>,
+        SelB::Output: SameShape<Output>,
     {
-        self.push(SetOpKind::Intersect, other.render_as::<RawEmbed<D>, IdxB>())
+        self.push(SetOpKind::Intersect, other.fragment::<IdxB>())
     }
 
     /// Appends another branch via `EXCEPT` (rows in the accumulated result
     /// so far, minus rows in `other`).
     pub fn except<ScopeB, SelB, IdxB>(self, other: &Select<D, ScopeB, SelB>) -> Self
     where
-        SelB: Selection<ScopeB, IdxB, Output = Output>,
+        SelB: Selection<ScopeB, IdxB>,
+        SelB::Output: SameShape<Output>,
     {
-        self.push(SetOpKind::Except, other.render_as::<RawEmbed<D>, IdxB>())
+        self.push(SetOpKind::Except, other.fragment::<IdxB>())
     }
 
-    /// Orders the combined result by the `position`th (1-indexed) selected
-    /// column — see this struct's doc comment for why ordinal position,
-    /// not a typed column, is the only option here. Callable multiple
-    /// times like `Select::order_by`, each call appending a sort key.
-    pub fn order_by(mut self, position: u32, dir: SortDir) -> Self {
+    fn order_by_ordinal(mut self, position: u32, dir: SortDir) -> Self {
         self.order_by.push((position, dir));
         self
     }
 
-    pub fn limit(mut self, n: i64) -> Self {
-        self.limit = Some(n);
+    pub fn limit(mut self, n: impl super::IntoRowCount) -> Self {
+        self.limit = Some(n.into_row_count());
         self
     }
 
-    pub fn offset(mut self, n: i64) -> Self {
-        self.offset = Some(n);
+    pub fn offset(mut self, n: impl super::IntoRowCount) -> Self {
+        self.offset = Some(n.into_row_count());
         self
     }
 
-    pub fn to_sql(&self) -> (String, Vec<Value>) {
-        let mut sql = String::new();
-        let mut params = Vec::new();
+    /// How many rows the combination returns, its own `ORDER BY`/paging
+    /// dropped. The branches keep theirs: a `UNION` of two `LIMIT`ed queries
+    /// is a different set from a `UNION` of the whole ones.
+    pub fn count_sql(&self, _dialect: D) -> (String, Vec<Value>) {
+        let mut sink = QuerySink::<D>::new();
+        crate::render::render_count_wrapped::<D>(&mut sink, |sink| self.render_branches(sink));
+        sink.finish()
+    }
 
-        sql.push('(');
-        splice_raw::<D>(&self.first.0, &self.first.1, &mut sql, &mut params);
-        sql.push(')');
+    pub fn to_sql(&self, _dialect: D) -> (String, Vec<Value>) {
+        let mut sink = QuerySink::<D>::new();
+        self.render_branches(&mut sink);
+        self.render_ordering(&mut sink);
+        sink.finish()
+    }
 
-        for (kind, text, branch_params) in &self.rest {
-            sql.push_str(kind.keyword());
-            sql.push('(');
-            splice_raw::<D>(text, branch_params, &mut sql, &mut params);
-            sql.push(')');
-        }
+    /// The set operation itself, without the ordering and paging applied to
+    /// its result — which is what a count of it must leave out.
+    fn render_branches(&self, sink: &mut QuerySink<D>) {
+        let branch = |sink: &mut QuerySink<D>, sql: &Fragment| {
+            // A branch has to be shut off from the operator beside it:
+            // otherwise its `ORDER BY`/`LIMIT`, or its `WITH`, reads as the
+            // whole compound's and the statement doesn't parse. Where a
+            // dialect has no parentheses for that (SQLite), a derived table
+            // says the same thing — and saying it unconditionally is what
+            // keeps a clause added later from slipping through.
+            if D::PARENTHESIZED_SET_OP_BRANCHES {
+                sink.ch('(');
+                sql.splice_into(sink);
+                sink.ch(')');
+            } else {
+                sink.text("SELECT * FROM (");
+                sql.splice_into(sink);
+                sink.ch(')');
+            }
+        };
 
-        if !self.order_by.is_empty() {
-            sql.push_str(" ORDER BY ");
-            for (i, (position, dir)) in self.order_by.iter().enumerate() {
-                if i > 0 {
-                    sql.push_str(", ");
-                }
-                sql.push_str(&position.to_string());
-                sql.push_str(match dir {
-                    SortDir::Asc => " ASC",
-                    SortDir::Desc => " DESC",
-                });
+        // The chain is a left fold, and SQL's own precedence is not:
+        // `INTERSECT` binds tighter than `UNION`/`EXCEPT`, so flat text
+        // would reassociate `a.union(&b).intersect(&c)` into
+        // `A UNION (B INTERSECT C)` on Postgres — and, since SQLite reads
+        // compound operators left to right, would mean different things in
+        // the two dialects this crate executes. Parenthesising the
+        // accumulator wherever the operator changes says the fold outright,
+        // without encoding any dialect's precedence table.
+        let changes = self
+            .rest
+            .windows(2)
+            .filter(|pair| pair[0].0 != pair[1].0)
+            .count();
+        for _ in 0..changes {
+            if D::PARENTHESIZED_SET_OP_BRANCHES {
+                sink.ch('(');
+            } else {
+                sink.text("SELECT * FROM (");
             }
         }
-        if let Some(l) = self.limit {
-            sql.push_str(" LIMIT ");
-            sql.push_str(&l.to_string());
-        }
-        if let Some(o) = self.offset {
-            sql.push_str(" OFFSET ");
-            sql.push_str(&o.to_string());
-        }
 
-        (sql, params)
+        branch(sink, &self.first);
+        for (i, (kind, part)) in self.rest.iter().enumerate() {
+            if i > 0 && self.rest[i - 1].0 != *kind {
+                sink.ch(')');
+            }
+            sink.text(kind.keyword());
+            branch(sink, part);
+        }
+    }
+
+    fn render_ordering(&self, sink: &mut QuerySink<D>) {
+        if !self.order_by.is_empty() {
+            sink.text(" ORDER BY ");
+            for (i, (position, dir)) in self.order_by.iter().enumerate() {
+                if i > 0 {
+                    sink.text(", ");
+                }
+                sink.text(&position.to_string());
+                sink.text(crate::render::dir_keyword(*dir));
+            }
+        }
+        crate::select::render_limit_offset::<D>(sink, self.limit.as_ref(), self.offset.as_ref());
     }
 }
 
@@ -178,9 +240,10 @@ impl<D: Dialect, Scope, Sel> Select<D, Scope, Sel> {
     ) -> SetOp<D, Sel::Output>
     where
         Sel: Selection<Scope, IdxA>,
-        SelB: Selection<ScopeB, IdxB, Output = Sel::Output>,
+        SelB: Selection<ScopeB, IdxB>,
+        SelB::Output: SameShape<Sel::Output>,
     {
-        SetOp::new(self.render_as::<RawEmbed<D>, IdxA>()).union(other)
+        SetOp::new(self.fragment::<IdxA>()).union(other)
     }
 
     pub fn union_all<ScopeB, SelB, IdxA, IdxB>(
@@ -189,9 +252,10 @@ impl<D: Dialect, Scope, Sel> Select<D, Scope, Sel> {
     ) -> SetOp<D, Sel::Output>
     where
         Sel: Selection<Scope, IdxA>,
-        SelB: Selection<ScopeB, IdxB, Output = Sel::Output>,
+        SelB: Selection<ScopeB, IdxB>,
+        SelB::Output: SameShape<Sel::Output>,
     {
-        SetOp::new(self.render_as::<RawEmbed<D>, IdxA>()).union_all(other)
+        SetOp::new(self.fragment::<IdxA>()).union_all(other)
     }
 
     pub fn intersect<ScopeB, SelB, IdxA, IdxB>(
@@ -200,9 +264,10 @@ impl<D: Dialect, Scope, Sel> Select<D, Scope, Sel> {
     ) -> SetOp<D, Sel::Output>
     where
         Sel: Selection<Scope, IdxA>,
-        SelB: Selection<ScopeB, IdxB, Output = Sel::Output>,
+        SelB: Selection<ScopeB, IdxB>,
+        SelB::Output: SameShape<Sel::Output>,
     {
-        SetOp::new(self.render_as::<RawEmbed<D>, IdxA>()).intersect(other)
+        SetOp::new(self.fragment::<IdxA>()).intersect(other)
     }
 
     pub fn except<ScopeB, SelB, IdxA, IdxB>(
@@ -211,8 +276,9 @@ impl<D: Dialect, Scope, Sel> Select<D, Scope, Sel> {
     ) -> SetOp<D, Sel::Output>
     where
         Sel: Selection<Scope, IdxA>,
-        SelB: Selection<ScopeB, IdxB, Output = Sel::Output>,
+        SelB: Selection<ScopeB, IdxB>,
+        SelB::Output: SameShape<Sel::Output>,
     {
-        SetOp::new(self.render_as::<RawEmbed<D>, IdxA>()).except(other)
+        SetOp::new(self.fragment::<IdxA>()).except(other)
     }
 }

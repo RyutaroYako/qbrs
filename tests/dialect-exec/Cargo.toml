@@ -1,0 +1,11 @@
+[package]
+name = "dialect-exec"
+version.workspace = true
+edition.workspace = true
+publish = false
+
+[dev-dependencies]
+qbrs = { path = "../../crates/qbrs" }
+qbrs-core = { path = "../../crates/core" }
+sqlx = { version = "0.9", default-features = false, features = ["runtime-tokio", "sqlite"] }
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }

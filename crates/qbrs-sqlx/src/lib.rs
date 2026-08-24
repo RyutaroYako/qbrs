@@ -1,29 +1,22 @@
-//! Execution integration between qbrs's type-safe query builder and a real
-//! Postgres via `sqlx`. This crate owns *only* the value-binding and
-//! row-decoding glue — the query building, SQL rendering, and all
-//! compile-time safety guarantees live in `qbrs-core` and stay entirely
-//! independent of any particular async runtime or driver, mirroring how
-//! sea-query pairs with sea-query-binder rather than owning a driver layer
-//! itself (see the design plan section 6).
+//! Execution integration between qbrs's query builder and a real Postgres
+//! via `sqlx`. This crate owns only the value-binding and row-decoding glue;
+//! query building, SQL rendering, and every compile-time guarantee live in
+//! `qbrs-core`, which stays independent of any async runtime or driver.
 
-use qbrs_core::delete::{Delete, DeleteReturning};
+use qbrs_core::delete::Delete;
 use qbrs_core::dialect::Postgres;
-use qbrs_core::expr::{Column, Expr, SqlType, Value};
-use qbrs_core::insert::{Insert, InsertReturning, InsertRow};
-use qbrs_core::scope::{Superset, Table};
-use qbrs_core::select::{DynSelect, Prepared, PreparedParams, Select, Selection, SetOp};
-use qbrs_core::update::{Update, UpdateReturning};
-use sqlx::Row;
+use qbrs_core::expr::Value;
+use qbrs_core::insert::Insert;
+use qbrs_core::row::{Row, RowCons, RowNil};
+use qbrs_core::select::{DynSelect, Prepared, PreparedParams, Select, Selection, SetOp, Total};
+use qbrs_core::statement::{Returning, Statement, WrittenTable};
+use qbrs_core::update::Update;
+use sqlx::Row as _;
 use sqlx::postgres::PgRow;
 
-/// Errors from executing a qbrs query against Postgres via `sqlx`.
-///
-/// Kept as a real enum (rather than surfacing raw `sqlx::Error` for
-/// everything) so a qbrs-level misuse — an unresolved `prepare!{}`
-/// placeholder — is distinguishable from an actual driver/database error
-/// without string-matching a message. Previously both cases collapsed into
-/// `sqlx::Error::Configuration(String)`, which looked identical to a real
-/// sqlx-level configuration problem.
+/// Errors from executing a qbrs query against Postgres via `sqlx`. An enum
+/// rather than a bare `sqlx::Error` so a qbrs-level misuse is distinguishable
+/// from a driver/database error without string-matching a message.
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
     /// A real error from Postgres or the `sqlx` driver: a failed
@@ -31,35 +24,57 @@ pub enum Error {
     #[error(transparent)]
     Sqlx(#[from] sqlx::Error),
 
-    /// A named placeholder built via `prepare!{}` was never resolved
-    /// before execution — either `Prepared::resolve()` found no matching
-    /// field in `Params`, or `.load()`/`.execute()` was called directly on
-    /// a query still holding an unresolved `Value::Placeholder` instead of
-    /// going through `.prepare()` + `Prepared::resolve()`. Not a driver
-    /// error, so kept out of the `Sqlx` variant.
+    /// A `prepare!{}` placeholder reached execution unresolved: either
+    /// `Prepared::resolve()` found no matching field in `Params`, or the
+    /// query was executed directly instead of through `.prepare()`.
     #[error(transparent)]
     UnresolvedPlaceholder(#[from] qbrs_core::select::UnresolvedPlaceholder),
+
+    /// An `*Update` describing no assignment, or an insert of no rows —
+    /// caught where the request-shaped data is read (`Assignments::from_row`,
+    /// `.values_all`), never at a statement. Here so a handler returning
+    /// this crate's `Result` can `?` on that as readily as on a query.
+    #[error(transparent)]
+    NothingToSet(#[from] qbrs_core::update::NothingToSet),
+
+    #[error(transparent)]
+    NothingToInsert(#[from] qbrs_core::insert::NothingToInsert),
+
+    /// A column type is enabled on `qbrs` but not on `qbrs-sqlx`, so the
+    /// value renders and has nothing to bind it. The two crates carry the
+    /// same feature names for exactly this reason — turn it on in both.
+    #[error("`{0}` values need the matching feature on `qbrs-sqlx` too")]
+    FeatureNotEnabled(&'static str),
 }
 
-/// This crate's `Result`, parameterized only over the success type — same
-/// shape as `sqlx::Result`, with `qbrs_sqlx::Error` as the fixed error type.
+/// This crate's `Result`: the same shape as `sqlx::Result`, with
+/// `qbrs_sqlx::Error` as the fixed error type.
 pub type Result<T> = std::result::Result<T, Error>;
 
-/// Binds a closed `Value` to a real Postgres query parameter. Typed `NullX`
-/// variants (see `qbrs_core::expr::Value`'s doc comment) are what make this
-/// possible without knowing the surrounding column's type separately —
-/// binding a bare untyped NULL can fail Postgres's query planner even
-/// though the value itself is NULL, because the wire protocol still
-/// declares a parameter type.
+/// Every extension trait that puts a terminal method on a builder, plus the
+/// error type a caller's own signatures have to name and the `DecodeRow`
+/// bound a generic helper over `RowQuery` has to spell. `Result` is
+/// deliberately absent: a glob-imported alias of that name shadows
+/// `std::result::Result` in every module that follows, and a service layer
+/// has its own error type in most of them — write `qbrs_sqlx::Result<T>`
+/// where the alias is wanted. Which trait applies
+/// depends on the builder, so importing them one at a time is bookkeeping
+/// with no decision in it — and `count` in particular resolves against
+/// `Iterator::count` with a confusing message until `CountExt` is in scope.
+pub mod prelude {
+    pub use crate::Error;
+    pub use crate::{
+        CountExt, CountQuery, DecodeRow, ExecuteExt, LoadExt, PreparedCountExt, PreparedExt,
+        PreparedQuery, PreparedTotal, RowQuery, WriteStatement,
+    };
+}
+
+/// Binds a `Value` to a Postgres query parameter. `Value`'s typed `NullX`
+/// variants carry the parameter type a NULL bind still has to declare.
 ///
-/// Fallible because of `Value::Placeholder`: reaching this function means
-/// a `prepare!{}`-style named placeholder was never resolved via
-/// `Prepared::resolve()` before execution (e.g. `.load()` was called
-/// directly on a query built with the low-level, doc-hidden
-/// `expr::placeholder()` instead of going through `.prepare()`) — a real
-/// misuse this crate can't prevent at compile time, so it's surfaced as an
-/// `Error::UnresolvedPlaceholder` here rather than silently binding the
-/// wrong thing or panicking.
+/// Fallible only for `Value::Placeholder`: an unresolved named placeholder
+/// is a misuse no compile-time check here can catch, so it surfaces as
+/// `Error::UnresolvedPlaceholder` rather than a wrong bind or a panic.
 fn bind_value<'q>(
     query: sqlx::query::Query<'q, sqlx::Postgres, sqlx::postgres::PgArguments>,
     v: Value,
@@ -77,9 +92,29 @@ fn bind_value<'q>(
         Value::NullText => query.bind(None::<String>),
         Value::NullBool => query.bind(None::<bool>),
         Value::NullBytes => query.bind(None::<Vec<u8>>),
+        #[cfg(feature = "chrono")]
+        Value::Timestamptz(x) => query.bind(x),
+        #[cfg(feature = "chrono")]
+        Value::NullTimestamptz => query.bind(None::<chrono::DateTime<chrono::Utc>>),
+        #[cfg(feature = "chrono")]
+        Value::Date(x) => query.bind(x),
+        #[cfg(feature = "chrono")]
+        Value::NullDate => query.bind(None::<chrono::NaiveDate>),
+        #[cfg(feature = "uuid")]
+        Value::Uuid(x) => query.bind(x),
+        #[cfg(feature = "uuid")]
+        Value::NullUuid => query.bind(None::<uuid::Uuid>),
+        #[cfg(feature = "decimal")]
+        Value::Numeric(x) => query.bind(x),
+        #[cfg(feature = "decimal")]
+        Value::NullNumeric => query.bind(None::<rust_decimal::Decimal>),
         Value::Placeholder(name) => {
             return Err(qbrs_core::select::UnresolvedPlaceholder(name).into());
         }
+        // Reachable only when a column type is on in `qbrs-core` and off
+        // here: the variant exists, the arm that binds it doesn't.
+        #[allow(unreachable_patterns)]
+        other => return Err(Error::FeatureNotEnabled(other.type_name())),
     })
 }
 
@@ -93,152 +128,32 @@ fn bind_all<'q>(
     Ok(query)
 }
 
-/// Decodes a `Selection<Scope, Idx>` positionally out of a real `PgRow`.
-/// Kept as a separate trait (rather than folded into `Selection` itself) so
-/// `qbrs-core` never has to depend on `sqlx`; every impl here just adds a
-/// `sqlx::Decode`/`Type` bound on top of an existing `Selection` impl,
-/// which is also what makes join-derived `Option<T>` wrapping "just work"
-/// here for free — `Selection::Output` already resolved that, and
-/// `Option<T>: Decode` has a blanket impl in sqlx itself.
-pub trait PgDecode<Scope, Idx>: Selection<Scope, Idx> {
-    #[doc(hidden)]
-    fn decode_at(row: &PgRow, idx: &mut usize) -> sqlx::Result<Self::Output>;
-}
-
-impl<T: Table, S: SqlType, Scope, Idx> PgDecode<Scope, Idx> for Column<T, S>
-where
-    Self: Selection<Scope, Idx>,
-    <Self as Selection<Scope, Idx>>::Output:
-        for<'r> sqlx::Decode<'r, sqlx::Postgres> + sqlx::Type<sqlx::Postgres>,
-{
-    fn decode_at(row: &PgRow, idx: &mut usize) -> sqlx::Result<Self::Output> {
-        let v = row.try_get::<Self::Output, _>(*idx)?;
-        *idx += 1;
-        Ok(v)
-    }
-}
-
-impl<Req, S: SqlType, Scope, Idx> PgDecode<Scope, Idx> for Expr<Req, S>
-where
-    Scope: Superset<Req, Idx>,
-    S::Native: for<'r> sqlx::Decode<'r, sqlx::Postgres> + sqlx::Type<sqlx::Postgres>,
-{
-    fn decode_at(row: &PgRow, idx: &mut usize) -> sqlx::Result<Self::Output> {
-        let v = row.try_get::<S::Native, _>(*idx)?;
-        *idx += 1;
-        Ok(v)
-    }
-}
-
-impl<Scope, Idx, A: PgDecode<Scope, Idx>> PgDecode<Scope, Idx> for (A,) {
-    fn decode_at(row: &PgRow, idx: &mut usize) -> sqlx::Result<Self::Output> {
-        Ok((A::decode_at(row, idx)?,))
-    }
-}
-
-impl<Scope, IdxA, IdxB, A: PgDecode<Scope, IdxA>, B: PgDecode<Scope, IdxB>>
-    PgDecode<Scope, (IdxA, IdxB)> for (A, B)
-{
-    fn decode_at(row: &PgRow, idx: &mut usize) -> sqlx::Result<Self::Output> {
-        Ok((A::decode_at(row, idx)?, B::decode_at(row, idx)?))
-    }
-}
-
-impl<
-    Scope,
-    IdxA,
-    IdxB,
-    IdxC,
-    A: PgDecode<Scope, IdxA>,
-    B: PgDecode<Scope, IdxB>,
-    C: PgDecode<Scope, IdxC>,
-> PgDecode<Scope, (IdxA, IdxB, IdxC)> for (A, B, C)
-{
-    fn decode_at(row: &PgRow, idx: &mut usize) -> sqlx::Result<Self::Output> {
-        Ok((
-            A::decode_at(row, idx)?,
-            B::decode_at(row, idx)?,
-            C::decode_at(row, idx)?,
-        ))
-    }
-}
-
-impl<
-    Scope,
-    IdxA,
-    IdxB,
-    IdxC,
-    IdxD,
-    A: PgDecode<Scope, IdxA>,
-    B: PgDecode<Scope, IdxB>,
-    C: PgDecode<Scope, IdxC>,
-    D: PgDecode<Scope, IdxD>,
-> PgDecode<Scope, (IdxA, IdxB, IdxC, IdxD)> for (A, B, C, D)
-{
-    fn decode_at(row: &PgRow, idx: &mut usize) -> sqlx::Result<Self::Output> {
-        Ok((
-            A::decode_at(row, idx)?,
-            B::decode_at(row, idx)?,
-            C::decode_at(row, idx)?,
-            D::decode_at(row, idx)?,
-        ))
-    }
-}
-
-impl<
-    Scope,
-    IdxA,
-    IdxB,
-    IdxC,
-    IdxD,
-    IdxE,
-    A: PgDecode<Scope, IdxA>,
-    B: PgDecode<Scope, IdxB>,
-    C: PgDecode<Scope, IdxC>,
-    D: PgDecode<Scope, IdxD>,
-    E: PgDecode<Scope, IdxE>,
-> PgDecode<Scope, (IdxA, IdxB, IdxC, IdxD, IdxE)> for (A, B, C, D, E)
-{
-    fn decode_at(row: &PgRow, idx: &mut usize) -> sqlx::Result<Self::Output> {
-        Ok((
-            A::decode_at(row, idx)?,
-            B::decode_at(row, idx)?,
-            C::decode_at(row, idx)?,
-            D::decode_at(row, idx)?,
-            E::decode_at(row, idx)?,
-        ))
-    }
-}
-
-/// Generic over `E: sqlx::PgExecutor` (rather than hardcoding `&PgPool`) so
-/// every public `.load()`/`.execute()` method here works unchanged against
-/// either a plain `&PgPool` or a `&mut sqlx::PgTransaction<'_>` — sqlx
-/// itself only implements `Executor` for `&mut PgConnection` (which
-/// `Transaction` derefs to), not `Transaction` directly, so callers pass
-/// `&mut *tx`, matching sqlx's own transaction usage pattern.
-async fn fetch_all<'e, Scope, Idx, Sel: PgDecode<Scope, Idx>, E: sqlx::PgExecutor<'e>>(
+/// Generic over `E: sqlx::PgExecutor` so every `.load()`/`.execute()` works
+/// against a `&PgPool` or a transaction alike. sqlx implements `Executor` for
+/// `&mut PgConnection`, not `Transaction`, so callers pass `&mut *tx`.
+async fn fetch_all<'e, T: DecodeRow, E: sqlx::PgExecutor<'e>>(
     executor: E,
     sql: &str,
     params: Vec<Value>,
-) -> Result<Vec<Sel::Output>> {
+) -> Result<Vec<T>> {
     let rows = bind_all(sqlx::query(sqlx::AssertSqlSafe(sql)), params)?
         .fetch_all(executor)
         .await?;
     rows.iter()
-        .map(|row| Sel::decode_at(row, &mut 0).map_err(Error::from))
+        .map(|row| T::decode_at(row, &mut 0).map_err(Error::from))
         .collect()
 }
 
-async fn fetch_optional<'e, Scope, Idx, Sel: PgDecode<Scope, Idx>, E: sqlx::PgExecutor<'e>>(
+async fn fetch_optional<'e, T: DecodeRow, E: sqlx::PgExecutor<'e>>(
     executor: E,
     sql: &str,
     params: Vec<Value>,
-) -> Result<Option<Sel::Output>> {
+) -> Result<Option<T>> {
     let row = bind_all(sqlx::query(sqlx::AssertSqlSafe(sql)), params)?
         .fetch_optional(executor)
         .await?;
     row.as_ref()
-        .map(|r| Sel::decode_at(r, &mut 0).map_err(Error::from))
+        .map(|r| T::decode_at(r, &mut 0).map_err(Error::from))
         .transpose()
 }
 
@@ -253,165 +168,213 @@ async fn execute_only<'e, E: sqlx::PgExecutor<'e>>(
     Ok(result.rows_affected())
 }
 
-/// Threading an explicit `Idx` parameter (rather than hiding it in a
-/// `where` clause on a single-parameter trait) is the same fix the Phase 0
-/// spike already needed for `scope::Superset` itself: Rust has no
-/// existential quantification over impl generics, so an index used only in
-/// a `where` clause (and not the trait's own parameter list) is an
-/// unconstrained-type-parameter compile error (E0207). Callers never see
-/// `Idx` — it's always inferred at the call site, exactly like `Find`'s and
-/// `Superset`'s own indices.
-pub trait LoadExt<Idx> {
-    type Output;
-    fn load<'e, E: sqlx::PgExecutor<'e>>(
-        &self,
-        executor: E,
-    ) -> impl std::future::Future<Output = Result<Vec<Self::Output>>>;
-    fn load_one<'e, E: sqlx::PgExecutor<'e>>(
-        &self,
-        executor: E,
-    ) -> impl std::future::Future<Output = Result<Option<Self::Output>>>;
+/// What a row-producing query renders to, and what its rows decode to: a
+/// `SELECT`, a `RETURNING` clause, an erased `DynSelect`, a `UNION` chain.
+/// `LoadExt` is the pair of methods over it, and the split is load-bearing
+/// — with the validity bound on the impl instead, an invalid selection
+/// makes `.load(..)` not exist, and the scope error the builder wanted to
+/// report is replaced by a method-resolution failure that never mentions
+/// the table.
+///
+/// `Idx` is threaded through the trait's parameter list for the reason
+/// `scope::Superset` explains. Callers never see it; it's inferred.
+#[diagnostic::on_unimplemented(
+    message = "`{Self}` isn't a query this crate can run",
+    label = "a `Select`, a `RETURNING`, a `DynSelect` or a set operation, in the `Postgres` dialect, whose values are all types `DecodeRow` covers"
+)]
+pub trait RowQuery<Idx> {
+    type Output: DecodeRow;
+
+    #[doc(hidden)]
+    fn rendered(&self) -> (String, Vec<Value>);
 }
 
-impl<Scope, Sel: PgDecode<Scope, Idx>, Idx> LoadExt<Idx> for Select<Postgres, Scope, Sel> {
+/// `load` for the rows, `load_one` for the first of them, and
+/// `ExecuteExt::execute` where there are none to decode. One trait for
+/// every row-producing builder keeps the terminal vocabulary tied to what a
+/// statement yields rather than to which builder happens to be in hand.
+///
+/// Implemented for every builder, satisfiable by the ones that produce
+/// rows: what a builder can't do is then reported by `RowQuery`, which says
+/// so, rather than by the method not existing — which rustc answers with a
+/// list of unsatisfied bounds or, worse, by suggesting `Iterator`. Not a
+/// blanket impl, since `load`/`count`/`execute` are names other traits in a
+/// caller's scope have too. A builder added here needs its three empty
+/// impls, or its terminal goes back to reporting nothing.
+pub trait LoadExt {
+    fn load<'e, Idx, E: sqlx::PgExecutor<'e>>(
+        &self,
+        executor: E,
+    ) -> impl std::future::Future<Output = Result<Vec<<Self as RowQuery<Idx>>::Output>>>
+    where
+        Self: RowQuery<Idx>,
+    {
+        let (sql, params) = self.rendered();
+        async move { fetch_all::<<Self as RowQuery<Idx>>::Output, E>(executor, &sql, params).await }
+    }
+
+    fn load_one<'e, Idx, E: sqlx::PgExecutor<'e>>(
+        &self,
+        executor: E,
+    ) -> impl std::future::Future<Output = Result<Option<<Self as RowQuery<Idx>>::Output>>>
+    where
+        Self: RowQuery<Idx>,
+    {
+        let (sql, params) = self.rendered();
+        async move { fetch_optional::<<Self as RowQuery<Idx>>::Output, E>(executor, &sql, params).await }
+    }
+}
+
+impl<D, Scope, Sel, Outer> LoadExt for Select<D, Scope, Sel, Outer> {}
+impl<S, Sel> LoadExt for Returning<S, Sel> {}
+impl<D, Output> LoadExt for DynSelect<D, Output> {}
+impl<D, Output> LoadExt for SetOp<D, Output> {}
+impl<D, R: qbrs_core::insert::InsertRow> LoadExt for Insert<D, R> {}
+impl<D, T: qbrs_core::scope::Table> LoadExt for Update<D, T> {}
+impl<D, T: qbrs_core::scope::Table> LoadExt for Delete<D, T> {}
+
+impl<Scope, Sel, Idx> RowQuery<Idx> for Select<Postgres, Scope, Sel>
+where
+    Sel: Selection<Scope, Idx>,
+    Sel::Output: DecodeRow,
+{
     type Output = Sel::Output;
 
-    async fn load<'e, E: sqlx::PgExecutor<'e>>(&self, executor: E) -> Result<Vec<Self::Output>> {
-        let (sql, params) = self.to_sql::<Idx>();
-        fetch_all::<Scope, Idx, Sel, E>(executor, &sql, params).await
-    }
-
-    async fn load_one<'e, E: sqlx::PgExecutor<'e>>(
-        &self,
-        executor: E,
-    ) -> Result<Option<Self::Output>> {
-        let (sql, params) = self.to_sql::<Idx>();
-        fetch_optional::<Scope, Idx, Sel, E>(executor, &sql, params).await
+    fn rendered(&self) -> (String, Vec<Value>) {
+        self.to_sql::<Idx>(Postgres)
     }
 }
 
+/// `SELECT count(*)` over a query's `FROM`/`JOIN`/`WHERE`/`GROUP BY`, with
+/// its `ORDER BY`/`LIMIT`/`OFFSET` dropped — a total counts the rows that
+/// match, not the page being shown. Returns a number rather than an
+/// `Option`, since a count query always produces exactly one row.
+#[diagnostic::on_unimplemented(
+    message = "`{Self}` isn't a query this crate can count",
+    label = "a `Select`, a `DynSelect` or a set operation in the `Postgres` dialect is; a writing statement reports rows affected through `.execute(..)` instead"
+)]
+pub trait CountQuery<Idx> {
+    #[doc(hidden)]
+    fn count_rendered(&self) -> (String, Vec<Value>);
+}
+
+/// The bound is on the method, and the impls are per-builder, for the two
+/// reasons `LoadExt` explains.
+pub trait CountExt {
+    fn count<'e, Idx, E: sqlx::PgExecutor<'e>>(
+        &self,
+        executor: E,
+    ) -> impl std::future::Future<Output = Result<i64>>
+    where
+        Self: CountQuery<Idx>,
+    {
+        count_rows(executor, self.count_rendered())
+    }
+}
+
+impl<D, Scope, Sel, Outer> CountExt for Select<D, Scope, Sel, Outer> {}
+impl<S, Sel> CountExt for Returning<S, Sel> {}
+impl<D, Output> CountExt for DynSelect<D, Output> {}
+impl<D, Output> CountExt for SetOp<D, Output> {}
+impl<D, R: qbrs_core::insert::InsertRow> CountExt for Insert<D, R> {}
+impl<D, T: qbrs_core::scope::Table> CountExt for Update<D, T> {}
+impl<D, T: qbrs_core::scope::Table> CountExt for Delete<D, T> {}
+
+impl<Scope, Sel: Selection<Scope, Idx>, Idx> CountQuery<Idx> for Select<Postgres, Scope, Sel> {
+    fn count_rendered(&self) -> (String, Vec<Value>) {
+        self.count_sql::<Idx>(Postgres)
+    }
+}
+
+/// Erasure is for a query whose joins depend on a condition, and such a
+/// query is paged like any other, so it counts like any other. The same
+/// goes for a set-operation chain.
+impl<Output> CountQuery<()> for DynSelect<Postgres, Output> {
+    fn count_rendered(&self) -> (String, Vec<Value>) {
+        self.count_sql(Postgres)
+    }
+}
+
+impl<Output> CountQuery<()> for SetOp<Postgres, Output> {
+    fn count_rendered(&self) -> (String, Vec<Value>) {
+        self.count_sql(Postgres)
+    }
+}
+
+async fn count_rows<'e, E: sqlx::PgExecutor<'e>>(
+    executor: E,
+    (sql, params): (String, Vec<Value>),
+) -> Result<i64> {
+    let row = bind_all(sqlx::query(sqlx::AssertSqlSafe(sql.as_str())), params)?
+        .fetch_one(executor)
+        .await?;
+    Ok(row.try_get::<i64, _>(0)?)
+}
+
+/// Every writing statement, rendered: what `execute` returns is rows
+/// affected, whichever of the three it was.
+#[diagnostic::on_unimplemented(
+    message = "`{Self}` isn't a statement this crate can execute",
+    label = "an `INSERT`, `UPDATE` or `DELETE` in the `Postgres` dialect is; a `SELECT` or a `RETURNING` yields rows, so it goes through `.load(..)` — and a prepared query through `.load(.., params)`"
+)]
+pub trait WriteStatement {
+    #[doc(hidden)]
+    fn write_rendered(&self) -> (String, Vec<Value>);
+}
+
+#[diagnostic::do_not_recommend]
+impl<S: Statement<Dialect = Postgres>> WriteStatement for S {
+    fn write_rendered(&self) -> (String, Vec<Value>) {
+        self.to_sql(Postgres)
+    }
+}
+
+/// The bound is on the method, and the impls are per-builder, for the two
+/// reasons `LoadExt` explains.
 pub trait ExecuteExt {
     fn execute<'e, E: sqlx::PgExecutor<'e>>(
         &self,
         executor: E,
-    ) -> impl std::future::Future<Output = Result<u64>>;
-}
-
-impl<T: Table, R: InsertRow<Table = T>> ExecuteExt for Insert<Postgres, T, R> {
-    async fn execute<'e, E: sqlx::PgExecutor<'e>>(&self, executor: E) -> Result<u64> {
-        let (sql, params) = self.to_sql();
-        execute_only(executor, &sql, params).await
+    ) -> impl std::future::Future<Output = Result<u64>>
+    where
+        Self: WriteStatement,
+    {
+        let (sql, params) = self.write_rendered();
+        async move { execute_only(executor, &sql, params).await }
     }
 }
 
-impl<T: Table> ExecuteExt for Update<Postgres, T> {
-    async fn execute<'e, E: sqlx::PgExecutor<'e>>(&self, executor: E) -> Result<u64> {
-        let (sql, params) = self.to_sql();
-        execute_only(executor, &sql, params).await
-    }
-}
+impl<D, Scope, Sel, Outer> ExecuteExt for Select<D, Scope, Sel, Outer> {}
+impl<S, Sel> ExecuteExt for Returning<S, Sel> {}
+impl<D, Output> ExecuteExt for DynSelect<D, Output> {}
+impl<D, Output> ExecuteExt for SetOp<D, Output> {}
+impl<D, R: qbrs_core::insert::InsertRow> ExecuteExt for Insert<D, R> {}
+impl<D, T: qbrs_core::scope::Table> ExecuteExt for Update<D, T> {}
+impl<D, T: qbrs_core::scope::Table> ExecuteExt for Delete<D, T> {}
 
-impl<T: Table> ExecuteExt for Delete<Postgres, T> {
-    async fn execute<'e, E: sqlx::PgExecutor<'e>>(&self, executor: E) -> Result<u64> {
-        let (sql, params) = self.to_sql();
-        execute_only(executor, &sql, params).await
-    }
-}
-
-pub trait LoadReturningExt<Idx> {
-    type Output;
-    fn load<'e, E: sqlx::PgExecutor<'e>>(
-        &self,
-        executor: E,
-    ) -> impl std::future::Future<Output = Result<Vec<Self::Output>>>;
-}
-
-impl<T: Table, R: InsertRow<Table = T>, Sel, Idx> LoadReturningExt<Idx>
-    for InsertReturning<Postgres, T, R, Sel>
+/// One impl for every `RETURNING`: what a statement returns is decided by
+/// its selection, not by which statement it was.
+impl<S: Statement<Dialect = Postgres>, Sel, Idx> RowQuery<Idx> for Returning<S, Sel>
 where
-    Sel: PgDecode<
-            qbrs_core::scope::Cons<
-                qbrs_core::scope::TableSlot<T, qbrs_core::scope::NotNull>,
-                qbrs_core::scope::Nil,
-            >,
-            Idx,
-        >,
+    Sel: Selection<WrittenTable<S::Table>, Idx>,
+    Sel::Output: DecodeRow,
 {
     type Output = Sel::Output;
-    async fn load<'e, E: sqlx::PgExecutor<'e>>(&self, executor: E) -> Result<Vec<Self::Output>> {
-        let (sql, params) = self.to_sql();
-        fetch_all::<
-            qbrs_core::scope::Cons<
-                qbrs_core::scope::TableSlot<T, qbrs_core::scope::NotNull>,
-                qbrs_core::scope::Nil,
-            >,
-            Idx,
-            Sel,
-            E,
-        >(executor, &sql, params)
-        .await
+    fn rendered(&self) -> (String, Vec<Value>) {
+        self.to_sql(Postgres)
     }
 }
 
-impl<T: Table, Sel, Idx> LoadReturningExt<Idx> for UpdateReturning<Postgres, T, Sel>
-where
-    Sel: PgDecode<
-            qbrs_core::scope::Cons<
-                qbrs_core::scope::TableSlot<T, qbrs_core::scope::NotNull>,
-                qbrs_core::scope::Nil,
-            >,
-            Idx,
-        >,
-{
-    type Output = Sel::Output;
-    async fn load<'e, E: sqlx::PgExecutor<'e>>(&self, executor: E) -> Result<Vec<Self::Output>> {
-        let (sql, params) = self.to_sql();
-        fetch_all::<
-            qbrs_core::scope::Cons<
-                qbrs_core::scope::TableSlot<T, qbrs_core::scope::NotNull>,
-                qbrs_core::scope::Nil,
-            >,
-            Idx,
-            Sel,
-            E,
-        >(executor, &sql, params)
-        .await
-    }
-}
-
-impl<T: Table, Sel, Idx> LoadReturningExt<Idx> for DeleteReturning<Postgres, T, Sel>
-where
-    Sel: PgDecode<
-            qbrs_core::scope::Cons<
-                qbrs_core::scope::TableSlot<T, qbrs_core::scope::NotNull>,
-                qbrs_core::scope::Nil,
-            >,
-            Idx,
-        >,
-{
-    type Output = Sel::Output;
-    async fn load<'e, E: sqlx::PgExecutor<'e>>(&self, executor: E) -> Result<Vec<Self::Output>> {
-        let (sql, params) = self.to_sql();
-        fetch_all::<
-            qbrs_core::scope::Cons<
-                qbrs_core::scope::TableSlot<T, qbrs_core::scope::NotNull>,
-                qbrs_core::scope::Nil,
-            >,
-            Idx,
-            Sel,
-            E,
-        >(executor, &sql, params)
-        .await
-    }
-}
-
-/// Decodes a `DynSelect`'s `Output` positionally out of a `PgRow`. A
-/// separate, narrower trait from `PgDecode` rather than a reuse of it:
-/// once a query is erased via `.erase()`, only the plain-Rust `Output`
-/// type survives (see `DynSelect`'s doc comment) — there's no `Selection`
-/// impl left to piggyback decode logic on, so this is implemented directly
-/// against the same closed set of native types `Selection`/`PgDecode`
-/// cover, not derived from them.
+/// Decodes a query's `Output` positionally out of a `PgRow`. Keyed on the
+/// plain-Rust type a selection produces rather than on the selection
+/// itself: erasure leaves only `Output`, with no `Selection` impl left to
+/// hang decoding off, so this is implemented directly against the closed set
+/// of native types.
+#[diagnostic::on_unimplemented(
+    message = "`{Self}` isn't a value this crate can decode",
+    label = "every selected column has to decode to one of the six built-in natives, or to a type whose feature is on here as well as on `qbrs`",
+    note = "`chrono`/`uuid`/`decimal` have to be enabled on `qbrs-sqlx` too — they are separate `cfg`s over one `Value`"
+)]
 pub trait DecodeRow: Sized {
     #[doc(hidden)]
     fn decode_at(row: &PgRow, idx: &mut usize) -> sqlx::Result<Self>;
@@ -441,138 +404,161 @@ decode_row_leaf!(f64);
 decode_row_leaf!(String);
 decode_row_leaf!(bool);
 decode_row_leaf!(Vec<u8>);
+#[cfg(feature = "chrono")]
+decode_row_leaf!(chrono::DateTime<chrono::Utc>);
+#[cfg(feature = "chrono")]
+decode_row_leaf!(chrono::NaiveDate);
+#[cfg(feature = "uuid")]
+decode_row_leaf!(uuid::Uuid);
+#[cfg(feature = "decimal")]
+decode_row_leaf!(rust_decimal::Decimal);
 
-impl<A: DecodeRow> DecodeRow for (A,) {
-    fn decode_at(row: &PgRow, idx: &mut usize) -> sqlx::Result<Self> {
-        Ok((A::decode_at(row, idx)?,))
+impl DecodeRow for RowNil {
+    fn decode_at(_row: &PgRow, _idx: &mut usize) -> sqlx::Result<Self> {
+        Ok(RowNil)
     }
 }
-impl<A: DecodeRow, B: DecodeRow> DecodeRow for (A, B) {
+
+impl<K, V: DecodeRow, Tail: DecodeRow> DecodeRow for RowCons<K, V, Tail> {
     fn decode_at(row: &PgRow, idx: &mut usize) -> sqlx::Result<Self> {
-        Ok((A::decode_at(row, idx)?, B::decode_at(row, idx)?))
+        let value = V::decode_at(row, idx)?;
+        Ok(RowCons::new(value, Tail::decode_at(row, idx)?))
     }
 }
-impl<A: DecodeRow, B: DecodeRow, C: DecodeRow> DecodeRow for (A, B, C) {
+
+impl<L: DecodeRow> DecodeRow for Row<L> {
     fn decode_at(row: &PgRow, idx: &mut usize) -> sqlx::Result<Self> {
-        Ok((
-            A::decode_at(row, idx)?,
-            B::decode_at(row, idx)?,
-            C::decode_at(row, idx)?,
-        ))
+        Ok(Row::new(L::decode_at(row, idx)?))
     }
 }
-impl<A: DecodeRow, B: DecodeRow, C: DecodeRow, D: DecodeRow> DecodeRow for (A, B, C, D) {
-    fn decode_at(row: &PgRow, idx: &mut usize) -> sqlx::Result<Self> {
-        Ok((
-            A::decode_at(row, idx)?,
-            B::decode_at(row, idx)?,
-            C::decode_at(row, idx)?,
-            D::decode_at(row, idx)?,
-        ))
+
+/// An erased query and a set-op chain were both rendered before their
+/// selection type was gone, leaving nothing for `Idx` to index — hence
+/// `RowQuery<()>`, the same trait with an empty proof.
+impl<Output: DecodeRow> RowQuery<()> for DynSelect<Postgres, Output> {
+    type Output = Output;
+    fn rendered(&self) -> (String, Vec<Value>) {
+        self.to_sql(Postgres)
     }
 }
-impl<A: DecodeRow, B: DecodeRow, C: DecodeRow, D: DecodeRow, E: DecodeRow> DecodeRow
-    for (A, B, C, D, E)
+
+impl<Output: DecodeRow> RowQuery<()> for SetOp<Postgres, Output> {
+    type Output = Output;
+    fn rendered(&self) -> (String, Vec<Value>) {
+        self.to_sql(Postgres)
+    }
+}
+
+/// Runs a `prepare!{}`-built query, resolving its named placeholders from
+/// `params` first. Separate from `LoadExt` only because the values arrive at
+/// the call rather than being baked into the query: one `Prepared` is meant
+/// to serve many calls, and `.resolve()` clones the template rather than
+/// re-rendering it.
+#[diagnostic::on_unimplemented(
+    message = "`{Self}` isn't a prepared query this crate can run",
+    label = "a `.prepare()`-built query is — `Prepared<D, Params, Output>`, params before output — and its `Params` have to be the ones it declared"
+)]
+pub trait PreparedQuery<Params> {
+    type Output: DecodeRow;
+    #[doc(hidden)]
+    fn resolved(&self, params: Params) -> Result<(String, Vec<Value>)>;
+}
+
+/// The bound is on the method, and the impls are per-builder, for the two
+/// reasons `LoadExt` explains.
+pub trait PreparedExt {
+    fn load<'e, Params, E: sqlx::PgExecutor<'e>>(
+        &self,
+        executor: E,
+        params: Params,
+    ) -> impl std::future::Future<Output = Result<Vec<<Self as PreparedQuery<Params>>::Output>>>
+    where
+        Self: PreparedQuery<Params>,
+    {
+        let resolved = self.resolved(params);
+        async move {
+            let (sql, values) = resolved?;
+            fetch_all::<<Self as PreparedQuery<Params>>::Output, E>(executor, &sql, values).await
+        }
+    }
+
+    fn load_one<'e, Params, E: sqlx::PgExecutor<'e>>(
+        &self,
+        executor: E,
+        params: Params,
+    ) -> impl std::future::Future<Output = Result<Option<<Self as PreparedQuery<Params>>::Output>>>
+    where
+        Self: PreparedQuery<Params>,
+    {
+        let resolved = self.resolved(params);
+        async move {
+            let (sql, values) = resolved?;
+            fetch_optional::<<Self as PreparedQuery<Params>>::Output, E>(executor, &sql, values)
+                .await
+        }
+    }
+}
+
+impl<D, Params, Output> PreparedExt for Prepared<D, Params, Output> {}
+
+// A prepared query's `load`/`count` are told apart from the plain ones by
+// arity, but `execute` is not — without this, it is the one terminal on the
+// one builder that reports nothing.
+impl<D, Params, Output> ExecuteExt for Prepared<D, Params, Output> {}
+
+#[diagnostic::do_not_recommend]
+impl<Params: PreparedParams, Output: DecodeRow> PreparedQuery<Params>
+    for Prepared<Postgres, Params, Output>
 {
-    fn decode_at(row: &PgRow, idx: &mut usize) -> sqlx::Result<Self> {
-        Ok((
-            A::decode_at(row, idx)?,
-            B::decode_at(row, idx)?,
-            C::decode_at(row, idx)?,
-            D::decode_at(row, idx)?,
-            E::decode_at(row, idx)?,
-        ))
-    }
-}
-
-pub trait LoadDynExt {
-    type Output;
-    fn load<'e, E: sqlx::PgExecutor<'e>>(
-        &self,
-        executor: E,
-    ) -> impl std::future::Future<Output = Result<Vec<Self::Output>>>;
-}
-
-impl<Output: DecodeRow> LoadDynExt for DynSelect<Postgres, Output> {
     type Output = Output;
-    async fn load<'e, E: sqlx::PgExecutor<'e>>(&self, executor: E) -> Result<Vec<Output>> {
-        let (sql, params) = self.to_sql();
-        let rows = bind_all(sqlx::query(sqlx::AssertSqlSafe(sql.as_str())), params)?
-            .fetch_all(executor)
-            .await?;
-        rows.iter()
-            .map(|row| Output::decode_at(row, &mut 0).map_err(Error::from))
-            .collect()
+
+    fn resolved(&self, params: Params) -> Result<(String, Vec<Value>)> {
+        Ok(self.resolve(params)?)
     }
 }
 
-/// Loads a `UNION`/`INTERSECT`/`EXCEPT` chain (see
-/// `qbrs_core::select::SetOp`) against real Postgres. Reuses the same
-/// `DecodeRow` trait `LoadDynExt` uses — once combined via a set operator, a
-/// `SetOp`'s branches no longer carry their individual `Scope`s/`Selection`
-/// impls (they were already rendered to text at combine time), so there is
-/// nothing left to decode against but the plain `Output` type, exactly the
-/// erased situation `DynSelect` is already in.
-pub trait LoadSetOpExt {
-    type Output;
-    fn load<'e, E: sqlx::PgExecutor<'e>>(
-        &self,
-        executor: E,
-    ) -> impl std::future::Future<Output = Result<Vec<Self::Output>>>;
+/// A prepared total. Separate from `PreparedExt` for the reason `CountExt`
+/// is separate from `LoadExt`: a count produces a number, not rows.
+#[diagnostic::on_unimplemented(
+    message = "`{Self}` isn't a prepared total this crate can run",
+    label = "`.prepare_count()` builds one; `.prepare()` builds a query whose rows go through `.load(..)`"
+)]
+pub trait PreparedTotal<Params> {
+    #[doc(hidden)]
+    fn resolved_count(&self, params: Params) -> Result<(String, Vec<Value>)>;
 }
 
-impl<Output: DecodeRow> LoadSetOpExt for SetOp<Postgres, Output> {
-    type Output = Output;
-    async fn load<'e, E: sqlx::PgExecutor<'e>>(&self, executor: E) -> Result<Vec<Output>> {
-        let (sql, params) = self.to_sql();
-        let rows = bind_all(sqlx::query(sqlx::AssertSqlSafe(sql.as_str())), params)?
-            .fetch_all(executor)
-            .await?;
-        rows.iter()
-            .map(|row| Output::decode_at(row, &mut 0).map_err(Error::from))
-            .collect()
+impl<Params: PreparedParams> PreparedTotal<Params> for Prepared<Postgres, Params, Total> {
+    fn resolved_count(&self, params: Params) -> Result<(String, Vec<Value>)> {
+        Ok(self.resolve(params)?)
     }
 }
 
-/// Executes a `prepare!{}`-built query against real Postgres, resolving its
-/// named placeholders from `params` first — see `qbrs_core::select::Prepared`.
-/// The same `Prepared` value is meant to be reused across many `execute`
-/// calls with different `params`, since `.resolve()` only clones the
-/// template, not re-render the SQL text.
-pub trait PreparedExt<Params> {
-    type Output;
-    fn execute<'e, E: sqlx::PgExecutor<'e>>(
+/// The bound is on the method, and the impls are per-builder, for the two
+/// reasons `LoadExt` explains.
+pub trait PreparedCountExt {
+    fn count<'e, Params, E: sqlx::PgExecutor<'e>>(
         &self,
         executor: E,
         params: Params,
-    ) -> impl std::future::Future<Output = Result<Vec<Self::Output>>>;
-}
-
-impl<Params: PreparedParams, Output: DecodeRow> PreparedExt<Params> for Prepared<Params, Output> {
-    type Output = Output;
-    async fn execute<'e, E: sqlx::PgExecutor<'e>>(
-        &self,
-        executor: E,
-        params: Params,
-    ) -> Result<Vec<Output>> {
-        let (sql, values) = self.resolve(params)?;
-        let rows = bind_all(sqlx::query(sqlx::AssertSqlSafe(sql.as_str())), values)?
-            .fetch_all(executor)
-            .await?;
-        rows.iter()
-            .map(|row| Output::decode_at(row, &mut 0).map_err(Error::from))
-            .collect()
+    ) -> impl std::future::Future<Output = Result<i64>>
+    where
+        Self: PreparedTotal<Params>,
+    {
+        let resolved = self.resolved_count(params);
+        async move { count_rows(executor, resolved?).await }
     }
 }
+
+impl<D, Params, Output> PreparedCountExt for Prepared<D, Params, Output> {}
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    // No real Postgres needed: `bind_all`/`bind_value` only inspect the
-    // `Value` enum before ever reaching the network, so the misuse case
-    // (executing a query with an unresolved `prepare!{}` placeholder) is
-    // reachable — and its error type checkable — without a live DB.
+    // No real Postgres needed: binding inspects the `Value` enum before
+    // anything reaches the network, so an unresolved placeholder is
+    // reachable, and its error checkable, without a live DB.
     #[test]
     fn unresolved_placeholder_is_a_typed_error_not_a_sqlx_configuration_string() {
         let query = sqlx::query(sqlx::AssertSqlSafe("SELECT $1"));
@@ -585,8 +571,8 @@ mod tests {
             err,
             Error::UnresolvedPlaceholder(qbrs_core::select::UnresolvedPlaceholder("email"))
         ));
-        // `Error` is a real `std::error::Error`, not just a `Debug`/`Display`
-        // pair, so callers can use it with `anyhow`/`Box<dyn Error>`/etc.
+        // A real `std::error::Error`, so it composes with
+        // `anyhow`/`Box<dyn Error>`.
         let _: &dyn std::error::Error = &err;
         assert_eq!(err.to_string(), "no value provided for placeholder `email`");
     }
