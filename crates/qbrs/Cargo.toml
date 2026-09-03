@@ -2,8 +2,13 @@
 name = "qbrs"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 license.workspace = true
-description = "A Drizzle-style, type-safe SQL query builder for Rust."
+repository.workspace = true
+readme.workspace = true
+categories.workspace = true
+keywords = ["sql", "database", "query-builder", "type-safe", "postgres"]
+description = "A Drizzle-flavored, type-safe SQL query builder for Rust."
 
 [features]
 # Column types beyond the six a database always has; see `qbrs-core`.
@@ -12,5 +17,8 @@ uuid = ["qbrs-core/uuid"]
 decimal = ["qbrs-core/decimal"]
 
 [dependencies]
-qbrs-core = { path = "../core" }
-qbrs-macros = { path = "../macros" }
+qbrs-core.workspace = true
+qbrs-macros.workspace = true
+
+[package.metadata.docs.rs]
+all-features = true
