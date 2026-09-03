@@ -1,5 +1,56 @@
-//! The crate users depend on: `qbrs-core`'s query builder plus the derive
-//! and macros from `qbrs-macros`.
+//! A Drizzle-flavored, type-safe SQL query builder for Rust — not an ORM and
+//! not a raw-SQL macro. Column and join references are checked at compile
+//! time without giving up dynamic composition, and scope resolution stays
+//! linear as the join count grows.
+//!
+//! This is the facade users depend on: [`qbrs_core`]'s builders and renderer
+//! plus the derive and macros from `qbrs-macros`. Nothing here touches a
+//! database — executing a rendered statement against Postgres is
+//! [`qbrs-sqlx`](https://docs.rs/qbrs-sqlx).
+//!
+//! ```
+//! use qbrs::prelude::*;
+//!
+//! #[derive(Table)]
+//! #[table(name = "users")]
+//! struct Users {
+//!     #[column(primary_key, generated)]
+//!     id: i64,
+//!     email: String,
+//!     #[column(default)]
+//!     active: bool,
+//! }
+//!
+//! #[derive(Table)]
+//! #[table(name = "orders")]
+//! struct Orders {
+//!     #[column(primary_key, generated)]
+//!     id: i64,
+//!     user_id: i64,
+//!     total: i64,
+//! }
+//!
+//! fn main() {
+//!     let (sql, params) = select((users::id, orders::total))
+//!         .from(users::Table)
+//!         .left_join(orders::Table, orders::user_id.eq(users::id))
+//!         .filter(users::active.eq(true))
+//!         .to_sql(Postgres);
+//!
+//!     assert_eq!(
+//!         sql,
+//!         "SELECT \"users\".\"id\", \"orders\".\"total\" FROM \"users\" \
+//!          LEFT JOIN \"orders\" ON (\"orders\".\"user_id\" = \"users\".\"id\") \
+//!          WHERE (\"users\".\"active\" = $1)"
+//!     );
+//!     assert_eq!(params.len(), 1);
+//! }
+//! ```
+//!
+//! Dropping the `.left_join(..)` line makes that query a compile error rather
+//! than a runtime one: `orders` is in scope for neither the selection nor the
+//! `ON` clause. The join is also what decides nullability — `orders::total`
+//! decodes as `Option<i64>` above and as `i64` after an `INNER JOIN`.
 
 pub use qbrs_core::*;
 pub use qbrs_macros::{FromRow, Table, label, with};

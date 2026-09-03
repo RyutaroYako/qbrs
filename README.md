@@ -1,22 +1,23 @@
 <p align="center">
-  <img src="assets/logo-dark.png" alt="qbrs" width="320">
+  <img src="https://raw.githubusercontent.com/RyutaroYako/qbrs/main/assets/logo-dark.png" alt="qbrs" width="320">
 </p>
 
 <p align="center"><b>A Drizzle-flavored, type-safe SQL query builder for Rust.</b></p>
 
 <p align="center">
+<a href="https://crates.io/crates/qbrs"><img src="https://img.shields.io/crates/v/qbrs.svg" alt="crates.io"></a>
+<a href="https://docs.rs/qbrs"><img src="https://docs.rs/qbrs/badge.svg" alt="docs.rs"></a>
 <a href="LICENSE-MIT"><img src="https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg" alt="License: MIT OR Apache-2.0"></a>
-<img src="https://img.shields.io/badge/status-pre--release-orange.svg" alt="Status: pre-release">
-<img src="https://img.shields.io/badge/rust-2024%20edition-orange.svg" alt="Rust 2024 edition">
+<img src="https://img.shields.io/badge/rust-1.88%2B-orange.svg" alt="Rust 1.88+">
 </p>
 
 <p align="center">
 <a href="#quick-example">Quick example</a> ·
 <a href="#why-qbrs">Why qbrs?</a> ·
 <a href="#install">Install</a> ·
-<a href="#usage">Usage</a> ·
-<a href="#status">Status</a> ·
-<a href="#running-the-examples--tests">Examples &amp; tests</a>
+<a href="#whats-in-it">What's in it</a> ·
+<a href="#known-limitations">Known limitations</a> ·
+<a href="#status">Status</a>
 </p>
 
 ---
@@ -24,6 +25,12 @@
 qbrs checks column and join references at compile time without giving up
 dynamic query composition — most builders make you pick one. See [Why
 qbrs?](#why-qbrs) for how.
+
+> [!WARNING]
+> **Not production ready.** 0.1.0 is the first public release. The API will
+> break between 0.x minors, only Postgres has an execution layer, and nothing
+> here has been run against a real workload yet. Worth trying and filing
+> issues against; not worth putting under something that matters.
 
 > **Not an ORM.** qbrs builds and renders SQL with compile-time-checked
 > column/join references; it doesn't do change-tracking, identity maps, or
@@ -74,13 +81,11 @@ FROM "users" LEFT JOIN "orders" ON ("orders"."user_id" = "users"."id")
 ORDER BY "users"."id" ASC
 ```
 
-`orders::total` is declared as a plain `i64` column — not `Option<i64>` — but
-because it's on the far side of a `LEFT JOIN`, `row.total()` comes back as
-`&Option<i64>` automatically. A row is read by the same column value that
-selected it, not by position, so adding a column to the selection doesn't
-move anything (`into_tuples()` gives the positional view back where
-destructuring is what's wanted). Forget the join and reference
-`orders::total` anyway, and it's a compile error, not a runtime surprise:
+`orders::total` is declared as a plain `i64` column, but because it's on the
+far side of a `LEFT JOIN`, `row.total()` comes back as `&Option<i64>`
+automatically. A row is read by the column value that selected it, not by
+position, so adding a column to the selection moves nothing. Forget the join
+and reference `orders::total` anyway, and it's a compile error:
 
 ```
 error[E0277]: `orders::Table` is not available in this query's scope
@@ -88,20 +93,11 @@ error[E0277]: `orders::Table` is not available in this query's scope
    |
 23 |       let rows = select((users::email, orders::total))
    |  ________________^
-24 | |         .from::<Postgres, _>(users::Table)
-   | |__________________________________________^ add `.join(<table>, ..)` (or `.from(..)`)
-   |                                              for `orders::Table` before referencing
-   |                                              its columns here
-   |
-   = note: columns can only be referenced once their table has been joined into the
-           current FROM/JOIN scope
+24 | |         .from(users::Table)
+   | |____________________________^ add `.join(<table>, ..)` (or `.from(..)`)
+   |                                for `orders::Table` before referencing
+   |                                its columns here
 ```
-
-(rustc prints the underlying `Find`/`RowField`/`Selection` obligation chain after
-that, as it does for any unsatisfied trait bound. Ending the query with
-`.load(&pool)`/`.count(&pool)` reports the same thing: the execution traits
-carry that bound on the method rather than on the impl, so the terminal a
-real application writes is not a method-resolution failure.)
 
 ## Why qbrs?
 
@@ -125,349 +121,91 @@ too, but it's deliberately narrow — see [Known limitations](#known-limitations
 
 ## Install
 
-Not yet published to crates.io. Depend on it from git in the meantime:
-
 ```toml
 [dependencies]
-qbrs = { git = "https://github.com/RyutaroYako/qbrs" }
-qbrs-sqlx = { git = "https://github.com/RyutaroYako/qbrs" }  # Postgres execution via sqlx
+qbrs = "0.1"
+qbrs-sqlx = "0.1"                                                     # Postgres execution via sqlx
 sqlx = { version = "0.9", features = ["runtime-tokio", "postgres"] }  # for `PgPool`
 ```
 
 `qbrs-sqlx`'s methods take any `sqlx::PgExecutor`, so the `sqlx` version has
-to be the same one it is built against (0.9). Column types beyond the six
-built in are features: `qbrs = { .., features = ["chrono", "uuid",
-"decimal"] }` — and the **same** feature on `qbrs-sqlx`, which is what binds
-and decodes the type. The two crates' features are separate `cfg`s over one
-`Value`, so enabling only one surfaces as a `FeatureNotEnabled` error when a
-value of that type is bound, not as a compile error.
+to be the one it is built against (0.9). Column types beyond the six built in
+are features — `chrono`, `uuid`, `decimal` — and each has to be enabled on
+**both** `qbrs` and `qbrs-sqlx`, which are separate `cfg`s over one `Value`:
+enabling only one surfaces as a `FeatureNotEnabled` at bind time, not as a
+compile error.
 
-## Usage
+## What's in it
 
-A schema is a `#[derive(Table)]` struct, shown in the
-[Quick example](#quick-example) above. Two imports cover a query —
-`use qbrs::prelude::*;` for the builder and its extension traits, and
-`use qbrs_sqlx::prelude::*;` for `.load()`/`.execute()`. See
-[`examples/`](examples) for complete, runnable code for everything below.
+`SELECT`/`INSERT`/`UPDATE`/`DELETE`, every JOIN kind, `GROUP BY`/`HAVING`,
+aggregates, `DISTINCT`, upsert (`ON CONFLICT`), `UNION`/`INTERSECT`/`EXCEPT`,
+ranking window functions, non-recursive CTEs, correlated `EXISTS`,
+transactions, the `sql!{}` escape hatch, and typed prepared statements
+(`prepare!{}`).
 
-- **Rows keyed by column** —
-  [`16_row_access`](examples/examples/16_row_access.rs). A tuple selection
-  decodes to a `Row`, read with `row.get(users::email)` or the accessor
-  `#[derive(Table)]` generates for each column (`row.email()`). Selecting a
-  single un-tupled column still decodes to a bare value, and `into_tuple()` /
-  `into_tuples()` recover the positional tuple. A computed
-  expression is keyed by the function that produced it (`row.count()`,
-  `row.row_number()`); `label!(name, ..)` renames one when the same
-  function is selected twice, and emits the name as the column's `AS`.
-- **Column types** — `i32`/`i64`/`f64`/`String`/`bool`/`Vec<u8>` always
-  (`Integer`/`BigInt`/`Real`/`Text`/`Bool`/`Bytes` in SQL-type spelling), and
-  `DateTime<Utc>`/`NaiveDate`/`Uuid`/`Decimal` (`Timestamptz`/`Date`/`Uuid`/
-  `Numeric`) behind the `chrono`, `uuid` and `decimal` features, which pull
-  in the crate each decodes to. `Uuid` is reachable as `qbrs::expr::Uuid`
-  rather than through the prelude, since a glob-imported `Uuid` would be
-  shadowed by the `uuid` crate's own in exactly the schemas that use it. A column
-  type is a `SqlType` leaf: it renders, binds, compares, and decodes like any
-  other, so `created_at` doesn't have to be smuggled past the schema as
-  `sql!{}`.
-- **Whole-table selection** (`users::All`) —
-  [`17_from_row`](examples/examples/17_from_row.rs). The derive already knows
-  the table's columns, so `select(users::All)` doesn't restate them and a new
-  column can't leave a query behind. It composes:
-  `select((users::All, orders::total))` counts as one element of the tuple
-  however many columns the table has, and each of them takes its
-  NULL-ability from how the table was joined.
-- **Naming a query or a row** — a `Select`'s `Scope` lists the most
-  recently joined table first, and a `Row`'s fields are in selection order;
-  both spell out long enough to want a `type` alias and an
-  `#[allow(clippy::type_complexity)]`. Inference covers every use that stays
-  inside a function; where one doesn't — a `Prepared` or a `DynSelect` kept
-  in a struct field — `select(users::All)` decodes to `users::AllRow`, which
-  `#[derive(Table)]` names for you.
-- **Rows into your own structs** —
-  [`17_from_row`](examples/examples/17_from_row.rs). `#[derive(FromRow)]`
-  fills a plain struct by matching field *names* — or the name given by
-  `#[from_row(rename = "..")]` where the two differ, or the column named by
-  `#[from_row(from = users::id)]` where two selected columns share a name. The struct declares no
-  column path, no table, and no join, so it can live in a domain module with
-  `#[derive(Serialize)]` and be filled from any query that selects columns of
-  those names and types. Selection order doesn't matter and extra columns are
-  ignored. Nothing is copied — fields move out of the row, and no `Clone`
-  bound exists to do otherwise. Where a name doesn't line up, `row.take(col)`
-  moves one field out and hands back the rest.
-- **Select / Insert / Update / Delete** —
-  [`01_select_basic`](examples/examples/01_select_basic.rs),
-  [`03_insert`](examples/examples/03_insert.rs),
-  [`04_update`](examples/examples/04_update.rs),
-  [`05_delete`](examples/examples/05_delete.rs). A column with a schema
-  default gets `Defaultable<T>` on `*Insert` (omit → `DEFAULT`, or a value);
-  a nullable one with a default gets the three-state
-  `Defaultable<Option<T>>`, whose third state the builder spells
-  `.column_null()`. `*Update` mirrors all this with `Option<T>` /
-  `Option<Option<T>>` (untouched / `NULL` / value) — written through
-  `UsersUpdate::builder()`, whose setters take what the column holds or an
-  `Option` of it, so a request struct's fields map across one for one and
-  an absent one stays untouched; `.column_null()` is the explicit `NULL`.
-  The struct literal spells the three states directly, which is what a JSON
-  Merge Patch body already holds (`Option<Option<T>>`, serde's
-  `double_option`) — so map that kind of request with the literal, and use
-  the builder where the values are yours to write. What the literal makes
-  easy to get wrong is the halfway case: `Some(request.field)` from a plain
-  `Option<T>` sets `NULL` where the request said nothing.
-  `update(t).set_to(col, expr)` starts a
-  statement whose assignments are all computed, and needs no `Result`, since
-  one assignment is one. An assignment a value can't say —
-  `updated_at = now()`, `version = version + 1` — goes in with
-  `.set_to(column, expression)` on the statement, or
-  `Assignments::set_to(..)`/`.and_set_to(..)` where the whole `SET` list is
-  expressions, which `UPDATE` and `ON CONFLICT DO UPDATE` both accept. Either way the column
-  has to be one a statement may write (not generated, not the primary key)
-  and the expression has to fit it — a nullable expression doesn't assign to
-  a NOT NULL column. An `*Insert` is built by naming its
-  columns — `UsersInsert::builder().email(..).build()` — and `build()` is
-  reachable only once every column that is neither nullable nor defaulted
-  has a value, so no column can be dropped and no two of the same type
-  swapped. An optional column's setter takes the value or the `Option` a
-  request struct already holds, so a `POST` body maps field-for-field the way
-  a `PATCH` body maps onto an `*Update`. Rows arrive one at a time with
-  `.values(row)` or all at once with `.values_all(rows)`; a statement with
-  nothing in it — an `*Update` whose every field is untouched, an insert of
-  zero rows — has no SQL form, so those hand back
-  `Result<_, NothingToSet>` / `Result<_, NothingToInsert>` rather than
-  panicking at render time.
-- **`SELECT DISTINCT`** — `.distinct()`, the answer to a one-to-many join
-  that repeats its left side. A count of such a query counts its distinct
-  rows.
-- **Upsert** (`ON CONFLICT`, Postgres/SQLite only) —
-  [`11_upsert`](examples/examples/11_upsert.rs). No typed `EXCLUDED.column`
-  yet.
-- **`UNION`/`INTERSECT`/`EXCEPT`** —
-  [`12_union`](examples/examples/12_union.rs). Combines `SELECT`s with
-  unrelated `Scope`s as long as their output shapes match. SQL allows only
-  an ordinal in this `ORDER BY`, so `.order_by_column(users::email, dir)`
-  works the position out from the row rather than making you count, and a
-  single un-tupled column takes `.order_by(dir)` — there is no way to write
-  a position, because a written one is one nothing can check.
-- **Window functions** (`row_number()`/`rank()`/`dense_rank()`) —
-  [`13_window`](examples/examples/13_window.rs). Aggregate-as-window-function
-  isn't supported yet.
-- **CTEs** (`with!{}` + `cte::with(..)`) —
-  [`14_cte`](examples/examples/14_cte.rs). The binding goes where a table
-  goes — `.from(binding)` / `.inner_join(binding, on)` — attaching the `WITH`
-  clause and putting the pseudo-table in scope in one act, so a CTE can't be
-  selected from unbound.
-  Non-recursive, single-level only.
-- **Correlated subqueries** —
-  [`18_correlated_exists`](examples/examples/18_correlated_exists.rs).
-  `outer.correlated(table, sel)` builds a subquery whose scope is the outer
-  query's plus its own table, so referencing an outer column is legal; the
-  resulting `EXISTS` is tagged with those tables, so filtering it onto a
-  query that doesn't have them is a compile error — as is filtering it onto
-  a query of another dialect, since a subquery is checked against its own
-  dialect's capabilities before it is rendered in anyone's.
-- **One query, two shapes** — `.count(&pool)` answers "how many rows would
-  this return", ignoring `ORDER BY`/`LIMIT`/`OFFSET` and counting *groups*
-  for a grouped query; it borrows, so a paginated endpoint needs no clone.
-  `Select` is also `Clone`, and `.reselect(sel)` swaps the selection while
-  keeping every clause — for when the second shape isn't a count.
-- **Dynamic composition, no escape hatch** —
-  [`07_dynamic_filters`](examples/examples/07_dynamic_filters.rs).
-  `.filter()` doesn't change `Select`'s type, so it can be called
-  conditionally or in a loop — that loop ANDs. For a runtime-length `OR`,
-  `any_of(iter)` (and `all_of(iter)`) folds a collection of conditions over
-  the same tables; folding one by one with `.or()` doesn't type-check, since
-  each pair widens the tables the expression claims. Conditions from
-  *different* tables don't share an `Expr` type at all, so a collection of
-  those goes through `predicate(..)` — then `.filter_all(..)` to AND them, or
-  `.filter(Predicate::any_of(..))` to OR them — `Predicate::all_of` nests a group
-  inside one. Every clause that takes a condition — `.filter`/`.having` on
-  every builder, and every join's `ON` — takes either kind. `sort_key(..)`/`.order_by_all(..)` and
-  `grouping(..)`/`.group_by_all(..)` are the same pair for a runtime-length
-  `ORDER BY` or `GROUP BY` — the `?sort=email,-created_at` case, shown in
-  [`19_dynamic_sort`](examples/examples/19_dynamic_sort.rs).
-- **Predicates** — `.eq()`/`.ne()`/`.lt()`/`.lte()`/`.gt()`/`.gte()`/`.like()`, plus
-  `.is_null()`/`.is_not_null()` and `.is_in([..])`. A nullable column and a
-  non-nullable one compare freely, so an optional foreign key joins like any
-  other. Comparing to NULL with `=` is never true in SQL, so `.eq(None)`
-  isn't expressible: the question is `.is_null()`.
-- **Aggregates** — `count()` (`count(*)`), plus `count_of(col)`, `sum(col)`,
-  `avg(col)`, `min(col)`, `max(col)`. Each takes a real column, so a missing
-  join is a compile error rather than a `must appear in the GROUP BY clause`
-  at run time, and each is named after its column, so it reads back as
-  `row.get(sum(orders::total))` and satisfies a CTE or DTO field called
-  `total`. All are nullable except the two counts: an aggregate over zero
-  rows is NULL, but a count of them is `0`. `sum`/`avg` take a number
-  (`expr::Summable`) and `min`/`max` an ordered type (`expr::Ordered`) —
-  numbers, text, dates and timestamps, but not booleans, bytes or UUIDs,
-  which Postgres has no such aggregate for.
-- **Raw SQL escape hatch** (`sql!{}`) —
-  [`06_raw_sql`](examples/examples/06_raw_sql.rs). A `?` slot takes a value,
-  which binds as a parameter, or an expression — a column, an aggregate,
-  another fragment — which the renderer writes out itself. So
-  `sql!(Numeric, "sum(? * ?)", items::price, items::qty)` quotes both columns
-  and is scope-checked like any other expression: only the text between the
-  slots is unchecked. Values are never spliced as text.
-- **Prepared statements** (`prepare!{}`) —
-  [`10_prepared`](examples/examples/10_prepared.rs). Typed, so a
-  missing/misspelled bind is a compile error, unlike Drizzle's
-  `sql.placeholder()`. `.prepare_count()` prepares the same query's total,
-  so a paginated endpoint renders each of its two statements once — and
-  `.limit(..)`/`.offset(..)` take a placeholder, so one prepared query serves
-  every page. `.load(&pool, params)` runs it; `.resolve(params)` is its
-  rendering terminal, for a dialect this crate doesn't execute.
-- **Transactions** —
-  [`15_transaction`](examples/examples/15_transaction.rs). Every
-  `.load()`/`.execute()` method is generic over `sqlx::PgExecutor`, so a
-  `sqlx::PgTransaction` from `pool.begin()` works everywhere a `&PgPool`
-  does — no separate transactional API to learn:
-  ```rust
-  let mut tx = pool.begin().await?;
-  insert(users::Table)
-      .values(UsersInsert::builder().email("ada@example.com").build())
-      .execute(&mut *tx)
-      .await?;
-  tx.commit().await?;
-  ```
-- **Errors** — `Assignments::from_row(..)` and `.values_all(..)` return
-  `NothingToSet`/`NothingToInsert`, which are `qbrs-core` types: a service
-  with its own error enum needs a `#[from]` for each, or one
-  `.map_err(qbrs_sqlx::Error::from)?`, since `?` converts through
-  `qbrs_sqlx::Error` only in a function that returns it.
-  Every `.load()`/`.execute()` returns `qbrs_sqlx::Result<T>`
-  (`= Result<T, qbrs_sqlx::Error>`), not a raw `sqlx::Result`. `Error`
-  separates a real driver/database error (`Sqlx`) from the qbrs-level
-  misuses: `UnresolvedPlaceholder`, `NothingToSet`, `NothingToInsert`, and
-  `FeatureNotEnabled` (a column type on in `qbrs` and off in `qbrs-sqlx`). Keeping these
-  distinct means a caller can `match` on the cause instead of
-  string-matching an error message.
+A schema is a `#[derive(Table)]` struct; `use qbrs::prelude::*;` and
+`use qbrs_sqlx::prelude::*;` cover a query. Everything above has a runnable,
+end-to-end example against a real Postgres — see
+**[`examples/README.md`](examples/README.md)** for the index, and
+[docs.rs/qbrs](https://docs.rs/qbrs) for the API.
+
+Three things that aren't obvious from a signature:
+
+- **Rows are keyed by column, not by position.** A tuple selection decodes to
+  a `Row` read with `row.get(users::email)` or the generated `row.email()`;
+  `#[derive(FromRow)]` fills a plain domain struct by field name, with no
+  column path or table in it. `into_tuples()` recovers the positional view.
+- **A statement with nothing in it has no SQL form.** An `*Update` whose every
+  field is untouched, or an insert of zero rows, hands back
+  `NothingToSet`/`NothingToInsert` rather than rendering broken SQL. These are
+  the only fallible builder methods; everything downstream is infallible.
+- **The dialect is part of a query's type** — capability gating happens while
+  the query is built, not when it renders — but it's never a turbofish:
+  `.load(&pool)` infers it from the executor, `.to_sql(Postgres)` takes it as
+  a value.
 
 ## Known limitations
 
-- **Conditionally joining a table (not just filtering) has no fully-static
-  solution** — a single type can't mean "joined" in one branch and "not
-  joined" in another. `.erase()` into `DynSelect` is the narrow way out: only
-  the join skeleton is erased (not the whole query, unlike `.$dynamic()`; not
-  a boxed trait object per predicate, unlike diesel's `BoxableExpression`),
-  and no further `.filter()`/`.join()` is offered on it — see
-  [`examples/09_dynamic_join.rs`](examples/examples/09_dynamic_join.rs).
-- Selecting a computed/raw expression's `NULL`-ability isn't derived the way
-  a bare column's is — `sql!(Nullable<Text>, "...")` if the expression itself
-  can be `NULL`.
-- A `sql!{}` fragment has no name of its own, so it is readable only
-  positionally until `label!` gives it one — passing one to `row.get(..)` is
-  a compile error, not a lookup of some other unnamed field. The same applies wherever two
-  selections are compared by name — a CTE body and a `UNION` branch.
-- Selecting the same name twice is ambiguous at the point it's read by
-  *name* — `#[derive(FromRow)]` — rather than resolving to the first. It
-  surfaces as `error[E0284]: type annotations needed`, and the fix is to say
-  which column that field means: `#[from_row(from = users::id)]`, the same
-  key `row.get(users::id)` uses. `label!` renames one of them instead, where
-  the name is what should differ. Reading by column value is unaffected —
-  which is why `select((a::All, b::All))` into a struct needs `from = ..` on
-  the fields whose names collide and nothing on the rest.
-- An aggregate is read back by the value that selected it
-  (`row.get(sum(orders::total))`) or by name (`#[derive(FromRow)]`), but not
-  through the column's generated accessor: `sum(orders::total)` is its own
-  key, and `row.total()` looks up the column's.
-- A selection list holds at most 16 elements — `<table>::All` counts as one,
-  however many columns the table has. The *positional* view is a separate
-  limit: `into_tuple`/`into_tuples` stop at 16 fields however they were
-  selected, so a wider row is read by key or through `#[derive(FromRow)]`.
-- Naming a row type in a signature takes a type alias, and one long enough
-  to trip `clippy::type_complexity`; inference covers every use that stays
-  inside a function, and `<table>::AllRow` covers a stored `select(All)`.
-- A `RETURNING` row is decoded as many, so `load_one` hands back an
-  `Option`: `ON CONFLICT DO NOTHING` can return no row at all, even for an
-  insert of exactly one.
-- The dialect is part of a query's type, because what a dialect supports is
-  checked while the query is being built, not when it renders — but it is
-  never spelled as a turbofish: `.load(&pool)` infers it from the executor,
-  and `.to_sql(Postgres)` takes it as a value, the way every other builder
-  argument is one. `.from::<Postgres, _>(..)` remains available for a query
-  stored before either happens.
-- `ORDER BY` takes an expression, not an output label: sort by
-  `sum(orders::total).desc()`, not by the `label!` it was labelled to.
-- One `label!` per scope — it declares a `label` module, and a scope holds
+Deferred rather than half-supported, and documented in the relevant module:
+`WITH RECURSIVE`, aggregates as window functions (`sum(x) OVER (..)`), a CTE
+referencing another CTE, row locking (`FOR UPDATE`/`SKIP LOCKED`), a subquery
+in an expression position (`IN (SELECT ..)`, a scalar subquery), and
+relations/eager-loading. `sql!{}` doesn't reach the last two: it builds an
+expression, not a statement suffix, and a `Select` isn't a slot value. A
+correlated `EXISTS` covers what `IN (SELECT ..)` means.
+
+Design constraints worth knowing before adopting:
+
+- **Conditionally *joining* a table has no fully-static solution** — a single
+  type can't mean "joined" in one branch and "not joined" in another.
+  `.erase()` into `DynSelect` is the way out, and it's narrow: only the join
+  skeleton is erased, and no further `.filter()`/`.join()` is offered on it.
+  Conditional *filtering* needs none of this.
+- **No table aliasing, so no self-join.** Two `#[derive(Table)]` structs must
+  not share a `#[table(name = "..")]` — that compiles and then renders
+  `FROM "t" JOIN "t"`, which the database refuses.
+- **Nothing relates `GROUP BY`/`ORDER BY` to the selection list.** An
+  aggregate or window function in `WHERE` or `RETURNING` is accepted by the
+  builder and rejected by the database, and `.distinct()` sorted by an
+  unselected column renders SQL Postgres won't take. Aggregates take a bare
+  column: `sum(price * qty)` and `count(DISTINCT x)` need `sql!{}`.
+- **A computed expression's nullability isn't derived** the way a column's is.
+  An expression whose type the builder inferred — a comparison, an `is_null`,
+  a `LIKE` — says what it decodes to once, with `.decodes_as::<Bool>()`; a
+  `sql!{}` fragment states its type in the macro.
+- **A selection list holds at most 16 elements** (`<table>::All` counts as
+  one, whatever the column count). Naming a row type in a signature takes a
+  type alias long enough to trip `clippy::type_complexity`; inference covers
+  everything that stays inside a function, and `<table>::AllRow` covers a
+  stored `select(All)`.
+- **One `label!` per scope** — it declares a `label` module, and a scope holds
   one. List every name that scope needs in the one invocation.
-- A helper generic over rows needs one index type parameter per column it
-  reads, and names each accessor through its table, since a schema exports
-  them anonymously (`fn f<I1, I2, R>(..) where R: users::HasEmail<I1> +
-  orders::HasTotal<I2>`); sharing one index across two columns is a compile
-  error that says so.
-- A `#[derive(FromRow)]` field's type is the column's decoded type, so a DTO
-  filled from a `LEFT JOIN` declares `Option<T>` where one filled from an
-  `INNER JOIN` declares `T`. It names no column and no table, but it does
-  pin the join's nullability.
-- `count()` is `count(*)` — rows, not non-NULL values; `count_of(col)` is
-  the latter. Both return a non-nullable count; every other aggregate is
-  nullable, since an aggregate over zero rows is NULL.
-- `sum`/`avg` render a `CAST` back from the wider type a database picks, so
-  a sum that overflows `BIGINT` fails where the raw `sum` would have
-  succeeded, and `avg` is `DOUBLE PRECISION` rather than exact.
-- Aggregates take a bare column: `sum(price * qty)`, `count(DISTINCT x)` and
-  `sum(CASE WHEN ..)` need `sql!{}`. Nothing relates `GROUP BY` to the
-  selection list, and an aggregate or a window function in `WHERE` — or in
-  `RETURNING` — is accepted by the builder and rejected by the database.
-- Nothing relates `ORDER BY` to the selection list either, which only shows
-  under `.distinct()`: Postgres requires a `SELECT DISTINCT`'s sort keys to
-  be selected, so `.distinct().order_by(users::id.asc())` on a query that
-  doesn't select `id` renders SQL it rejects — while `.count(&pool)` on the
-  same query succeeds, since a total drops the `ORDER BY`. Sort a distinct
-  query by something it selects.
-- Two selections are compared by column name, so a `UNION` of branches whose
-  columns are named differently, or a CTE body with a computed column, needs
-  a `label!` label on one side, and both sides have to agree on nullability.
-  Two one-column selections match on their value type alone; a CTE body is
-  always compared as a row, since a CTE declares column names by definition.
-- No table aliasing. A self-join is rejected, but by an inference ambiguity
-  rather than by one of this crate's own diagnostics — and declaring the same
-  SQL table twice as two Rust types, the workaround that suggests itself,
-  compiles and then renders `FROM "t" JOIN "t"`, which the database refuses.
-  Two `#[derive(Table)]` structs must not share a `#[table(name = "..")]`.
-- A correlated `EXISTS` is tagged with the outer query's tables, so it can
-  only be filtered onto that query, and only onto one of the same dialect —
-  which `Predicate` carries too, so `predicate(sub.exists())` still goes
-  into a `Vec<Predicate<_, _>>` and an `EXISTS` can sit in an OR beside an
-  ordinary comparison.
-- `prepare!{}` doesn't tie its `Params` struct to the query it was built
-  from: running a query with another struct's params is an
-  `UnresolvedPlaceholder` at `.load()`, not a compile error. Placeholder
-  names carry the module and struct they were declared in, so it is always
-  that error and never a value bound to the wrong slot.
-- No row locking (`FOR UPDATE`/`FOR SHARE`/`SKIP LOCKED`) and no subquery
-  in an expression position (`IN (SELECT ..)`, a scalar subquery in the
-  selection list). `sql!{}` doesn't reach either: it builds an expression,
-  not a statement suffix, and a `Select` isn't a slot value. A correlated
-  `EXISTS` covers what `IN (SELECT ..)` means; the rest is deferred rather
-  than half-supported, since a subquery in a slot would have to carry the
-  dialect it was checked against, as `exists()` does.
-- `#[table(name = "analytics.events")]` is a schema-qualified name and
-  renders as two identifiers; a table whose name really contains a dot has
-  no spelling.
-- The derives expand to `::qbrs::` paths, so depend on the `qbrs` facade
+- **The derives expand to `::qbrs::` paths**, so depend on the `qbrs` facade
   rather than on `qbrs-core` + `qbrs-macros` directly.
-- Every `?` in a `sql!{}` text is a slot — there is no escape for a literal
-  one, since MySQL and SQLite spell their own bind parameters the same way.
-  A string containing a `?` goes in a slot, where it binds as a value. A
-  fragment takes at most 8 slots, and `ON CONFLICT` at most 3 columns. Its
-  text
-  must be a constant — a literal, a `const`, `concat!`, `include_str!` — so
-  runtime-assembled text can never become SQL shape, and the placeholder
-  count is checked against the value count at compile time.
-- Postgres and SQLite are executed in CI — SQLite against an in-memory
-  database in `tests/dialect-exec`, which runs every rendered statement shape
-  rather than asserting its text. MySQL is rendered and asserted as strings
-  only, so its dialect differences are caught only where someone thought to
-  look. One known difference: `DEFAULT` in an `INSERT ... VALUES` is Postgres
-  and MySQL only, and SQLite rejects it, which makes `Defaultable::Default`
-  unusable there.
-- An expression the *builder* inferred a type for — a comparison, an
-  `is_null`, a `LIKE` — has to say what it decodes to before it can be
-  selected or labelled: `expr.decodes_as::<Bool>()`. That is the whole rule
-  now: a `sql!` fragment states its type in the macro, a column carries its
-  declared one, and everything else says so once. Its NULL-ability doesn't follow from
-  any one column's join, and the inferred `S` can contradict it. A `sql!`
-  fragment already states its type, so it needs nothing. Either is then read
-  positionally, or by name once `.label(label::x)` gives it one.
+- **Every `?` in a `sql!{}` text is a slot**, with no escape for a literal one
+  — MySQL and SQLite spell their bind parameters the same way. Its text must
+  be a constant (a literal, a `const`, `concat!`, `include_str!`), so
+  runtime-assembled text can never become SQL shape.
 
 ## Status
 
@@ -479,53 +217,31 @@ A schema is a `#[derive(Table)]` struct, shown in the
 | Execution (via `qbrs-sqlx`)                                                 |    ✅    | not yet | not yet |
 | Transactions (via `qbrs-sqlx`)                                              |    ✅    | not yet | not yet |
 
-`SELECT`/`INSERT`/`UPDATE`/`DELETE`, all JOIN kinds, `GROUP BY`/`HAVING`,
-correlated subqueries (`EXISTS`/`NOT EXISTS`), the `sql!{}` escape hatch,
-reusable named-placeholder prepared statements (`prepare!{}`), upsert
-(`ON CONFLICT`), `UNION`/`INTERSECT`/`EXCEPT`, ranking window functions
-(`row_number()`/`rank()`/`dense_rank()`), aggregates, non-recursive CTEs
-(`with!{}`), column-keyed result rows, and `#[derive(FromRow)]` struct mapping
-are implemented and tested against a real Postgres instance. Not yet done:
-`WITH RECURSIVE`, aggregate-as-window-functions (`sum(col) OVER (..)`), table
-aliasing/self-joins, and relations/eager-loading (intentionally scoped out until the core
-query-building layer has been stable for a while).
+MySQL is rendered and asserted as strings only, so its dialect differences are
+caught only where someone thought to look. One known difference: `DEFAULT` in
+an `INSERT ... VALUES` is Postgres and MySQL only — SQLite rejects it, which
+makes `Defaultable::Default` unusable there.
 
-## Workspace layout
+## Development
 
-- [`crates/core`](crates/core) (`qbrs-core`) — the type-level machinery: scope
-  tracking (`Cons`/`Nil`/`Find`), expressions, `Select`/`Insert`/`Update`/`Delete`
-  builders, SQL rendering. No I/O, no async runtime.
-- [`crates/macros`](crates/macros) (`qbrs-macros`) — `#[derive(Table)]`,
-  `#[derive(FromRow)]`, `label!`, and `with!`.
-- [`crates/qbrs`](crates/qbrs) — the facade crate; depend on this one.
+- [`crates/core`](crates/core) — type-level machinery and SQL rendering. No
+  I/O, no async, no driver.
+- [`crates/macros`](crates/macros) — `#[derive(Table)]`, `#[derive(FromRow)]`,
+  `label!`, `with!`.
+- [`crates/qbrs`](crates/qbrs) — the facade; depend on this one.
 - [`crates/qbrs-sqlx`](crates/qbrs-sqlx) — execution via `sqlx` (Postgres).
-- [`examples`](examples) (`qbrs-examples`) — runnable examples; see
-  [its README](examples/README.md) for how to run them.
-- [`tests/dialect-exec`](tests/dialect-exec) — every rendered statement shape
-  run against an in-memory SQLite, so the `Sqlite` dialect is checked by
-  SQLite rather than by a string assertion.
-- [`tests/compile-bench`](tests/compile-bench) — synthetic-schema compile-time
-  regression checks (this is what backs the "linear at 40+ joins" claim above).
-
-## Running the examples & tests
-
-Runnable, end-to-end examples live in [`examples`](examples) —
-see [its README](examples/README.md) for the full list.
+- [`examples`](examples) — runnable examples; [`tests/dialect-exec`](tests/dialect-exec)
+  runs every rendered shape against SQLite; [`tests/compile-bench`](tests/compile-bench)
+  backs the "linear at 40+ joins" claim.
 
 ```sh
-cargo test --workspace   # everything, including the real-Postgres tests
+cargo test --workspace --all-features
 ```
 
-No setup is required: the real-DB tests start their own throwaway
-PostgreSQL 17.5, embedded via [`pglite-rs`](https://crates.io/crates/pglite-rs),
-so there is no Docker, no service to launch, and nothing to download at test
-time. To run the same tests against an external Postgres instead, set
-`DATABASE_URL`:
-
-```sh
-DATABASE_URL=postgres://postgres:postgres@localhost:5432/qbrs_test \
-  cargo test -p qbrs-sqlx
-```
+No setup required: the real-DB tests start their own throwaway PostgreSQL
+17.5, embedded via [`pglite-rs`](https://crates.io/crates/pglite-rs) — no
+Docker, no service to launch, nothing downloaded at test time. Set
+`DATABASE_URL` to run them against an external Postgres instead.
 
 ## License
 
