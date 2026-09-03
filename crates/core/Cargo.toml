@@ -2,7 +2,12 @@
 name = "qbrs-core"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 license.workspace = true
+repository.workspace = true
+readme.workspace = true
+categories.workspace = true
+keywords = ["sql", "database", "query-builder", "type-safe", "postgres"]
 description = "Core type-level machinery for the qbrs query builder (scope tracking, expressions, builders)."
 
 [features]
@@ -17,3 +22,6 @@ decimal = ["dep:rust_decimal"]
 chrono = { version = "0.4", default-features = false, features = ["std"], optional = true }
 uuid = { version = "1", default-features = false, optional = true }
 rust_decimal = { version = "1", default-features = false, optional = true }
+
+[package.metadata.docs.rs]
+all-features = true

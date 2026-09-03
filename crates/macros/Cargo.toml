@@ -2,7 +2,12 @@
 name = "qbrs-macros"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 license.workspace = true
+repository.workspace = true
+readme.workspace = true
+categories = ["database", "development-tools::procedural-macro-helpers"]
+keywords = ["sql", "database", "query-builder", "derive", "macros"]
 description = "Proc macros for qbrs (schema derive, sql! escape hatch)."
 
 [lib]

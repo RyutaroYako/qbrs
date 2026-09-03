@@ -11,7 +11,14 @@ members = [
 ]
 
 [workspace.package]
-version = "0.0.0"
+version = "0.1.0"
 edition = "2024"
+rust-version = "1.88"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/RyutaroYako/qbrs"
+readme = "README.md"
+categories = ["database"]
+
+[workspace.dependencies]
+qbrs-core = { version = "0.1.0", path = "crates/core" }
+qbrs-macros = { version = "0.1.0", path = "crates/macros" }
