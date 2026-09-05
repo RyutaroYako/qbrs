@@ -395,7 +395,7 @@ transactional API. Everything returns `qbrs_sqlx::Result<T>`; keep `UnresolvedPl
   holds now, never the history of how it was found. Do not narrate rejected alternatives or
   quote compiler error codes.
 - **Deferred, not half-supported.** `WITH RECURSIVE`, aggregate window functions,
-  CTE-referencing-CTE, row locking, a subquery in an expression position, and
+  CTE-referencing-CTE, row locking, a *scalar* subquery in an expression position, and
   relations/eager-loading are explicitly out of scope and documented as "Known limitations"
   in the relevant module doc comment. Follow that pattern: state the
   limitation and why, don't silently fall back to `sql!{}`.

@@ -945,6 +945,11 @@ impl<D: Dialect, Scope, Sel, Outer: ScopeTables> Select<D, Scope, Sel, Outer> {
     /// Tagged with the outer tables `lhs` and this query's own `Outer`
     /// reference, so it can only be filtered onto a query that has both in
     /// scope.
+    ///
+    /// **Known limitation**: membership only. A *scalar* subquery
+    /// (`col = (SELECT max(x) ..)`) stays deferred — it would have to be an
+    /// `Expr`, which carries no dialect to pin the subquery's capability
+    /// check to.
     pub fn contains<Lhs, Idx>(
         &self,
         lhs: Lhs,
