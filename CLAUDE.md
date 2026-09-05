@@ -29,6 +29,7 @@ cargo run -p qbrs-examples --example 02_select_join          # one runnable exam
 cargo build -p compile-bench --bin joins_40                  # scope-resolution depth
 cargo build -p compile-bench --bin join_chain_20             # ...through a real builder chain
 cargo build -p compile-bench --bin cols_16                   # ...and selection width
+cargo build -p compile-bench --bin cols_32                   # ...up to the arity limit
 cargo test -p dialect-exec                                   # rendered SQL, run by a real SQLite
 ```
 
@@ -143,7 +144,7 @@ route and is matched by name.
 live in a foreign trait's fixed shape. Hence `into_struct`/`into_structs`.
 
 Two selections are compared by `row::SameShape` — one cell-by-cell walk checking name and
-value together, so a selection wider than the positional view's 16 fields still compares.
+value together, so a selection wider than the positional view's 32 fields still compares.
 Values alone would let a `UNION` branch or a CTE body whose columns merely happen to be
 type-compatible splice in transposed, and the result is then read by key. `SameNameAs`
 carries `#[diagnostic::do_not_recommend]` so the reported obligation is the two columns,
@@ -279,7 +280,7 @@ selection decodes to with the table joined not-null, so a stored `Prepared`/`Dyn
 names a row instead of spelling a `RowCons` chain by hand. A selection list is a chain of
 `select::SelectionPart`s, each contributing `Fields<Tail>` in front of whatever the rest of
 the list contributes — which is what lets one tuple element carry a whole table, and makes
-the 16-element limit count tables rather than columns.
+the 32-element limit count tables rather than columns.
 
 `label!(rank_in_user, ..)` generates the same shape for a computed column, in a fixed
 `label` module so a same-named local binding can never shadow it. One invocation per scope

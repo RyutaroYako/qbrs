@@ -193,7 +193,7 @@ Design constraints worth knowing before adopting:
   An expression whose type the builder inferred — a comparison, an `is_null`,
   a `LIKE` — says what it decodes to once, with `.decodes_as::<Bool>()`; a
   `sql!{}` fragment states its type in the macro.
-- **A selection list holds at most 16 elements** (`<table>::All` counts as
+- **A selection list holds at most 32 elements** (`<table>::All` counts as
   one, whatever the column count). Naming a row type in a signature takes a
   type alias long enough to trip `clippy::type_complexity`; inference covers
   everything that stays inside a function, and `<table>::AllRow` covers a
