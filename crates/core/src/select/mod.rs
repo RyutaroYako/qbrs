@@ -11,6 +11,7 @@ use crate::render::{
     Fragment, FragmentSink, QuerySink, SelectItem, Sink, render_and_list, render_expr,
     render_expr_list, render_order_by, render_select_list,
 };
+use crate::row::{Field as RowFieldLookup, Row};
 use crate::scope::{
     BaseTable, Concat, Cons, MapNullable, MaybeNull, Nil, NotNull, ScopeTables, Superset, Table,
     TableSlot,
@@ -594,19 +595,53 @@ impl<D, Scope, Sel, Outer> Select<D, Scope, Sel, Outer> {
         self
     }
 
+    /// `.order_by(..)`, but the key also has to already be in this query's
+    /// selection — `Sel::Output` has to hold `field`'s key, the same
+    /// `row::Field` lookup `Row::get` uses, rather than only being in scope.
+    /// This is the exact rule `SELECT DISTINCT` needs a sort key to satisfy
+    /// (Postgres rejects one that isn't selected): pair this with
+    /// `.distinct()` for a query that structurally can't render the SQL it
+    /// would otherwise be rejected for. Modeled on `SetOp::order_by_column`,
+    /// which checks the same thing where a set operation's combined output
+    /// takes the place of a single query's selection.
+    pub fn order_by_selected<F, Idx1, SelIdx, Idx2, L>(mut self, field: F, dir: SortDir) -> Self
+    where
+        F: RowField<Scope, Idx1>,
+        Sel: Selection<Scope, SelIdx, Output = Row<L>>,
+        L: RowFieldLookup<F::Key, Idx2>,
+    {
+        self.body.order_by.push((field.item().kind, dir));
+        self
+    }
+
+    /// `.order_by_selected(..)` for a single un-tupled selection
+    /// (`select(users::email)`, not `select((users::email,))`): there is
+    /// exactly one selected column, so there is nothing to name — the same
+    /// shape `SetOp`'s single-column `.order_by(dir)` has.
+    pub fn order_by_selection<SelIdx>(mut self, dir: SortDir) -> Self
+    where
+        Sel: Selection<Scope, SelIdx>,
+        Sel::Output: SingleColumn,
+    {
+        let items = self.selection.items();
+        self.body.order_by.push((items[0].kind.clone(), dir));
+        self
+    }
+
     /// `SELECT DISTINCT`: one row per distinct selected tuple. The natural
     /// answer to a one-to-many join that repeats its left side, and unlike a
     /// `GROUP BY` of the whole selection it doesn't have to be restated when
     /// the selection changes. Idempotent — a query is distinct or it isn't.
     ///
     /// **Known limitation**: Postgres requires a `SELECT DISTINCT`'s sort
-    /// keys to be in its selection, and nothing here relates the two — the
-    /// same gap `GROUP BY` has. Sorting a distinct query by a column it
-    /// doesn't select renders SQL the database rejects, and `count_sql`
-    /// won't show it, since a total drops the `ORDER BY`. Relating them
-    /// would mean carrying "is distinct" in `Select`'s type and taking sort
-    /// keys by identity (`SetOp::order_by_column`'s shape) — a type
-    /// parameter through every builder signature for one clause.
+    /// keys to be in its selection, and nothing here enforces that for
+    /// plain `.order_by(..)` — use `.order_by_selected(..)`/
+    /// `.order_by_selection(..)` instead, which check exactly this. `GROUP
+    /// BY` has a related but different gap: every non-aggregated selected
+    /// column has to appear in it, which is the selection-into-`GROUP BY`
+    /// direction rather than the `GROUP BY`-into-selection one
+    /// `row::Field` can check, so it stays unchecked. `count_sql` won't
+    /// show either problem, since a total drops the `ORDER BY`.
     pub fn distinct(mut self) -> Self {
         self.body.distinct = true;
         self

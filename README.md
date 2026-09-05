@@ -195,11 +195,24 @@ Design constraints worth knowing before adopting:
   to the same table — correct, type-checked, and available now — rather
   than the bare-alias SQL shape. The declared column types are the body's:
   `Integer` because `employees::id` is an `i32`.
-- **Nothing relates `GROUP BY`/`ORDER BY` to the selection list.** An
-  aggregate or window function in `WHERE` or `RETURNING` is accepted by the
-  builder and rejected by the database, and `.distinct()` sorted by an
-  unselected column renders SQL Postgres won't take. Aggregates take a bare
-  column: `sum(price * qty)` and `count(DISTINCT x)` need `sql!{}`.
+- **`GROUP BY` isn't related to the selection list.** Every non-aggregated
+  selected column has to appear in `GROUP BY` (or be functionally
+  dependent), and nothing here checks that — it's the selection-into-`GROUP
+  BY` direction, the reverse of what a `row::Field` lookup can check (`GROUP
+  BY` naming a column that isn't selected is perfectly valid SQL, so
+  checking membership the other way round would be enforcing a rule that
+  doesn't exist). An aggregate or window function in `WHERE` or `RETURNING`
+  is accepted by the builder and rejected by the database, too. Aggregates
+  take a bare column: `sum(price * qty)` and `count(DISTINCT x)` need
+  `sql!{}`.
+- **`ORDER BY` has a checked and an unchecked form.** Plain `.order_by(..)`
+  only checks scope membership, since a non-`DISTINCT` query may sort by any
+  column in scope. `.order_by_selected(..)`/`.order_by_selection(..)` also
+  check the sort key is in the selection — the same `row::Field` lookup
+  `Row::get` uses — which is exactly what `SELECT DISTINCT` requires
+  (Postgres rejects a sort key that isn't selected): pair `.distinct()` with
+  one of these instead of plain `.order_by(..)` for a query that can't
+  render SQL the database would reject.
 - **A computed expression's nullability isn't derived** the way a column's is.
   An expression whose type the builder inferred — a comparison, an `is_null`,
   a `LIKE` — says what it decodes to once, with `.decodes_as::<Bool>()`; a

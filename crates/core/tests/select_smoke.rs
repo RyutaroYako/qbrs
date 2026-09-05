@@ -282,6 +282,46 @@ fn distinct_deduplicates_the_rows_a_join_repeats() {
 }
 
 #[test]
+fn distinct_order_by_selected_checks_the_sort_key_against_the_selection() {
+    // Postgres requires a `SELECT DISTINCT`'s sort keys to be in its
+    // selection — `.order_by_selected(..)` is checked against `users::name`
+    // being one of the two selected columns, the same `row::Field` lookup
+    // `Row::get` uses.
+    let (sql, _params) = select((users::id, users::name))
+        .from(users::Table)
+        .distinct()
+        .order_by_selected(users::name, qbrs_core::select::SortDir::Asc)
+        .to_sql(Postgres);
+    assert_eq!(
+        sql,
+        "SELECT DISTINCT \"users\".\"id\", \"users\".\"name\" FROM \"users\" ORDER BY \"users\".\"name\" ASC"
+    );
+}
+
+#[test]
+fn order_by_selection_orders_a_single_untupled_column_with_no_key() {
+    let (sql, _params) = select(users::name)
+        .from(users::Table)
+        .order_by_selection(qbrs_core::select::SortDir::Desc)
+        .to_sql(Postgres);
+    assert_eq!(
+        sql,
+        "SELECT \"users\".\"name\" FROM \"users\" ORDER BY \"users\".\"name\" DESC"
+    );
+}
+
+// Uncomment to confirm sorting by a column outside the selection is
+// (correctly) a compile error:
+//
+// #[test]
+// fn order_by_selected_rejects_an_unselected_column() {
+//     let _ = select((users::id, users::name))
+//         .from(users::Table)
+//         .order_by_selected(users::active, qbrs_core::select::SortDir::Asc)
+//         .to_sql(Postgres);
+// }
+
+#[test]
 fn basic_select_renders_expected_sql() {
     let q = select((users::id, users::name))
         .from(users::Table)

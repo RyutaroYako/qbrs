@@ -360,6 +360,17 @@ shape with no key to name — a single un-tupled column, marked `select::SingleC
 `.order_by(dir)` and counts to 1 itself. No public API takes a position: `OrdinalKey` is
 private, since a position a caller writes is one nothing can check.
 
+`Select::order_by_selected`/`.order_by_selection` check the same thing `SetOp::order_by_column`
+does — the key has to be in `Sel::Output`, via `row::Field` — for the case `SetOp` doesn't
+cover: a single query, not a set operation, where a real scope survives and `.order_by(..)`
+could otherwise sort by any column in it, selected or not. This is exactly what `SELECT
+DISTINCT` needs (Postgres rejects a sort key that isn't selected), which is why `.distinct()`'s
+doc comment points here instead of leaving the gap undocumented. `GROUP BY` has a *different*
+gap — every non-aggregated selected column has to appear in `GROUP BY`, the reverse direction
+from what a `row::Field` lookup proves (`GROUP BY` naming an unselected column is valid SQL) —
+so there is no `group_by_selected`: building one would check a real rule but not the one that
+actually fails, which is worse than the honest "unchecked" `.group_by(..)` already documents.
+
 ### Execution layer (`crates/qbrs-sqlx`)
 
 Execution is bolted on via extension traits implemented only for `Postgres`-dialect
