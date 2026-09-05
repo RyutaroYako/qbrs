@@ -162,6 +162,18 @@ pub(crate) fn render_expr<D: Dialect>(expr: &ExprKind, sink: &mut dyn Sink) {
             body.render_into::<D>(selection, sink);
             sink.text("))");
         }
+        ExprKind::InSubquery {
+            lhs,
+            body,
+            selection,
+            negated,
+        } => {
+            sink.ch('(');
+            render_expr::<D>(lhs, sink);
+            sink.text(if *negated { " NOT IN (" } else { " IN (" });
+            body.render_into::<D>(selection, sink);
+            sink.text("))");
+        }
         ExprKind::Template { head, rest } => {
             // Same defensive parentheses as an embedded fragment: authored
             // text has no precedence the renderer knows about.

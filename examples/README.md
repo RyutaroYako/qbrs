@@ -57,3 +57,4 @@ DATABASE_URL=postgres://postgres:postgres@localhost:5432/qbrs_test \
 | [`17_from_row`](examples/17_from_row.rs) | `#[derive(FromRow)]` — filling a plain domain struct by field name, `select(users::All)` for a whole table, `from = <column>` where two tables' `id`s collide, and `take` when a name doesn't line up |
 | [`18_correlated_exists`](examples/18_correlated_exists.rs) | `EXISTS`/`NOT EXISTS` over a subquery built from the outer query, tagged with the tables it references |
 | [`19_dynamic_sort`](examples/19_dynamic_sort.rs) | `sort_key(..)`/`.order_by_all(..)` and `grouping(..)`/`.group_by_all(..)` — a `?sort=` parameter whose keys name different tables |
+| [`20_in_subquery`](examples/20_in_subquery.rs) | `IN`/`NOT IN (<subquery>)` via `Select::contains`/`.not_contains` — a subquery's single selected column checked against the outer expression like `.eq(..)` checks two columns |

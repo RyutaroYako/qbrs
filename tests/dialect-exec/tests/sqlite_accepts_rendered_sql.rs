@@ -268,6 +268,30 @@ async fn sqlite_executes_every_rendered_statement_shape() {
     let rows = run(&pool, exists_q.filter(correlated).to_sql(Sqlite)).await;
     assert_eq!(rows.len(), 2);
 
+    // `IN (<subquery>)`: only user 1 (ada) has an order over 50.
+    let big_spenders = select(orders::user_id)
+        .from(orders::Table)
+        .filter(orders::total.gt(50i64));
+    let contains_rows = run(
+        &pool,
+        select(users::email)
+            .from(users::Table)
+            .filter(big_spenders.contains(users::id))
+            .to_sql(Sqlite),
+    )
+    .await;
+    assert_eq!(contains_rows.len(), 1);
+
+    let not_contains_rows = run(
+        &pool,
+        select(users::email)
+            .from(users::Table)
+            .filter(big_spenders.not_contains(users::id))
+            .to_sql(Sqlite),
+    )
+    .await;
+    assert_eq!(not_contains_rows.len(), 1);
+
     qbrs::label!(rank_in_user);
 
     let ranked = run(

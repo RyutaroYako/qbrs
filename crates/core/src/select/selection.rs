@@ -74,6 +74,11 @@ pub trait SingleColumn {}
 )]
 pub trait RowField<Scope, Idx>: RowKey + private::Sealed<Scope, Idx> {
     type Value;
+    /// This field's SQL type — the marker `Value` has already resolved away
+    /// to a native Rust type. A single-column subquery (`Select::contains`)
+    /// needs this to compare its selected column against an outer
+    /// expression with `expr::Comparable`, which a native `Value` can't do.
+    type Sql: SqlType;
     fn item(&self) -> SelectItem;
 }
 
@@ -86,6 +91,7 @@ where
     type Value = <<C::Sql as WrapNullable<
         <Scope as Find<C::Table, Idx>>::Nullability,
     >>::Output as SqlType>::Native;
+    type Sql = <C::Sql as WrapNullable<<Scope as Find<C::Table, Idx>>::Nullability>>::Output;
     fn item(&self) -> SelectItem {
         SelectItem::bare(ExprKind::Column {
             table: <C::Table as Table>::NAME,
@@ -99,6 +105,7 @@ where
     Scope: Superset<Req, Idx>,
 {
     type Value = S::Native;
+    type Sql = S;
     fn item(&self) -> SelectItem {
         SelectItem::bare(self.kind.clone())
     }
@@ -112,6 +119,7 @@ impl<K: LabelKey, Inner: RowField<Scope, Idx>, Scope, Idx> RowField<Scope, Idx>
     for Labeled<K, Inner>
 {
     type Value = Inner::Value;
+    type Sql = Inner::Sql;
     fn item(&self) -> SelectItem {
         SelectItem::labeled(self.inner.item().kind, <K as Named>::NAME)
     }

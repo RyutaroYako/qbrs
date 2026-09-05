@@ -199,6 +199,17 @@ with everything else. If you add another place that embeds a *query* in an expre
 the query; if you add one that embeds SQL in a dialect-tagged builder, take a `Fragment` —
 don't reintroduce a bare `(String, Vec<Value>)` pair.
 
+`ExprKind::InSubquery` (`x IN (SELECT ..)`/`NOT IN`) is the same shape one level up: it holds
+its own `SelectBody`/selection unrendered *and* an `lhs: Box<ExprKind>` for the left side, and
+`Select::contains`/`.not_contains` return a `select::InSubquery<D, Req>` — a `Condition<D, ..>`
+and nothing else, for the same reason `Exists` is one. `Req` there is `Outer::Tables` folded
+with `lhs`'s own `Req` (via `scope::Concat`), since `lhs` is built independently and may
+reference tables the subquery itself never joined. Checking `lhs` against the subquery's one
+selected column needs the column's `SqlType` marker, which `Selection::Output` has already
+resolved away to a native Rust type by the time it's visible here — that's what
+`RowField::Sql` is for: the same per-field trait a selection list already walks, just also
+exposing the marker `Value` doesn't carry.
+
 Every clause that takes a condition goes through `select::Condition` and comes out a
 `Predicate<D, Scope>` — `.filter`, `.having`, and all four joins' `ON`, where the scope
 discharged against is the one the join produces. A boolean is `expr::BoolLike`, so a
