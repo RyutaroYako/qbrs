@@ -361,11 +361,19 @@ shape with no key to name — a single un-tupled column, marked `select::SingleC
 private, since a position a caller writes is one nothing can check.
 
 `Select::order_by_selected`/`.order_by_selection` check the same thing `SetOp::order_by_column`
-does — the key has to be in `Sel::Output`, via `row::Field` — for the case `SetOp` doesn't
-cover: a single query, not a set operation, where a real scope survives and `.order_by(..)`
-could otherwise sort by any column in it, selected or not. This is exactly what `SELECT
-DISTINCT` needs (Postgres rejects a sort key that isn't selected), which is why `.distinct()`'s
-doc comment points here instead of leaving the gap undocumented. `GROUP BY` has a *different*
+does — a `row::LookupKey` whose key is in `Sel::Output`, via `row::Field` — for the case
+`SetOp` doesn't cover: a single query, not a set operation, where a real scope survives and
+`.order_by(..)` could otherwise sort by any column in it, selected or not. This is exactly what
+`SELECT DISTINCT` needs (Postgres rejects a sort key that isn't selected), which is why
+`.distinct()`'s doc comment points here instead of leaving the gap undocumented. What is
+rendered is the *selected* item, read out of `Selection::items()` at the lookup's
+`scope::Position` — for the reason `SetOp` renders the ordinal rather than the key it was
+handed: a key names a field, not an expression, and two `row_number()`s over different frames
+share one, so a key rendered as written can name a frame the query never selected. `LookupKey`
+matters for the same reason `Row::get` needs it: `row::Anon` would otherwise let any unlabelled
+`sql!` fragment stand in for any other. The one thing still unchecked is order of operations —
+`.reselect(..)` after `.order_by_selected(..)` keeps the clause, which the method documents.
+`GROUP BY` has a *different*
 gap — every non-aggregated selected column has to appear in `GROUP BY`, the reverse direction
 from what a `row::Field` lookup proves (`GROUP BY` naming an unselected column is valid SQL) —
 so there is no `group_by_selected`: building one would check a real rule but not the one that

@@ -212,7 +212,9 @@ Design constraints worth knowing before adopting:
   `Row::get` uses — which is exactly what `SELECT DISTINCT` requires
   (Postgres rejects a sort key that isn't selected): pair `.distinct()` with
   one of these instead of plain `.order_by(..)` for a query that can't
-  render SQL the database would reject.
+  render SQL the database would reject. One thing they still don't catch:
+  `.reselect(..)` after one of them keeps the `ORDER BY` it added, so swap
+  the selection before sorting by it.
 - **A computed expression's nullability isn't derived** the way a column's is.
   An expression whose type the builder inferred — a comparison, an `is_null`,
   a `LIKE` — says what it decodes to once, with `.decodes_as::<Bool>()`; a

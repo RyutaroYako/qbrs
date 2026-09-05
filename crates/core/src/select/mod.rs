@@ -11,10 +11,10 @@ use crate::render::{
     Fragment, FragmentSink, QuerySink, SelectItem, Sink, render_and_list, render_expr,
     render_expr_list, render_order_by, render_select_list,
 };
-use crate::row::{Field as RowFieldLookup, Row};
+use crate::row::{Field as RowFieldLookup, LookupKey, Row};
 use crate::scope::{
-    BaseTable, Concat, Cons, MapNullable, MaybeNull, Nil, NotNull, ScopeTables, Superset, Table,
-    TableSlot,
+    BaseTable, Concat, Cons, MapNullable, MaybeNull, Nil, NotNull, Position, ScopeTables,
+    Superset, Table, TableSlot,
 };
 
 mod dyn_select;
@@ -595,36 +595,47 @@ impl<D, Scope, Sel, Outer> Select<D, Scope, Sel, Outer> {
         self
     }
 
-    /// `.order_by(..)`, but the key also has to already be in this query's
-    /// selection — `Sel::Output` has to hold `field`'s key, the same
-    /// `row::Field` lookup `Row::get` uses, rather than only being in scope.
-    /// This is the exact rule `SELECT DISTINCT` needs a sort key to satisfy
-    /// (Postgres rejects one that isn't selected): pair this with
-    /// `.distinct()` for a query that structurally can't render the SQL it
-    /// would otherwise be rejected for. Modeled on `SetOp::order_by_column`,
-    /// which checks the same thing where a set operation's combined output
-    /// takes the place of a single query's selection.
-    pub fn order_by_selected<F, Idx1, SelIdx, Idx2, L>(mut self, field: F, dir: SortDir) -> Self
+    /// `.order_by(..)`, but the key also has to be in this query's
+    /// selection — `Sel::Output` has to hold it, the same `row::Field`
+    /// lookup `Row::get` and `SetOp::order_by_column` take, rather than the
+    /// key only being in scope. This is the exact rule `SELECT DISTINCT`
+    /// puts on a sort key (Postgres rejects one that isn't selected), so
+    /// pairing this with `.distinct()` leaves that rejected SQL unwritable.
+    ///
+    /// What gets rendered is the *selected* item the lookup landed on, for
+    /// the reason `SetOp::order_by_column` renders the ordinal rather than
+    /// the key it was handed: a key names a field, not an expression, and
+    /// two window functions over different frames share one. The index that
+    /// proves the lookup is the position that reads the item, so the check
+    /// and the rendered clause are one fact.
+    ///
+    /// **Known limitation**: `.reselect(..)` afterwards keeps the clause and
+    /// drops the guarantee — swap the selection before sorting by it.
+    pub fn order_by_selected<K, SelIdx, Idx, L>(mut self, _key: K, dir: SortDir) -> Self
     where
-        F: RowField<Scope, Idx1>,
+        K: LookupKey,
         Sel: Selection<Scope, SelIdx, Output = Row<L>>,
-        L: RowFieldLookup<F::Key, Idx2>,
+        L: RowFieldLookup<K::Key, Idx>,
+        Idx: Position,
     {
-        self.body.order_by.push((field.item().kind, dir));
+        let mut items = self.selection.items();
+        let item = items.remove(<Idx as Position>::POSITION as usize - 1);
+        self.body.order_by.push((item.kind, dir));
         self
     }
 
     /// `.order_by_selected(..)` for a single un-tupled selection
     /// (`select(users::email)`, not `select((users::email,))`): there is
     /// exactly one selected column, so there is nothing to name — the same
-    /// shape `SetOp`'s single-column `.order_by(dir)` has.
+    /// shape `SetOp`'s single-column `.order_by(dir)` has, and the same
+    /// `.reselect(..)` caveat.
     pub fn order_by_selection<SelIdx>(mut self, dir: SortDir) -> Self
     where
         Sel: Selection<Scope, SelIdx>,
         Sel::Output: SingleColumn,
     {
-        let items = self.selection.items();
-        self.body.order_by.push((items[0].kind.clone(), dir));
+        let item = self.selection.items().remove(0);
+        self.body.order_by.push((item.kind, dir));
         self
     }
 

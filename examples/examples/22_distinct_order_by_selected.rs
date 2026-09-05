@@ -16,8 +16,8 @@ async fn main() {
 
     // Every user who's placed an order, deduplicated by the join.
     // `.order_by_selected` only accepts `users::email` because it's one of
-    // the two selected columns — `users::active`, in scope but not
-    // selected, would be a compile error here.
+    // the two selected columns — `users::id`, in scope but not selected,
+    // would be a compile error here.
     let buyers: Vec<(String, bool)> = select((users::email, users::active))
         .from(users::Table)
         .inner_join(orders::Table, orders::user_id.eq(users::id))
@@ -39,4 +39,20 @@ async fn main() {
         .await
         .expect("distinct emails");
     println!("distinct emails, descending: {emails:?}");
+
+    // The argument names a *field*, not an expression, so a computed column
+    // is sorted by its label rather than by respelling it — and the clause
+    // renders the selected expression the label found.
+    label!(spend);
+
+    let by_spend: Vec<(String, i64)> = select((users::email, orders::total.label(label::spend)))
+        .from(users::Table)
+        .inner_join(orders::Table, orders::user_id.eq(users::id))
+        .distinct()
+        .order_by_selected(label::spend, SortDir::Desc)
+        .load(&pool)
+        .await
+        .expect("distinct spend")
+        .into_tuples();
+    println!("distinct (email, spend), biggest first: {by_spend:?}");
 }

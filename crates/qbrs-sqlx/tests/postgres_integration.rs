@@ -189,6 +189,36 @@ async fn full_crud_roundtrip_against_real_postgres() {
     assert_eq!(joined.get(users::email), "dan@example.com");
     assert_eq!(joined.get(orders::total), &None);
 
+    // `SELECT DISTINCT` is the one place Postgres itself rules on whether a
+    // sort key is selected, so only Postgres can confirm what
+    // `.order_by_selected(..)` renders is accepted.
+    let buyers: Vec<(String, bool)> = select((users::email, users::active))
+        .from(users::Table)
+        .inner_join(orders::Table, orders::user_id.eq(users::id))
+        .distinct()
+        .order_by_selected(users::email, qbrs::select::SortDir::Asc)
+        .load(&pool)
+        .await
+        .expect("distinct buyers sorted by a selected column")
+        .into_tuples();
+    assert_eq!(buyers, vec![("ada@example.com".to_string(), true)]);
+
+    // `users::All` puts four fields behind one tuple element, so the key's
+    // lookup index and the rendered selection list only line up if they are
+    // counting the same thing. Postgres says whether they did.
+    let spends: Vec<i64> = select((users::All, orders::total))
+        .from(users::Table)
+        .inner_join(orders::Table, orders::user_id.eq(users::id))
+        .distinct()
+        .order_by_selected(orders::total, qbrs::select::SortDir::Desc)
+        .load(&pool)
+        .await
+        .expect("distinct rows sorted by a column behind an All element")
+        .into_iter()
+        .map(|row| *row.get(orders::total))
+        .collect();
+    assert_eq!(spends, vec![2500, 1000]);
+
     // DELETE
     let deleted = qbrs::delete::delete(users::Table)
         .filter(users::id.eq(dan_id))
