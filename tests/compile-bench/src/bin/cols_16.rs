@@ -1,7 +1,9 @@
-//! Maximum-arity selection: 16 columns through `RowField` per element,
-//! `Row` assembly, and a worst-case `Field` read at the far end of the
-//! key list. The join-count binaries hold scope depth constant; this one
-//! holds it at one table and grows the selection instead.
+//! Half-width selection: 16 columns through `RowField` per element, `Row`
+//! assembly, and a worst-case `Field` read at the far end of the key list.
+//! The join-count binaries hold scope depth constant; this one holds it at
+//! one table and grows the selection instead. `cols_32` is the same shape
+//! at the arity limit, so the pair is what says selection width reads
+//! linear.
 
 use compile_bench::T00;
 use compile_bench::{assert_field, row_of};
