@@ -6,8 +6,14 @@ on:
   pull_request:
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  # A superseded PR run should cancel — that's what this exists for. A push
+  # to `main` never should: it's already merged, there's nothing to
+  # supersede it with, and a run killed mid-build can still save a corrupt
+  # cache (see the `save-if` note below). Grouping pushes by commit SHA
+  # gives each one its own group, so there's nothing for `cancel-in-progress`
+  # to act on even though the setting is harmless either way there.
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.event.pull_request.number || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
   CARGO_TERM_COLOR: always
@@ -32,6 +38,16 @@ jobs:
 
       - name: Cache cargo/target
         uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          # PR runs only ever restore, never save: a PR run cancelled
+          # mid-build (see `concurrency` above) can still reach this
+          # action's post-job save step, saving a half-extracted `pglite-rs`
+          # runtime under `~/.cargo/registry` as if it were complete. That
+          # corrupt cache is keyed by Cargo.lock's hash, so it's shared
+          # across every branch and poisons every PR's build until purged
+          # by hand. `push` to `main` never gets cancelled, so it's the only
+          # trusted source for a save.
+          save-if: ${{ github.ref == 'refs/heads/main' }}
 
       - name: Check formatting
         run: cargo fmt --all -- --check
