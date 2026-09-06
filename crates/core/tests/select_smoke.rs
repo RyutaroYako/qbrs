@@ -282,6 +282,81 @@ fn distinct_deduplicates_the_rows_a_join_repeats() {
 }
 
 #[test]
+fn distinct_order_by_selected_checks_the_sort_key_against_the_selection() {
+    // Postgres requires a `SELECT DISTINCT`'s sort keys to be in its
+    // selection — `.order_by_selected(..)` is checked against `users::name`
+    // being one of the two selected columns, the same `row::Field` lookup
+    // `Row::get` uses.
+    let (sql, _params) = select((users::id, users::name))
+        .from(users::Table)
+        .distinct()
+        .order_by_selected(users::name, qbrs_core::select::SortDir::Asc)
+        .to_sql(Postgres);
+    assert_eq!(
+        sql,
+        "SELECT DISTINCT \"users\".\"id\", \"users\".\"name\" FROM \"users\" ORDER BY \"users\".\"name\" ASC"
+    );
+}
+
+#[test]
+fn order_by_selection_orders_a_single_untupled_column_with_no_key() {
+    let (sql, _params) = select(users::name)
+        .from(users::Table)
+        .order_by_selection(qbrs_core::select::SortDir::Desc)
+        .to_sql(Postgres);
+    assert_eq!(
+        sql,
+        "SELECT \"users\".\"name\" FROM \"users\" ORDER BY \"users\".\"name\" DESC"
+    );
+}
+
+#[test]
+fn order_by_selected_renders_the_selected_item_rather_than_the_key_it_was_given() {
+    // A key names a field, not an expression: both of these window
+    // functions are keyed `RowNumber`, so a key rendered as written could
+    // sort by a frame the query never selected. The lookup's index reads
+    // the selected item instead.
+    use qbrs_core::window::{row_number, window};
+    let (sql, _params) = select((
+        row_number().over(window().partition_by(users::id)),
+        users::name,
+    ))
+    .from(users::Table)
+    .distinct()
+    .order_by_selected(row_number(), qbrs_core::select::SortDir::Asc)
+    .to_sql(Postgres);
+    assert_eq!(
+        sql,
+        "SELECT DISTINCT row_number() OVER (PARTITION BY \"users\".\"id\"), \"users\".\"name\" \
+         FROM \"users\" ORDER BY row_number() OVER (PARTITION BY \"users\".\"id\") ASC"
+    );
+}
+
+// Uncomment either to confirm it is (correctly) a compile error: a column
+// outside the selection has no field to find, and an unlabelled `sql!`
+// fragment has no name to find one by — two anonymous expressions would
+// otherwise stand in for each other here the way they can't at `.get()`.
+//
+// #[test]
+// fn order_by_selected_rejects_an_unselected_column() {
+//     let _ = select((users::id, users::name))
+//         .from(users::Table)
+//         .order_by_selected(users::active, qbrs_core::select::SortDir::Asc)
+//         .to_sql(Postgres);
+// }
+//
+// #[test]
+// fn order_by_selected_rejects_an_unlabelled_expression() {
+//     let _ = select((sql!(qbrs_core::expr::Text, "upper(?)", users::name), users::id))
+//         .from(users::Table)
+//         .order_by_selected(
+//             sql!(qbrs_core::expr::Text, "lower(?)", users::name),
+//             qbrs_core::select::SortDir::Asc,
+//         )
+//         .to_sql(Postgres);
+// }
+
+#[test]
 fn basic_select_renders_expected_sql() {
     let q = select((users::id, users::name))
         .from(users::Table)

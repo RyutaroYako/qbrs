@@ -343,6 +343,20 @@ async fn sqlite_executes_every_rendered_statement_shape() {
     .await;
     assert_eq!(distinct.len(), 2);
 
+    // `.order_by_selected(..)` is what a `SELECT DISTINCT` needs its sort
+    // key to satisfy — checked against the selection at compile time,
+    // rather than only discovered when the database rejects it.
+    let distinct_sorted = run(
+        &pool,
+        select((users::email, users::display_name))
+            .from(users::Table)
+            .distinct()
+            .order_by_selected(users::email, SortDir::Asc)
+            .to_sql(Sqlite),
+    )
+    .await;
+    assert_eq!(distinct_sorted.len(), 2);
+
     let bulk = run(
         &pool,
         insert(orders::Table)
