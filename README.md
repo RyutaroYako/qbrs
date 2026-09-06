@@ -140,8 +140,8 @@ compile error.
 `SELECT`/`INSERT`/`UPDATE`/`DELETE`, every JOIN kind, `GROUP BY`/`HAVING`,
 aggregates, `DISTINCT`, upsert (`ON CONFLICT`), `UNION`/`INTERSECT`/`EXCEPT`,
 ranking window functions, non-recursive CTEs, correlated `EXISTS`,
-transactions, the `sql!{}` escape hatch, and typed prepared statements
-(`prepare!{}`).
+`IN (SELECT ..)`/`NOT IN (SELECT ..)`, transactions, the `sql!{}` escape
+hatch, and typed prepared statements (`prepare!{}`).
 
 A schema is a `#[derive(Table)]` struct; `use qbrs::prelude::*;` and
 `use qbrs_sqlx::prelude::*;` cover a query. Everything above has a runnable,
@@ -168,11 +168,13 @@ Three things that aren't obvious from a signature:
 
 Deferred rather than half-supported, and documented in the relevant module:
 `WITH RECURSIVE`, aggregates as window functions (`sum(x) OVER (..)`), a CTE
-referencing another CTE, row locking (`FOR UPDATE`/`SKIP LOCKED`), a subquery
-in an expression position (`IN (SELECT ..)`, a scalar subquery), and
+referencing another CTE, row locking (`FOR UPDATE`/`SKIP LOCKED`), a scalar
+subquery in an expression position (`col = (SELECT max(x) ..)`), and
 relations/eager-loading. `sql!{}` doesn't reach the last two: it builds an
-expression, not a statement suffix, and a `Select` isn't a slot value. A
-correlated `EXISTS` covers what `IN (SELECT ..)` means.
+expression, not a statement suffix, and a `Select` isn't a slot value.
+`IN (SELECT ..)`/`NOT IN (SELECT ..)` is covered by `Select::contains`/
+`.not_contains`, which — like `EXISTS` — is dialect-pinned rather than a
+plain expression.
 
 Design constraints worth knowing before adopting:
 

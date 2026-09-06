@@ -6,13 +6,14 @@ use std::marker::PhantomData;
 
 use crate::cte::Cte;
 use crate::dialect::{Dialect, SupportsFullOuterJoin, SupportsRightJoin};
-use crate::expr::{BoolLike, Expr, ExprKind, IntoExpr, Value};
+use crate::expr::{BoolLike, Comparable, Expr, ExprKind, IntoExpr, Value};
 use crate::render::{
     Fragment, FragmentSink, QuerySink, SelectItem, Sink, render_and_list, render_expr,
     render_expr_list, render_order_by, render_select_list,
 };
 use crate::scope::{
-    BaseTable, Cons, MapNullable, MaybeNull, Nil, NotNull, ScopeTables, Superset, Table, TableSlot,
+    BaseTable, Concat, Cons, MapNullable, MaybeNull, Nil, NotNull, ScopeTables, Superset, Table,
+    TableSlot,
 };
 
 mod dyn_select;
@@ -270,7 +271,7 @@ pub fn grouping<Scope, Idxs, K: GroupBy<Scope, Idxs>>(key: K) -> Grouping<Scope>
 /// applied.
 #[diagnostic::on_unimplemented(
     message = "`{Self}` isn't a condition",
-    label = "a comparison (`.eq(..)`, `.gt(..)`, `.is_null()`), an `any_of`/`all_of` of them, a `sql!` fragment of type `Bool`, a `predicate(..)`, or an `EXISTS` of a subquery in *this* dialect",
+    label = "a comparison (`.eq(..)`, `.gt(..)`, `.is_null()`), an `any_of`/`all_of` of them, a `sql!` fragment of type `Bool`, a `predicate(..)`, or an `EXISTS`/`.contains(..)` of a subquery in *this* dialect",
     note = "a `Predicate` also has to have been discharged against *this* scope — a scope lists its tables most-recently-joined first, so two that look alike can still differ in order"
 )]
 pub trait Condition<D, Scope, Idxs> {
@@ -324,6 +325,33 @@ impl<D, Req> Clone for Exists<D, Req> {
 }
 
 impl<D, Scope: Superset<Req, Idxs>, Req, Idxs> Condition<D, Scope, Idxs> for Exists<D, Req> {
+    fn into_predicate(self) -> Predicate<D, Scope> {
+        Predicate {
+            kind: self.kind,
+            _marker: PhantomData,
+        }
+    }
+}
+
+/// `lhs IN (<subquery>)` / `lhs NOT IN (<subquery>)`. Not an `Expr`, for the
+/// same reason `Exists` isn't: the subquery it holds was capability-checked
+/// against its own dialect. `.filter(..)` it, or `predicate(..)` it into a
+/// collection, onto a query of the same dialect.
+pub struct InSubquery<D, Req> {
+    kind: ExprKind,
+    _marker: PhantomData<fn() -> (D, Req)>,
+}
+
+impl<D, Req> Clone for InSubquery<D, Req> {
+    fn clone(&self) -> Self {
+        InSubquery {
+            kind: self.kind.clone(),
+            _marker: PhantomData,
+        }
+    }
+}
+
+impl<D, Scope: Superset<Req, Idxs>, Req, Idxs> Condition<D, Scope, Idxs> for InSubquery<D, Req> {
     fn into_predicate(self) -> Predicate<D, Scope> {
         Predicate {
             kind: self.kind,
@@ -901,6 +929,67 @@ impl<D: Dialect, Scope, Sel, Outer: ScopeTables> Select<D, Scope, Sel, Outer> {
     {
         Exists {
             kind: ExprKind::Exists {
+                body: Box::new(self.body.clone()),
+                selection: self.selection.items(),
+                negated,
+            },
+            _marker: PhantomData,
+        }
+    }
+
+    /// `lhs IN (<this query>)`. This query selects exactly one column
+    /// (`Sel: RowField` — a bare column, aggregate, or labelled one of
+    /// those, never a tuple), so its SQL type can be checked against `lhs`
+    /// the same way `.eq(..)` checks two columns: `RowField::Sql` carries
+    /// the marker a decoded `Selection::Output` has already resolved away.
+    /// Tagged with the outer tables `lhs` and this query's own `Outer`
+    /// reference, so it can only be filtered onto a query that has both in
+    /// scope.
+    ///
+    /// **Known limitation**: membership only. A *scalar* subquery
+    /// (`col = (SELECT max(x) ..)`) stays deferred — it would have to be an
+    /// `Expr`, which carries no dialect to pin the subquery's capability
+    /// check to.
+    pub fn contains<Lhs, Idx>(
+        &self,
+        lhs: Lhs,
+    ) -> InSubquery<D, <Outer::Tables as Concat<Lhs::Req>>::Output>
+    where
+        Lhs: IntoExpr,
+        Lhs::Sql: Comparable<Sel::Sql>,
+        Sel: RowField<Scope, Idx> + Selection<Scope, Idx>,
+        Outer::Tables: Concat<Lhs::Req>,
+    {
+        self.in_subquery_kind::<Lhs, Idx>(lhs, false)
+    }
+
+    pub fn not_contains<Lhs, Idx>(
+        &self,
+        lhs: Lhs,
+    ) -> InSubquery<D, <Outer::Tables as Concat<Lhs::Req>>::Output>
+    where
+        Lhs: IntoExpr,
+        Lhs::Sql: Comparable<Sel::Sql>,
+        Sel: RowField<Scope, Idx> + Selection<Scope, Idx>,
+        Outer::Tables: Concat<Lhs::Req>,
+    {
+        self.in_subquery_kind::<Lhs, Idx>(lhs, true)
+    }
+
+    fn in_subquery_kind<Lhs, Idx>(
+        &self,
+        lhs: Lhs,
+        negated: bool,
+    ) -> InSubquery<D, <Outer::Tables as Concat<Lhs::Req>>::Output>
+    where
+        Lhs: IntoExpr,
+        Lhs::Sql: Comparable<Sel::Sql>,
+        Sel: RowField<Scope, Idx> + Selection<Scope, Idx>,
+        Outer::Tables: Concat<Lhs::Req>,
+    {
+        InSubquery {
+            kind: ExprKind::InSubquery {
+                lhs: Box::new(lhs.into_expr().kind),
                 body: Box::new(self.body.clone()),
                 selection: self.selection.items(),
                 negated,

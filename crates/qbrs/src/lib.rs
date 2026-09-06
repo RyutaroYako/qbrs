@@ -93,9 +93,9 @@ pub mod prelude {
     };
     pub use qbrs_core::select::All;
     pub use qbrs_core::select::{
-        Condition, DynSelect, Exists, GroupBy, Grouping, JoinSource, OrderExt, OrderKey, Predicate,
-        Prepared, Select, SelectSeed, Selection, SetOp, SortBy, SortKey, Total, grouping,
-        predicate, select, sort_key,
+        Condition, DynSelect, Exists, GroupBy, Grouping, InSubquery, JoinSource, OrderExt,
+        OrderKey, Predicate, Prepared, Select, SelectSeed, Selection, SetOp, SortBy, SortKey,
+        Total, grouping, predicate, select, sort_key,
     };
     pub use qbrs_core::statement::{Returning, Statement, WrittenTable};
     pub use qbrs_core::update::{Assignments, NothingToSet, Update, UpdateRow, UpdateSeed, update};

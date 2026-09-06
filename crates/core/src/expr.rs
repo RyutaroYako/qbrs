@@ -65,6 +65,16 @@ pub(crate) enum ExprKind {
         selection: Vec<crate::render::SelectItem>,
         negated: bool,
     },
+    /// `x IN (<subquery>)` / `x NOT IN (<subquery>)`. Held unrendered for
+    /// the same reason `Exists` is: an `Expr` carries no dialect, and a
+    /// subquery built for one dialect must not be filtered onto a statement
+    /// of another.
+    InSubquery {
+        lhs: Box<ExprKind>,
+        body: Box<crate::select::SelectBody>,
+        selection: Vec<crate::render::SelectItem>,
+        negated: bool,
+    },
     /// `sql!{}`: authored text with a hole at each `?`, each hole holding an
     /// expression the renderer recurses into — so a column in a hole is
     /// quoted by the same code that quotes it anywhere else, and counts
