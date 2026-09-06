@@ -45,6 +45,17 @@ The embedded-server guard value must stay bound for the whole test/example body
 the pool. `qbrs-sqlx` tests must call `common::shutdown(pool, guard)` at the end, otherwise
 the child process outlives the test binary.
 
+## Releasing
+
+`./scripts/release.sh <patch|minor|major|<exact-version>>`, from a clean `main` in sync with
+origin. It runs the same fmt/clippy/test gate CI does, shows a `cargo-release` dry run, and
+asks for one confirmation before the real run — which bumps all four publishable crates
+together (`release.toml`: `shared-version = true`), tags, pushes, and publishes
+`qbrs-core`/`qbrs-macros` before `qbrs`/`qbrs-sqlx`, waiting on crates.io's index between them.
+`tests/compile-bench`, `tests/dialect-exec`, and `examples` carry `publish = false` already, so
+cargo-release leaves them alone. Requires `cargo login` (or `CARGO_REGISTRY_TOKEN`) with
+publish rights on all four crates.
+
 ## Workspace layout
 
 - `crates/core` (`qbrs-core`) — all the type-level machinery and SQL rendering. No I/O, no
