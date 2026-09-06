@@ -35,8 +35,11 @@ cargo test -p dialect-exec                                   # rendered SQL, run
 
 **No database setup is needed anywhere.** Tests and examples that need Postgres start their
 own throwaway PostgreSQL 17.5, linked into the binary via `pglite-rs` (multi-process mode, a
-real postmaster over a unix socket). Nothing is downloaded at test time and Docker is not
-involved. Set `DATABASE_URL` to run the same tests/examples against an external Postgres
+real postmaster over a unix socket). Docker is not involved, and nothing is fetched while a
+test runs — but the engine itself is downloaded once, the first time `pglite-rs-sys` is
+built, from GitHub Releases into `~/.cache/pglite-rs`. That directory is outside everything
+cargo tracks, while `target/` records the absolute path into it, which is why CI caches the
+two together. Set `DATABASE_URL` to run the same tests/examples against an external Postgres
 instead — integration tests are written to be idempotent (`DROP TABLE IF EXISTS` first) so
 they work against a persistent server too.
 

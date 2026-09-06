@@ -266,8 +266,10 @@ cargo test --workspace --all-features
 
 No setup required: the real-DB tests start their own throwaway PostgreSQL
 17.5, embedded via [`pglite-rs`](https://crates.io/crates/pglite-rs) — no
-Docker, no service to launch, nothing downloaded at test time. Set
-`DATABASE_URL` to run them against an external Postgres instead.
+Docker and no service to launch. The engine is downloaded once, when the crate
+is first built, and cached under `~/.cache/pglite-rs`; nothing is fetched while
+a test runs. Set `DATABASE_URL` to run them against an external Postgres
+instead.
 
 ## License
 
