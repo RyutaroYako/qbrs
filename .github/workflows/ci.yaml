@@ -36,18 +36,37 @@ jobs:
           toolchain: stable
           components: rustfmt, clippy
 
+      # `pglite-rs-sys` downloads its engine here and records the absolute
+      # path in `target/`, which the cargo cache below carries between runs.
+      # This directory is under `~/.cache`, which that cache does not cover,
+      # so it has to be restored alongside it or the two disagree.
+      - name: Cache the pglite engine
+        uses: actions/cache@v6.1.0
+        with:
+          path: ~/.cache/pglite-rs
+          key: pglite-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}
+          restore-keys: pglite-${{ runner.os }}-
+
       - name: Cache cargo/target
         uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
-          # PR runs only ever restore, never save: a PR run cancelled
-          # mid-build (see `concurrency` above) can still reach this
-          # action's post-job save step, saving a half-extracted `pglite-rs`
-          # runtime under `~/.cargo/registry` as if it were complete. That
-          # corrupt cache is keyed by Cargo.lock's hash, so it's shared
-          # across every branch and poisons every PR's build until purged
-          # by hand. `push` to `main` never gets cancelled, so it's the only
-          # trusted source for a save.
+          # A PR run only restores; `main` is the one branch that saves. The
+          # cache key is derived from Cargo.lock, not the branch, so a save
+          # from a PR is a save every other PR then restores.
           save-if: ${{ github.ref == 'refs/heads/main' }}
+
+      # Restoring `target/` without the engine it points at is the one state
+      # cargo cannot recover from on its own: `pglite-rs` re-runs its build
+      # script when the engine goes missing (it names the runtime tar in a
+      # `rerun-if-changed`) and panics, while `pglite-rs-sys` — which is what
+      # would download it again — declares no file inputs, stays fresh, and
+      # replays the stale path. Dropping both build directories is what makes
+      # the download happen.
+      - name: Re-download the engine if the cargo cache outlived it
+        run: |
+          if ! ls ~/.cache/pglite-rs/*/*/pglite-runtime.tar >/dev/null 2>&1; then
+            rm -rf target/*/build/pglite-rs-* target/*/build/pglite-rs-sys-*
+          fi
 
       - name: Check formatting
         run: cargo fmt --all -- --check
