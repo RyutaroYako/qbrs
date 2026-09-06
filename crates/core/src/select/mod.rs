@@ -13,8 +13,8 @@ use crate::render::{
 };
 use crate::row::{Field as RowFieldLookup, LookupKey, Row};
 use crate::scope::{
-    BaseTable, Concat, Cons, MapNullable, MaybeNull, Nil, NotNull, Position, ScopeTables,
-    Superset, Table, TableSlot,
+    BaseTable, Concat, Cons, MapNullable, MaybeNull, Nil, NotNull, Position, ScopeTables, Superset,
+    Table, TableSlot,
 };
 
 mod dyn_select;
