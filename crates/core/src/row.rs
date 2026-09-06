@@ -20,7 +20,7 @@
 //!
 //! **Known limitations**: a key selected twice is ambiguous at the point it
 //! is read, rather than resolving to the first — give one of them a
-//! `label!{}` label. `into_tuple` is implemented up to 16 columns; `Row`
+//! `label!{}` label. `into_tuple` is implemented up to 32 columns; `Row`
 //! itself has no such limit. A field with no name (a bare `sql!{}`
 //! fragment) can only be reached positionally until `.label(label::..)` gives it one.
 
@@ -301,7 +301,7 @@ where
 pub trait SameShape<Other> {}
 
 // Walked cell by cell rather than compared as tuples: the positional view
-// stops at 16 fields, and two selections agree or don't regardless of how
+// stops at 32 fields, and two selections agree or don't regardless of how
 // wide they are. No `do_not_recommend` on the cons impl — it is what keeps
 // the `SameNameAs` obligation the one that gets reported.
 impl SameShape<RowNil> for RowNil {}
@@ -575,7 +575,7 @@ pub trait RowValues {
 /// positional view has an arity limit.
 #[diagnostic::on_unimplemented(
     message = "this row has no positional view",
-    label = "`into_tuple`/`into_tuples` stop at 16 fields, however they were selected",
+    label = "`into_tuple`/`into_tuples` stop at 32 fields, however they were selected",
     note = "read it by key (`row.get(..)`) or fill a struct with `#[derive(FromRow)]`"
 )]
 pub trait Prepend<H> {
@@ -605,7 +605,8 @@ macro_rules! prepend_impls {
     };
 }
 prepend_impls!(
-    T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12, T13, T14, T15
+    T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12, T13, T14, T15, T16, T17, T18, T19, T20, T21,
+    T22, T23, T24, T25, T26, T27, T28, T29, T30, T31
 );
 
 impl RowValues for RowNil {

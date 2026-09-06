@@ -122,7 +122,7 @@ impl<K: LabelKey, Inner: RowField<Scope, Idx>, Scope, Idx> RowField<Scope, Idx>
 /// value, since there is nothing to key it against.
 #[diagnostic::on_unimplemented(
     message = "`{Self}` isn't a valid selection list here",
-    label = "a selection is a column, an aggregate, a window function, a `sql!` fragment, a labelled one of those, `<table>::All`, or a tuple of up to 16 of them",
+    label = "a selection is a column, an aggregate, a window function, a `sql!` fragment, a labelled one of those, `<table>::All`, or a tuple of up to 32 of them",
     note = "every element has to be in scope — `.from(..)`/`.join(..)` the tables it names — and an expression the builder inferred a type for has to state its decoded type with `.decodes_as::<..>()`"
 )]
 pub trait Selection<Scope, Idx>: private::Sealed<Scope, Idx> {
@@ -330,3 +330,19 @@ tuple_selection!(A IA, B IB, C IC, D ID, E IE, F IF, G IG, H IH, I II, J IJ, K I
 tuple_selection!(A IA, B IB, C IC, D ID, E IE, F IF, G IG, H IH, I II, J IJ, K IK, L IL, M IM, N IN);
 tuple_selection!(A IA, B IB, C IC, D ID, E IE, F IF, G IG, H IH, I II, J IJ, K IK, L IL, M IM, N IN, O IO);
 tuple_selection!(A IA, B IB, C IC, D ID, E IE, F IF, G IG, H IH, I II, J IJ, K IK, L IL, M IM, N IN, O IO, P IP);
+tuple_selection!(A IA, B IB, C IC, D ID, E IE, F IF, G IG, H IH, I II, J IJ, K IK, L IL, M IM, N IN, O IO, P IP, Q IQ);
+tuple_selection!(A IA, B IB, C IC, D ID, E IE, F IF, G IG, H IH, I II, J IJ, K IK, L IL, M IM, N IN, O IO, P IP, Q IQ, R IR);
+tuple_selection!(A IA, B IB, C IC, D ID, E IE, F IF, G IG, H IH, I II, J IJ, K IK, L IL, M IM, N IN, O IO, P IP, Q IQ, R IR, S IS);
+tuple_selection!(A IA, B IB, C IC, D ID, E IE, F IF, G IG, H IH, I II, J IJ, K IK, L IL, M IM, N IN, O IO, P IP, Q IQ, R IR, S IS, T IT);
+tuple_selection!(A IA, B IB, C IC, D ID, E IE, F IF, G IG, H IH, I II, J IJ, K IK, L IL, M IM, N IN, O IO, P IP, Q IQ, R IR, S IS, T IT, U IU);
+tuple_selection!(A IA, B IB, C IC, D ID, E IE, F IF, G IG, H IH, I II, J IJ, K IK, L IL, M IM, N IN, O IO, P IP, Q IQ, R IR, S IS, T IT, U IU, V IV);
+tuple_selection!(A IA, B IB, C IC, D ID, E IE, F IF, G IG, H IH, I II, J IJ, K IK, L IL, M IM, N IN, O IO, P IP, Q IQ, R IR, S IS, T IT, U IU, V IV, W IW);
+tuple_selection!(A IA, B IB, C IC, D ID, E IE, F IF, G IG, H IH, I II, J IJ, K IK, L IL, M IM, N IN, O IO, P IP, Q IQ, R IR, S IS, T IT, U IU, V IV, W IW, X IX);
+tuple_selection!(A IA, B IB, C IC, D ID, E IE, F IF, G IG, H IH, I II, J IJ, K IK, L IL, M IM, N IN, O IO, P IP, Q IQ, R IR, S IS, T IT, U IU, V IV, W IW, X IX, Y IY);
+tuple_selection!(A IA, B IB, C IC, D ID, E IE, F IF, G IG, H IH, I II, J IJ, K IK, L IL, M IM, N IN, O IO, P IP, Q IQ, R IR, S IS, T IT, U IU, V IV, W IW, X IX, Y IY, Z IZ);
+tuple_selection!(A IA, B IB, C IC, D ID, E IE, F IF, G IG, H IH, I II, J IJ, K IK, L IL, M IM, N IN, O IO, P IP, Q IQ, R IR, S IS, T IT, U IU, V IV, W IW, X IX, Y IY, Z IZ, AA IAA);
+tuple_selection!(A IA, B IB, C IC, D ID, E IE, F IF, G IG, H IH, I II, J IJ, K IK, L IL, M IM, N IN, O IO, P IP, Q IQ, R IR, S IS, T IT, U IU, V IV, W IW, X IX, Y IY, Z IZ, AA IAA, BB IBB);
+tuple_selection!(A IA, B IB, C IC, D ID, E IE, F IF, G IG, H IH, I II, J IJ, K IK, L IL, M IM, N IN, O IO, P IP, Q IQ, R IR, S IS, T IT, U IU, V IV, W IW, X IX, Y IY, Z IZ, AA IAA, BB IBB, CC ICC);
+tuple_selection!(A IA, B IB, C IC, D ID, E IE, F IF, G IG, H IH, I II, J IJ, K IK, L IL, M IM, N IN, O IO, P IP, Q IQ, R IR, S IS, T IT, U IU, V IV, W IW, X IX, Y IY, Z IZ, AA IAA, BB IBB, CC ICC, DD IDD);
+tuple_selection!(A IA, B IB, C IC, D ID, E IE, F IF, G IG, H IH, I II, J IJ, K IK, L IL, M IM, N IN, O IO, P IP, Q IQ, R IR, S IS, T IT, U IU, V IV, W IW, X IX, Y IY, Z IZ, AA IAA, BB IBB, CC ICC, DD IDD, EE IEE);
+tuple_selection!(A IA, B IB, C IC, D ID, E IE, F IF, G IG, H IH, I II, J IJ, K IK, L IL, M IM, N IN, O IO, P IP, Q IQ, R IR, S IS, T IT, U IU, V IV, W IW, X IX, Y IY, Z IZ, AA IAA, BB IBB, CC ICC, DD IDD, EE IEE, FF IFF);

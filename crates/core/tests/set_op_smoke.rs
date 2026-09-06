@@ -154,11 +154,27 @@ fn counting_a_set_op_drops_its_own_paging_but_not_its_branches() {
     );
 }
 
-/// A table wider than the positional view's 16 fields still unions: two
+/// A table wider than the positional view's 32 fields still unions: two
 /// selections agree or don't, however wide they are.
 #[test]
 fn a_wide_selection_can_still_be_a_branch() {
     let left = select((
+        users::id,
+        users::email,
+        users::id,
+        users::email,
+        users::id,
+        users::email,
+        users::id,
+        users::email,
+        users::id,
+        users::email,
+        users::id,
+        users::email,
+        users::id,
+        users::email,
+        users::id,
+        users::email,
         users::id,
         users::email,
         users::id,

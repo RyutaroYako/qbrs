@@ -152,6 +152,39 @@ fn into_tuple_recovers_the_positional_view() {
     assert_eq!(total, Some(1000));
 }
 
+/// The positional view stops where `row::Prepend`'s impls do, so the 32nd
+/// field is the one that says whether the chain reaches the declared cap.
+#[test]
+fn into_tuple_reaches_the_thirty_second_field() {
+    type Cell<Tail> = RowCons<users::columns::id, i64, Tail>;
+    type Cells2<Tail> = Cell<Cell<Tail>>;
+    type Cells4<Tail> = Cells2<Cells2<Tail>>;
+    type Cells8<Tail> = Cells4<Cells4<Tail>>;
+    type Cells16<Tail> = Cells8<Cells8<Tail>>;
+
+    fn cell<Tail>(tail: Tail) -> Cell<Tail> {
+        RowCons::new(0, tail)
+    }
+    fn cells2<Tail>(tail: Tail) -> Cells2<Tail> {
+        cell(cell(tail))
+    }
+    fn cells4<Tail>(tail: Tail) -> Cells4<Tail> {
+        cells2(cells2(tail))
+    }
+    fn cells8<Tail>(tail: Tail) -> Cells8<Tail> {
+        cells4(cells4(tail))
+    }
+    fn cells16<Tail>(tail: Tail) -> Cells16<Tail> {
+        cells8(cells8(tail))
+    }
+
+    let thirty_second = RowCons::<users::columns::email, _, _>::new("last".to_string(), RowNil);
+    let fields = Row::new(cells16(cells8(cells4(cells2(cell(thirty_second)))))).into_tuple();
+
+    assert_eq!(fields.0, 0);
+    assert_eq!(fields.31, "last");
+}
+
 #[test]
 fn an_untupled_selection_stays_a_bare_value() {
     let (sql, _) = select(users::email).from(users::Table).to_sql(Postgres);
