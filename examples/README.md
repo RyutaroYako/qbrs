@@ -14,9 +14,10 @@ cargo run -p qbrs-examples --example 01_select_basic
 Each example starts its own throwaway PostgreSQL 17.5, embedded via
 [`pglite-rs`](https://crates.io/crates/pglite-rs) — the `postgres-pglite`
 engine linked into the binary and served over a unix socket, so `sqlx`
-connects to it exactly as it would to any Postgres. No Docker, no Postgres
-install, and nothing fetched at run time; the server is torn down when the
-example exits.
+connects to it exactly as it would to any Postgres. No Docker and no Postgres
+install. The engine is downloaded once, when the crate is first built, and
+cached under `~/.cache/pglite-rs`, so nothing is fetched while an example runs;
+the server is torn down when the example exits.
 
 That teardown is why `setup_db()` hands back a second value:
 
