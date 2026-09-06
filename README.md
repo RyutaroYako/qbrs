@@ -183,9 +183,18 @@ Design constraints worth knowing before adopting:
   `.erase()` into `DynSelect` is the way out, and it's narrow: only the join
   skeleton is erased, and no further `.filter()`/`.join()` is offered on it.
   Conditional *filtering* needs none of this.
-- **No table aliasing, so no self-join.** Two `#[derive(Table)]` structs must
-  not share a `#[table(name = "..")]` — that compiles and then renders
-  `FROM "t" JOIN "t"`, which the database refuses.
+- **No table aliasing, so no literal `FROM "t" AS a JOIN "t" AS b`.** Two
+  `#[derive(Table)]` structs must not share a `#[table(name = "..")]` — that
+  compiles and then renders `FROM "t" JOIN "t"`, which the database refuses.
+  A `with!{}` pseudo-table bound to a plain `select(..).from(t::Table)` gets
+  the same result today: `with! { struct managers { id: Integer, name: Text } }`
+  then `select((employees::name, managers::name)).from(employees::Table)
+  .inner_join(cte::with(managers::Table,
+  &select((employees::id, employees::name)).from(employees::Table)),
+  managers::id.eq(employees::manager_id))` renders a `WITH` CTE joined back
+  to the same table — correct, type-checked, and available now — rather
+  than the bare-alias SQL shape. The declared column types are the body's:
+  `Integer` because `employees::id` is an `i32`.
 - **Nothing relates `GROUP BY`/`ORDER BY` to the selection list.** An
   aggregate or window function in `WHERE` or `RETURNING` is accepted by the
   builder and rejected by the database, and `.distinct()` sorted by an

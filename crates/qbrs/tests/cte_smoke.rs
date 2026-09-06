@@ -79,6 +79,44 @@ fn a_cte_column_is_read_by_key_and_by_accessor() {
     assert_eq!(row.total(), &2500);
 }
 
+with! {
+    struct managers { id: Integer, name: Text }
+}
+
+#[derive(Table)]
+#[table(name = "employees")]
+#[allow(dead_code)]
+struct Employees {
+    #[column(primary_key, generated)]
+    id: i32,
+    name: String,
+    manager_id: Option<i32>,
+}
+
+#[test]
+fn a_cte_of_the_same_table_stands_in_for_a_self_join() {
+    // qbrs has no table aliasing (see README's Known limitations), so a
+    // literal `FROM "employees" AS e JOIN "employees" AS m` can't be
+    // written. Binding a `with!{}` pseudo-table to a plain `SELECT` over the
+    // *same* table gets the same result: each employee row paired with its
+    // own manager's row, fully type-checked.
+    let manager_rows = select((employees::id, employees::name)).from(employees::Table);
+
+    let (sql, _params) = select((employees::name, managers::name))
+        .from(employees::Table)
+        .inner_join(
+            qbrs::cte::with(managers::Table, &manager_rows),
+            managers::id.eq(employees::manager_id),
+        )
+        .to_sql(Postgres);
+    assert_eq!(
+        sql,
+        "WITH \"managers\" (\"id\", \"name\") AS (SELECT \"employees\".\"id\", \"employees\".\"name\" FROM \"employees\") \
+         SELECT \"employees\".\"name\", \"managers\".\"name\" FROM \"employees\" \
+         INNER JOIN \"managers\" ON (\"managers\".\"id\" = \"employees\".\"manager_id\")"
+    );
+}
+
 #[test]
 fn a_cte_names_its_row_the_way_a_table_does() {
     // `with!` generates `AllRow` for the same reason `#[derive(Table)]`

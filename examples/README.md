@@ -58,3 +58,4 @@ DATABASE_URL=postgres://postgres:postgres@localhost:5432/qbrs_test \
 | [`18_correlated_exists`](examples/18_correlated_exists.rs) | `EXISTS`/`NOT EXISTS` over a subquery built from the outer query, tagged with the tables it references |
 | [`19_dynamic_sort`](examples/19_dynamic_sort.rs) | `sort_key(..)`/`.order_by_all(..)` and `grouping(..)`/`.group_by_all(..)` — a `?sort=` parameter whose keys name different tables |
 | [`20_in_subquery`](examples/20_in_subquery.rs) | `IN`/`NOT IN (<subquery>)` via `Select::contains`/`.not_contains` — a subquery's single selected column checked against the outer expression like `.eq(..)` checks two columns |
+| [`21_self_join_via_cte`](examples/21_self_join_via_cte.rs) | self-join workaround: a `with!{}` pseudo-table bound to a plain `SELECT` over the same table, joined back to it — qbrs has no table aliasing (see README) |
