@@ -123,8 +123,8 @@ too, but it's deliberately narrow — see [Known limitations](#known-limitations
 
 ```toml
 [dependencies]
-qbrs = "0.1"
-qbrs-sqlx = "0.1"                                                     # Postgres execution via sqlx
+qbrs = "0.2.0"
+qbrs-sqlx = "0.2.0"                                                     # Postgres execution via sqlx
 sqlx = { version = "0.9", features = ["runtime-tokio", "postgres"] }  # for `PgPool`
 ```
 
