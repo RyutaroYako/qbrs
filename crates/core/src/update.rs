@@ -84,17 +84,34 @@ impl<T: Table> Assignments<T> {
         V::Sql: AssignsTo<C::Sql>,
         WrittenTable<T>: Superset<V::Req, Idxs>,
     {
-        // A column assigned twice is not a statement any database accepts,
-        // and layering a computed assignment over a request's is exactly
-        // when it happens — so the later one replaces the earlier.
-        let name = <C as crate::row::Named>::NAME;
-        self.sets.retain(|(col, _)| *col != name);
-        self.sets.push((name, value.into_expr().kind));
+        push_set(
+            &mut self.sets,
+            <C as crate::row::Named>::NAME,
+            value.into_expr().kind,
+        );
         self
     }
 }
 
+/// A column assigned twice is not a statement any database accepts, and
+/// layering a computed assignment over a request's is exactly when it
+/// happens — so the later one replaces the earlier. Shared with the
+/// `ON CONFLICT DO UPDATE` list, which is built the same way.
+pub(crate) fn push_set(
+    sets: &mut Vec<(&'static str, ExprKind)>,
+    name: &'static str,
+    value: ExprKind,
+) {
+    sets.retain(|(col, _)| *col != name);
+    sets.push((name, value));
+}
+
 impl<T> Assignments<T> {
+    /// The list itself, for the one other statement that renders a `SET`.
+    pub(crate) fn into_sets(self) -> Vec<(&'static str, ExprKind)> {
+        self.sets
+    }
+
     /// `col = $n, col = $n` — the one renderer for a `SET` list, shared by
     /// `UPDATE` and `ON CONFLICT DO UPDATE`.
     pub(crate) fn render_into<D: Dialect>(&self, sink: &mut dyn Sink) {
@@ -115,11 +132,7 @@ impl<T> Assignments<T> {
     pub fn from_row<R: UpdateRow<Table = T>>(row: R) -> Result<Self, NothingToSet> {
         let mut sets: Vec<(&'static str, ExprKind)> = Vec::new();
         for (col, value) in row.sets() {
-            // Last write wins, as `and_set_to` says: a `SET` list naming one
-            // column twice is a statement no database accepts, and this is
-            // the other place the list is built.
-            sets.retain(|(name, _)| *name != col);
-            sets.push((col, ExprKind::Value(value)));
+            push_set(&mut sets, col, ExprKind::Value(value));
         }
         if sets.is_empty() {
             return Err(NothingToSet);

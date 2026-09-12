@@ -1,0 +1,27 @@
+// Deliberately-broken example: `excluded(..)` in a plain `UPDATE`, which
+// has no proposed row for it to name. Used to eyeball the scope error a
+// `DO UPDATE`-only expression gets — `Excluded<users::Table>` is a table
+// only `ConflictScope` holds. Not meant to compile — copy into
+// tests/compile-bench/examples/ and run with:
+//   cargo build -p compile-bench --example excluded_outside_upsert
+use qbrs::dialect::Postgres;
+use qbrs::prelude::*;
+use qbrs::update::{Assignments, update};
+
+#[derive(Table)]
+#[table(name = "users")]
+#[allow(dead_code)]
+struct Users {
+    #[column(primary_key, generated)]
+    id: i64,
+    email: String,
+}
+
+fn main() {
+    // error[E0277]: this expression references a table that isn't in scope here
+    //   requires Cons<Excluded<users::Table>, Nil>, but the current query
+    //   scope doesn't contain all of it
+    let _ = update(users::Table)
+        .set(Assignments::set_to(users::email, excluded(users::email)))
+        .to_sql(Postgres);
+}

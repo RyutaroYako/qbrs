@@ -33,6 +33,11 @@ pub(crate) enum ExprKind {
         table: &'static str,
         name: &'static str,
     },
+    /// `excluded."col"` — the row an `INSERT` proposed, as `ON CONFLICT DO
+    /// UPDATE` sees it.
+    Excluded {
+        name: &'static str,
+    },
     Value(Value),
     BinOp {
         op: BinOp,
