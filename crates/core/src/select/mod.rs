@@ -441,23 +441,21 @@ impl<Sel> SelectSeed<Sel> {
     /// the empty scope itself — a selection is checked against `Nil`, so a
     /// column reference has nowhere to resolve and does not compile.
     ///
+    /// **Known limitations**: this shape is the statement and nothing else.
+    /// It cannot be `.prepare()`d (a bound value goes in a `sql!{}` slot
+    /// instead), be a `UNION` branch, a CTE body or an `EXISTS` subquery,
+    /// or be `.count()`ed — a `SELECT` with no `FROM` returns one row, so
+    /// counting it answers nothing.
+    ///
     /// The dialect is an argument for the reason `Select::to_sql`'s is.
     pub fn to_sql<D: Dialect, Idx>(&self, _dialect: D) -> (String, Vec<Value>)
-    where
-        Sel: Selection<Nil, Idx>,
-    {
-        self.render_without_from::<D, Idx>().finish()
-    }
-
-    #[doc(hidden)]
-    pub fn render_without_from<D: Dialect, Idx>(&self) -> QuerySink<D>
     where
         Sel: Selection<Nil, Idx>,
     {
         let mut sink = QuerySink::<D>::new();
         sink.text("SELECT ");
         render_select_list::<D>(&self.selection.items(), &mut sink);
-        sink
+        sink.finish()
     }
 
     /// `source` is a value, not a turbofish — a schema table's zero-sized

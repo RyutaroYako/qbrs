@@ -190,7 +190,7 @@ async fn execute_only<'e, E: sqlx::PgExecutor<'e>>(
 /// `scope::Superset` explains. Callers never see it; it's inferred.
 #[diagnostic::on_unimplemented(
     message = "`{Self}` isn't a query this crate can run",
-    label = "a `Select`, a `RETURNING`, a `DynSelect` or a set operation, in the `Postgres` dialect, whose values are all types `DecodeRow` covers"
+    label = "a `Select`, a `RETURNING`, a `DynSelect`, a set operation, or a `SELECT` with no `FROM`, in the `Postgres` dialect, whose values are all types `DecodeRow` covers"
 )]
 pub trait RowQuery<Idx> {
     type Output: DecodeRow;
@@ -277,7 +277,7 @@ where
 /// `Option`, since a count query always produces exactly one row.
 #[diagnostic::on_unimplemented(
     message = "`{Self}` isn't a query this crate can count",
-    label = "a `Select`, a `DynSelect` or a set operation in the `Postgres` dialect is; a writing statement reports rows affected through `.execute(..)` instead"
+    label = "a `Select`, a `DynSelect` or a set operation in the `Postgres` dialect is; a writing statement reports rows affected through `.execute(..)` instead, and a `SELECT` with no `FROM` returns one row — a query missing its `.from(..)` is what this usually means"
 )]
 pub trait CountQuery<Idx> {
     #[doc(hidden)]

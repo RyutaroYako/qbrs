@@ -672,13 +672,6 @@ fn a_selection_naming_no_table_renders_a_select_with_no_from() {
     );
 }
 
-// A column has nowhere to resolve without a `FROM`, so this is a compile
-// error rather than SQL the database rejects. Kept here rather than run,
-// beside the `trybuild-drafts` the other diagnostics live in:
-//
-//     let _ = select((users::id,)).to_sql(Postgres);
-//     // error[E0277]: `users::Table` is not available in this query's scope
-
 #[test]
 fn a_literal_question_mark_travels_as_a_bound_value() {
     // There is no `??` escape: MySQL and SQLite write their own bind
