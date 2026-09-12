@@ -17,6 +17,7 @@ description = "sqlx-based execution integration for qbrs (Postgres)."
 chrono = ["qbrs-core/chrono", "sqlx/chrono", "dep:chrono"]
 uuid = ["qbrs-core/uuid", "sqlx/uuid", "dep:uuid"]
 decimal = ["qbrs-core/decimal", "sqlx/rust_decimal", "dep:rust_decimal"]
+json = ["qbrs-core/json", "sqlx/json", "dep:serde_json"]
 
 [dependencies]
 qbrs-core.workspace = true
@@ -27,6 +28,7 @@ futures-util = { version = "0.3", default-features = false }
 chrono = { version = "0.4", default-features = false, features = ["std"], optional = true }
 uuid = { version = "1", default-features = false, optional = true }
 rust_decimal = { version = "1", default-features = false, optional = true }
+serde_json = { version = "1", default-features = false, features = ["std"], optional = true }
 
 [dependencies.sqlx]
 version = "0.9"

@@ -15,10 +15,16 @@ description = "A Drizzle-flavored, type-safe SQL query builder for Rust."
 chrono = ["qbrs-core/chrono"]
 uuid = ["qbrs-core/uuid"]
 decimal = ["qbrs-core/decimal"]
+json = ["qbrs-core/json"]
 
 [dependencies]
 qbrs-core.workspace = true
 qbrs-macros.workspace = true
+
+# Only the tests name a JSON document; a schema reaches the type through
+# its own dependency.
+[dev-dependencies]
+serde_json = "1"
 
 [package.metadata.docs.rs]
 all-features = true

@@ -202,12 +202,28 @@ pub enum Value {
     UuidArray(Vec<uuid::Uuid>),
     #[cfg(feature = "uuid")]
     NullUuidArray,
+    /// A JSON document, opaque to this crate: it binds and decodes, and the
+    /// operators that look inside one go through `sql!{}`.
+    #[cfg(feature = "json")]
+    Json(serde_json::Value),
+    #[cfg(feature = "json")]
+    NullJson,
     /// A named placeholder in a `prepare!{}`-built query, not yet resolved
     /// to a concrete value. It rides the existing `Vec<Value>` parameter
     /// pipeline: rendering doesn't care what's *inside* a `Value`, only that
     /// there's one per placeholder position. `select::Prepared` substitutes
     /// real values before binding.
     Placeholder(&'static str),
+}
+
+/// What a `json` column stores of a document, which is the text as given:
+/// `serde_json::Value`'s own `==` is structural and calls `0.0` and `-0.0`
+/// one value, and key order is a build-wide choice of `serde_json`'s. Both
+/// halves of the parameter index read a document through here, so what is
+/// compared and what is hashed cannot drift apart.
+#[cfg(feature = "json")]
+fn json_as_written(value: &serde_json::Value) -> String {
+    value.to_string()
 }
 
 impl Value {
@@ -227,6 +243,8 @@ impl Value {
             Value::BigIntArray(_) | Value::NullBigIntArray => "BigIntArray",
             #[cfg(feature = "uuid")]
             Value::UuidArray(_) | Value::NullUuidArray => "UuidArray",
+            #[cfg(feature = "json")]
+            Value::Json(_) | Value::NullJson => "Json",
             Value::Placeholder(_) => "placeholder",
             #[cfg(feature = "chrono")]
             Value::Timestamptz(_) | Value::NullTimestamptz => "Timestamptz",
@@ -251,6 +269,8 @@ impl Value {
             (Value::F64(a), Value::F64(b)) => a.to_bits() == b.to_bits(),
             #[cfg(feature = "decimal")]
             (Value::Numeric(a), Value::Numeric(b)) => a.serialize() == b.serialize(),
+            #[cfg(feature = "json")]
+            (Value::Json(a), Value::Json(b)) => json_as_written(a) == json_as_written(b),
             _ => self == other,
         }
     }
@@ -278,6 +298,8 @@ impl Value {
             Value::BigIntArray(v) => v.hash(hasher),
             #[cfg(feature = "uuid")]
             Value::UuidArray(v) => v.hash(hasher),
+            #[cfg(feature = "json")]
+            Value::Json(v) => json_as_written(v).hash(hasher),
             #[cfg(feature = "chrono")]
             Value::Timestamptz(v) => v.hash(hasher),
             #[cfg(feature = "chrono")]
@@ -297,6 +319,8 @@ impl Value {
             | Value::NullBigIntArray => {}
             #[cfg(feature = "uuid")]
             Value::NullUuidArray => {}
+            #[cfg(feature = "json")]
+            Value::NullJson => {}
             #[cfg(feature = "chrono")]
             Value::NullTimestamptz | Value::NullDate => {}
             #[cfg(feature = "uuid")]
@@ -335,6 +359,8 @@ value_from!(Vec<i32>, IntegerArray);
 value_from!(Vec<i64>, BigIntArray);
 #[cfg(feature = "uuid")]
 value_from!(Vec<uuid::Uuid>, UuidArray);
+#[cfg(feature = "json")]
+value_from!(serde_json::Value, Json);
 
 impl From<&str> for Value {
     fn from(v: &str) -> Self {
@@ -1081,6 +1107,19 @@ sql_leaf_type!(IntegerArray, Vec<i32>, NullIntegerArray);
 sql_leaf_type!(BigIntArray, Vec<i64>, NullBigIntArray);
 #[cfg(feature = "uuid")]
 sql_leaf_type!(UuidArray, Vec<uuid::Uuid>, NullUuidArray);
+
+// A JSON document, Postgres's `jsonb`. Opaque: it goes in and comes back,
+// and `->`, `->>`, `@>` and the rest of the operators that look inside one
+// are deferred to `sql!{}` rather than half-built.
+//
+// **Known limitations**: a `json` column binds and decodes through this
+// marker too, since the two are one wire format and one Rust type, but
+// `json` has neither an equality nor an ordering operator — `.eq(..)`,
+// `.asc()` and `GROUP BY` on one compile here and are rejected by the
+// server. Which of the two a column is is a fact about the schema that
+// nothing in a query can read, so it is `jsonb` that this marker claims.
+#[cfg(feature = "json")]
+sql_leaf_type!(Json, serde_json::Value, NullJson);
 
 // Types a database has and Rust doesn't: each decodes to the crate its
 // feature names, so a schema that has no `timestamptz` column pays for none

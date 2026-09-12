@@ -69,6 +69,8 @@ pub mod prelude {
     pub use qbrs_core::delete::{Delete, delete};
     pub use qbrs_core::dialect::{Dialect, MySql, Postgres, Sqlite};
     pub use qbrs_core::expr::Column;
+    #[cfg(feature = "json")]
+    pub use qbrs_core::expr::Json;
     #[cfg(feature = "decimal")]
     pub use qbrs_core::expr::Numeric;
     #[cfg(feature = "uuid")]

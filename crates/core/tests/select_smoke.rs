@@ -531,6 +531,32 @@ fn two_decimals_of_the_same_value_and_different_scale_bind_separately() {
     assert_eq!(params.len(), 2);
 }
 
+/// `{"x": 0.0}` and `{"x": -0.0}` are one value to `serde_json::Value`'s
+/// `==` and two documents to a column, which stores the sign it was handed.
+/// Both halves of the reuse index — the comparison and the hash it buckets
+/// by — have to read that the same way.
+#[cfg(feature = "json")]
+#[test]
+fn two_json_documents_that_compare_equal_and_render_apart_bind_separately() {
+    let positive: serde_json::Value = serde_json::json!({ "x": 0.0 });
+    let negative: serde_json::Value = serde_json::json!({ "x": -0.0 });
+    assert_eq!(positive, negative);
+
+    let (sql, params) = select((users::id,))
+        .from(users::Table)
+        .filter(qbrs_core::sql!(
+            Bool,
+            "(? = ? OR ? = ?)",
+            positive.clone(),
+            negative,
+            positive.clone(),
+            positive
+        ))
+        .to_sql(Postgres);
+    assert!(sql.ends_with("WHERE (($1 = $2 OR $1 = $1))"), "{sql}");
+    assert_eq!(params.len(), 2);
+}
+
 #[test]
 fn raw_sql_escape_hatch_renders_and_renumbers_params() {
     let q = select((users::id,))
