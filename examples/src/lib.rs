@@ -25,37 +25,14 @@ pub struct Orders {
     pub shipped: bool,
 }
 
-/// Keeps the embedded Postgres and its data directory alive for as long as
-/// an example runs. Dropping it stops the server, so examples bind it
-/// (`let (pool, _db) = ...`) rather than discarding it.
-pub struct Db(#[allow(dead_code)] Option<(pglite::PGlite, tempfile::TempDir)>);
+pub use embedded_pg::Db;
 
 /// Connects to `DATABASE_URL` if set, otherwise starts a throwaway embedded
 /// Postgres, and resets the schema so every example starts from the same
-/// known data.
+/// known data. The guard it returns keeps that server alive, so examples
+/// bind it (`let (pool, _db) = ...`) rather than discarding it.
 pub async fn setup_db() -> (sqlx::PgPool, Db) {
-    let (pool, db) = match std::env::var("DATABASE_URL") {
-        Ok(url) => {
-            let pool = sqlx::PgPool::connect(&url)
-                .await
-                .unwrap_or_else(|e| panic!("connect to {url}: {e}"));
-            (pool, Db(None))
-        }
-        Err(_) => {
-            let dir = tempfile::tempdir().expect("create temp data dir");
-            let db = pglite::PGlite::open_multi_process(
-                dir.path(),
-                pglite::MultiProcessOptions::default(),
-            )
-            .await
-            .expect("start embedded postgres");
-            let url = db.unix_uri().await.expect("embedded postgres socket uri");
-            let pool = sqlx::PgPool::connect(&url)
-                .await
-                .unwrap_or_else(|e| panic!("connect to embedded postgres at {url}: {e}"));
-            (pool, Db(Some((db, dir))))
-        }
-    };
+    let (pool, db) = embedded_pg::connect().await;
 
     sqlx::query("DROP TABLE IF EXISTS orders")
         .execute(&pool)

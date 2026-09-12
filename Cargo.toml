@@ -8,6 +8,7 @@ members = [
     "examples",
     "tests/compile-bench",
     "tests/dialect-exec",
+    "tests/embedded-pg",
 ]
 
 [workspace.package]

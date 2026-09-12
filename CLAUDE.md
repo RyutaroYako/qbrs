@@ -13,10 +13,15 @@ first — it states the design goals and the current dialect/feature status matr
 ## Commands
 
 ```sh
-cargo test --workspace --all-features   # everything, including real-Postgres tests
+cargo nextest run --workspace --all-features   # everything except doctests
+cargo test --workspace --all-features --doc    # ...which nextest does not run
 cargo clippy --workspace --all-targets --all-features -- -D warnings   # CI gate
 cargo fmt --all -- --check                              # CI gate
 ```
+
+`cargo test --workspace --all-features` still runs the lot in one command, and is the
+slower way to: cargo runs one test binary at a time, and every real-Postgres test starts
+a server of its own.
 
 Narrower loops:
 
@@ -24,7 +29,7 @@ Narrower loops:
 cargo test -p qbrs-core                                     # pure SQL-rendering tests, no DB
 cargo test -p qbrs-core --test select_smoke                 # one test binary
 cargo test -p qbrs-core --test select_smoke left_join_renders_and_typechecks   # one test
-cargo test -p qbrs-sqlx                                     # real-Postgres integration tests
+cargo nextest run -p qbrs-sqlx                              # real-Postgres integration tests
 cargo run -p qbrs-examples --example 02_select_join          # one runnable example
 cargo build -p compile-bench --bin joins_40                  # scope-resolution depth
 cargo build -p compile-bench --bin join_chain_20             # ...through a real builder chain
@@ -43,6 +48,17 @@ two together. Set `DATABASE_URL` to run the same tests/examples against an exter
 instead — integration tests are written to be idempotent (`DROP TABLE IF EXISTS` first) so
 they work against a persistent server too.
 
+`initdb` is what makes a cold run slow — bootstrapping the template databases costs about
+seven seconds, against a fifth of a second for everything else a test does. So it runs once
+per `target/`, into `target/tmp/pg-template`, which every test and example then copies
+(`tests/embedded-pg`): `pglite-rs` skips `initdb` when the data directory it is handed
+already has a `PG_VERSION` in it. Concurrent binaries each build one and publish it by
+renaming onto the shared path, which fails for all but the first — no lock, and nothing to
+go stale but the template itself. That one case is a `pglite-rs` bump that moves the
+PostgreSQL major: the server then refuses the old data directory outright, and
+`rm -rf target/tmp/pg-template` is the fix. CI keys its cache of that directory on
+`Cargo.lock` with no `restore-keys`, so it never gets there.
+
 The embedded-server guard value must stay bound for the whole test/example body
 (`let (pool, _db) = setup_db().await;`) — dropping it kills the postmaster out from under
 the pool. `qbrs-sqlx` tests must call `common::shutdown(pool, guard)` at the end, otherwise
@@ -55,9 +71,9 @@ origin. It runs the same fmt/clippy/test gate CI does, shows a `cargo-release` d
 asks for one confirmation before the real run — which bumps all four publishable crates
 together (`release.toml`: `shared-version = true`), tags, pushes, and publishes
 `qbrs-core`/`qbrs-macros` before `qbrs`/`qbrs-sqlx`, waiting on crates.io's index between them.
-`tests/compile-bench`, `tests/dialect-exec`, and `examples` carry `publish = false` already, so
-cargo-release leaves them alone. Requires `cargo login` (or `CARGO_REGISTRY_TOKEN`) with
-publish rights on all four crates.
+`tests/compile-bench`, `tests/dialect-exec`, `tests/embedded-pg`, and `examples` carry
+`publish = false` already, so cargo-release leaves them alone. Requires `cargo login` (or
+`CARGO_REGISTRY_TOKEN`) with publish rights on all four crates.
 
 ## Workspace layout
 
@@ -78,6 +94,9 @@ publish rights on all four crates.
 - `tests/dialect-exec` — every rendered statement shape run against an in-memory SQLite, so
   the `Sqlite` dialect's SQL is checked by SQLite rather than by a string assertion. Add a
   shape here whenever one is added to the renderer.
+- `tests/embedded-pg` — the throwaway PostgreSQL the integration tests and the examples both
+  start, and the `initdb`-ed data directory they share. Depended on by `qbrs-sqlx` (dev) and
+  `examples`, and by nothing that ships.
 
 ## Architecture
 

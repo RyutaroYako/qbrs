@@ -55,6 +55,18 @@ jobs:
           # from a PR is a save every other PR then restores.
           save-if: ${{ github.ref == 'refs/heads/main' }}
 
+      # The data directory every embedded Postgres is copied from, built by
+      # `initdb` once and reused (see `tests/embedded-pg`). Keyed on
+      # Cargo.lock with no `restore-keys`: a `pglite-rs` bump can move the
+      # PostgreSQL major, and a template built by the old one is a data
+      # directory the new server refuses to start on. Saved before the cargo
+      # cache prunes `target/`, which is why this step sits after it.
+      - name: Cache the embedded-Postgres template
+        uses: actions/cache@v6.1.0
+        with:
+          path: target/tmp/pg-template
+          key: pg-template-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}
+
       # Restoring `target/` without the engine it points at is the one state
       # cargo cannot recover from on its own: `pglite-rs` re-runs its build
       # script when the engine goes missing (it names the runtime tar in a
@@ -77,5 +89,16 @@ jobs:
       - name: Build
         run: cargo build --workspace --all-targets --locked
 
+      # nextest runs each test in its own process, so the embedded Postgres
+      # instances start in parallel instead of one test binary at a time.
+      - name: Install cargo-nextest
+        uses: taiki-e/install-action@3f74d7c16a4242f1c95561e98edc25d36adb4375 # v2.87.12
+        with:
+          tool: cargo-nextest
+
       - name: Test
-        run: cargo test --workspace --locked --all-features
+        run: cargo nextest run --workspace --locked --all-features
+
+      # nextest does not run doctests; these are the same tests, not extras.
+      - name: Doc tests
+        run: cargo test --workspace --locked --all-features --doc

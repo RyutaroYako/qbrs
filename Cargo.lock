@@ -363,6 +363,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "embedded-pg"
+version = "0.3.0"
+dependencies = [
+ "pglite-rs",
+ "sqlx",
+ "tempfile",
+]
+
+[[package]]
 name = "equivalent"
 version = "1.0.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1122,12 +1131,11 @@ dependencies = [
 name = "qbrs-examples"
 version = "0.3.0"
 dependencies = [
- "pglite-rs",
+ "embedded-pg",
  "qbrs",
  "qbrs-sqlx",
  "serde_json",
  "sqlx",
- "tempfile",
  "tokio",
 ]
 
@@ -1145,14 +1153,13 @@ name = "qbrs-sqlx"
 version = "0.3.0"
 dependencies = [
  "chrono",
+ "embedded-pg",
  "futures-util",
- "pglite-rs",
  "qbrs",
  "qbrs-core",
  "rust_decimal",
  "serde_json",
  "sqlx",
- "tempfile",
  "thiserror",
  "tokio",
  "uuid",
