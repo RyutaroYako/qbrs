@@ -217,16 +217,18 @@ fn sql_type_for(ty: &Type) -> syn::Result<TokenStream2> {
             "NaiveDate" => quote! { ::qbrs::expr::Date },
             "Uuid" => quote! { ::qbrs::expr::Uuid },
             "Decimal" => quote! { ::qbrs::expr::Numeric },
-            // `serde_json::Value`, however the schema spells it.
-            "Value" | "JsonValue" => quote! { ::qbrs::expr::Json },
+            // Spelled with its crate, always: `Value` alone is this crate's
+            // own bind value, in the prelude every schema glob-imports, and
+            // a field of *that* type would otherwise pass for a JSON column.
+            "Value" if path_is_qualified_by(p, "serde_json") => quote! { ::qbrs::expr::Json },
             other => {
                 return Err(syn::Error::new_spanned(
                     ty,
                     format!(
                         "unsupported column type `{other}` — supported: i32, i64, f64, String, bool, Vec<u8>, \
                          Vec<String>, Vec<i32>, Vec<i64>, Vec<Uuid>, DateTime<Utc>, NaiveDate, Uuid, Decimal, \
-                         serde_json::Value (the last five, and Vec<Uuid>, behind a `qbrs` feature), or \
-                         Option<..> of one of those"
+                         serde_json::Value (spelled with its crate; the last five, and Vec<Uuid>, behind a \
+                         `qbrs` feature), or Option<..> of one of those"
                     ),
                 ));
             }
@@ -234,6 +236,14 @@ fn sql_type_for(ty: &Type) -> syn::Result<TokenStream2> {
         return Ok(path);
     }
     Err(syn::Error::new_spanned(ty, "unsupported column type"))
+}
+
+/// Whether a path names the wanted crate immediately before its last
+/// segment, which is how a type that shares a name with one of this crate's
+/// own is told apart from it.
+fn path_is_qualified_by(p: &syn::TypePath, wanted: &str) -> bool {
+    let segments = &p.path.segments;
+    segments.len() >= 2 && segments[segments.len() - 2].ident == wanted
 }
 
 /// Whether a path segment's single generic argument is the named type.

@@ -216,6 +216,16 @@ pub enum Value {
     Placeholder(&'static str),
 }
 
+/// What a `json` column stores of a document, which is the text as given:
+/// `serde_json::Value`'s own `==` is structural and calls `0.0` and `-0.0`
+/// one value, and key order is a build-wide choice of `serde_json`'s. Both
+/// halves of the parameter index read a document through here, so what is
+/// compared and what is hashed cannot drift apart.
+#[cfg(feature = "json")]
+fn json_as_written(value: &serde_json::Value) -> String {
+    value.to_string()
+}
+
 impl Value {
     /// The SQL type this value came from, for the one error that has to name
     /// it: a column type enabled in this crate and not in the execution
@@ -259,6 +269,8 @@ impl Value {
             (Value::F64(a), Value::F64(b)) => a.to_bits() == b.to_bits(),
             #[cfg(feature = "decimal")]
             (Value::Numeric(a), Value::Numeric(b)) => a.serialize() == b.serialize(),
+            #[cfg(feature = "json")]
+            (Value::Json(a), Value::Json(b)) => json_as_written(a) == json_as_written(b),
             _ => self == other,
         }
     }
@@ -286,10 +298,8 @@ impl Value {
             Value::BigIntArray(v) => v.hash(hasher),
             #[cfg(feature = "uuid")]
             Value::UuidArray(v) => v.hash(hasher),
-            // `serde_json::Value` has no `Hash`; its rendering is stable
-            // and is what `binds_same_as` compares anyway.
             #[cfg(feature = "json")]
-            Value::Json(v) => v.to_string().hash(hasher),
+            Value::Json(v) => json_as_written(v).hash(hasher),
             #[cfg(feature = "chrono")]
             Value::Timestamptz(v) => v.hash(hasher),
             #[cfg(feature = "chrono")]
@@ -1098,11 +1108,16 @@ sql_leaf_type!(BigIntArray, Vec<i64>, NullBigIntArray);
 #[cfg(feature = "uuid")]
 sql_leaf_type!(UuidArray, Vec<uuid::Uuid>, NullUuidArray);
 
-// A JSON document. Opaque: it goes in and comes back, and `->`, `->>`,
-// `@>` and the rest of the operators that look inside one are deferred to
-// `sql!{}` rather than half-built. Postgres's `json` and `jsonb` are one
-// type here, since which of the two a column is is the schema's business
-// and not the value's.
+// A JSON document, Postgres's `jsonb`. Opaque: it goes in and comes back,
+// and `->`, `->>`, `@>` and the rest of the operators that look inside one
+// are deferred to `sql!{}` rather than half-built.
+//
+// **Known limitations**: a `json` column binds and decodes through this
+// marker too, since the two are one wire format and one Rust type, but
+// `json` has neither an equality nor an ordering operator — `.eq(..)`,
+// `.asc()` and `GROUP BY` on one compile here and are rejected by the
+// server. Which of the two a column is is a fact about the schema that
+// nothing in a query can read, so it is `jsonb` that this marker claims.
 #[cfg(feature = "json")]
 sql_leaf_type!(Json, serde_json::Value, NullJson);
 

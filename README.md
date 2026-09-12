@@ -132,8 +132,8 @@ sqlx = { version = "0.9", features = ["runtime-tokio", "postgres"] }  # for `PgP
 to be the one it is built against (0.9). Column types that need a crate to
 decode to are features — `chrono`, `uuid`, `decimal`, `json` — and each has to be enabled on
 **both** `qbrs` and `qbrs-sqlx`, which are separate `cfg`s over one `Value`:
-enabling only one surfaces as a `FeatureNotEnabled` at bind time, not as a
-compile error.
+enabling it on `qbrs` alone is a compile error where the value is decoded
+and a `FeatureNotEnabled` where one is bound.
 
 ## What's in it
 
@@ -177,7 +177,9 @@ referencing another CTE, row locking (`FOR UPDATE`/`SKIP LOCKED`), a scalar
 subquery in an expression position (`col = (SELECT max(x) ..)`), the array
 operators (`@>`, `&&`, `= ANY(..)`, `array_append`) and the array element
 types beyond the four (`BOOLEAN[]`, `DOUBLE PRECISION[]`, `TIMESTAMPTZ[]`,
-`NUMERIC[]`, and any array whose elements can be NULL), `ON CONFLICT` or a
+`NUMERIC[]`, and any array whose elements can be NULL), the JSON operators
+(`->`, `->>`, `@>`, `?`) and a `json` column's missing `=`/`ORDER BY` (the
+marker is `jsonb`'s), `ON CONFLICT` or a
 column subset on an `INSERT .. SELECT` (it fills every column the target
 lets a statement write, and its source is a `Select` rather than a
 `UNION` or a `DynSelect`), and relations/eager-loading. `sql!{}` doesn't reach the last two: it builds an
@@ -246,12 +248,14 @@ Design constraints worth knowing before adopting:
 - **The derives expand to `::qbrs::` paths**, so depend on the `qbrs` facade
   rather than on `qbrs-core` + `qbrs-macros` directly.
 - **A JSON column is a document, not a structure.** `serde_json::Value`
-  binds and decodes whole, and one marker covers both of Postgres's JSON
-  types — which of the two a column is belongs to its `CREATE TABLE`. The
-  operators that look inside one (`->`, `->>`, `@>`) are not built and go
-  through `sql!{}`; Postgres's `?` existence operator is the one that
-  cannot, since a `?` there is a slot, so it is reached as
-  `jsonb_exists(..)`.
+  binds and decodes whole. The marker is `jsonb`'s: a `json` column takes
+  the same values back and forth, but only `jsonb` has an equality and an
+  ordering operator, so `.eq(..)`/`.asc()`/`GROUP BY` on a `json` column is
+  the server's error rather than the compiler's. The operators that look
+  inside a document (`->`, `->>`, `@>`) are not built and go through
+  `sql!{}`; Postgres's `?` existence operators are the ones that cannot,
+  since a `?` there is a slot, so they are reached as `jsonb_exists(..)`,
+  `jsonb_exists_any(..)` and `jsonb_exists_all(..)`.
 - **An array column is a value, not a set.** `Vec<T>` binds and decodes as
   a Postgres array, and `=` compares two of them whole. The array
   *operators* — `@>`, `&&`, `= ANY(..)`, `array_append` — are not built;

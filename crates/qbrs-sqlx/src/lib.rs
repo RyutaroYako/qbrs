@@ -456,7 +456,7 @@ where
 #[diagnostic::on_unimplemented(
     message = "`{Self}` isn't a value this crate can decode",
     label = "every selected column has to decode to one of the featureless natives, or to a type whose feature is on here as well as on `qbrs`",
-    note = "`chrono`/`uuid`/`decimal` have to be enabled on `qbrs-sqlx` too — they are separate `cfg`s over one `Value`"
+    note = "`chrono`/`uuid`/`decimal`/`json` have to be enabled on `qbrs-sqlx` too — they are separate `cfg`s over one `Value`"
 )]
 pub trait DecodeRow: Sized {
     #[doc(hidden)]

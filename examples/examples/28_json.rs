@@ -1,9 +1,10 @@
 //! A `JSON`/`JSONB` column, declared as `serde_json::Value` and carried
-//! whole: it binds, it decodes, and one marker covers both of Postgres's
-//! JSON types — which of the two a column is belongs to the schema, not to
-//! the value. Known limitation: the operators that look *inside* a
-//! document (`->`, `->>`, `@>`) are not built; they go through `sql!{}`,
-//! as the last query shows.
+//! whole: it binds and it decodes, whichever of Postgres's two JSON types
+//! the column is. Known limitations: the marker is `jsonb`'s, so comparing
+//! or ordering by a `json` column compiles and is then rejected by the
+//! server, which has those operators for `jsonb` alone; and the operators
+//! that look *inside* a document (`->`, `->>`, `@>`) are not built — they
+//! go through `sql!{}`, as the last query shows.
 //! Run: `cargo run -p qbrs-examples --example 28_json`
 
 use qbrs::prelude::*;

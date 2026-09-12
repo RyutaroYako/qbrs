@@ -1,7 +1,9 @@
 //! `JSON`/`JSONB` columns end to end: declared as `serde_json::Value`,
 //! bound, and decoded back. Which of Postgres's two JSON types a column is
-//! is the schema's business, so only a database says one marker reaches
-//! both.
+//! is the schema's business, so only a database says one marker carries
+//! values to and from both — and only a database says what it does *not*
+//! carry, which is why the `json` column here is never compared or
+//! ordered by: `=` and `ORDER BY` are `jsonb`'s alone.
 #![cfg(feature = "json")]
 
 mod common;
