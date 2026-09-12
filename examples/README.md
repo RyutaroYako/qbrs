@@ -62,3 +62,4 @@ DATABASE_URL=postgres://postgres:postgres@localhost:5432/qbrs_test \
 | [`21_self_join_via_cte`](examples/21_self_join_via_cte.rs) | self-join workaround: a `with!{}` pseudo-table bound to a plain `SELECT` over the same table, joined back to it — qbrs has no table aliasing (see README) |
 | [`22_distinct_order_by_selected`](examples/22_distinct_order_by_selected.rs) | `.order_by_selected(..)`/`.order_by_selection(..)` — a `SELECT DISTINCT` sort key checked against the selection at compile time |
 | [`23_aggregates`](examples/23_aggregates.rs) | `count()`/`count_of()`/`sum()`/`min()`/`max()`/`avg()`/`string_agg()` — an aggregate keyed by the column it aggregates, and the two questions `count` answers |
+| [`24_arrays`](examples/24_arrays.rs) | Postgres array columns — `Vec<T>` as `TEXT[]`/`INTEGER[]`/`BIGINT[]`/`UUID[]`, an empty array against a NULL one, and `sql!{}` for the operators |

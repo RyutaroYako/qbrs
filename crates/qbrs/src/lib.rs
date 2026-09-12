@@ -71,14 +71,17 @@ pub mod prelude {
     pub use qbrs_core::expr::Column;
     #[cfg(feature = "decimal")]
     pub use qbrs_core::expr::Numeric;
+    #[cfg(feature = "uuid")]
+    pub use qbrs_core::expr::UuidArray;
     pub use qbrs_core::expr::{Agg, Avg, Count, CountOf, Max, Min, StringAgg, Sum};
     pub use qbrs_core::expr::{
         AssignsTo, BoolLike, Comparable, Concatenable, Ordered, SqlType, Summable, TextLike,
         Writable, null,
     };
     pub use qbrs_core::expr::{
-        BigInt, Bool, Bytes, ExprMethods, HasCount, Integer, LabelExt, Real, SortDir, Text, Value,
-        all_of, any_of, avg, count, count_of, max, min, string_agg, sum,
+        BigInt, BigIntArray, Bool, Bytes, ExprMethods, HasCount, Integer, IntegerArray, LabelExt,
+        Real, SortDir, Text, TextArray, Value, all_of, any_of, avg, count, count_of, max, min,
+        string_agg, sum,
     };
     #[cfg(feature = "chrono")]
     pub use qbrs_core::expr::{Date, Timestamptz};
