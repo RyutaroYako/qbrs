@@ -190,6 +190,20 @@ pub enum Value {
     Numeric(rust_decimal::Decimal),
     #[cfg(feature = "decimal")]
     NullNumeric,
+    /// Postgres array values. A `Vec<T>` binds as `T[]`, one variant per
+    /// element type rather than a nested `Value`: an array of arrays is a
+    /// different Postgres type from a two-dimensional one, and neither is
+    /// reachable by accident this way.
+    TextArray(Vec<String>),
+    NullTextArray,
+    IntegerArray(Vec<i32>),
+    NullIntegerArray,
+    BigIntArray(Vec<i64>),
+    NullBigIntArray,
+    #[cfg(feature = "uuid")]
+    UuidArray(Vec<uuid::Uuid>),
+    #[cfg(feature = "uuid")]
+    NullUuidArray,
     /// A named placeholder in a `prepare!{}`-built query, not yet resolved
     /// to a concrete value. It rides the existing `Vec<Value>` parameter
     /// pipeline: rendering doesn't care what's *inside* a `Value`, only that
@@ -210,6 +224,11 @@ impl Value {
             Value::Text(_) | Value::NullText => "Text",
             Value::Bool(_) | Value::NullBool => "Bool",
             Value::Bytes(_) | Value::NullBytes => "Bytes",
+            Value::TextArray(_) | Value::NullTextArray => "TextArray",
+            Value::IntegerArray(_) | Value::NullIntegerArray => "IntegerArray",
+            Value::BigIntArray(_) | Value::NullBigIntArray => "BigIntArray",
+            #[cfg(feature = "uuid")]
+            Value::UuidArray(_) | Value::NullUuidArray => "UuidArray",
             Value::Placeholder(_) => "placeholder",
             #[cfg(feature = "chrono")]
             Value::Timestamptz(_) | Value::NullTimestamptz => "Timestamptz",
@@ -256,6 +275,11 @@ impl Value {
             Value::Bool(v) => v.hash(hasher),
             Value::Bytes(v) => v.hash(hasher),
             Value::Placeholder(v) => v.hash(hasher),
+            Value::TextArray(v) => v.hash(hasher),
+            Value::IntegerArray(v) => v.hash(hasher),
+            Value::BigIntArray(v) => v.hash(hasher),
+            #[cfg(feature = "uuid")]
+            Value::UuidArray(v) => v.hash(hasher),
             #[cfg(feature = "chrono")]
             Value::Timestamptz(v) => v.hash(hasher),
             #[cfg(feature = "chrono")]
@@ -269,7 +293,12 @@ impl Value {
             | Value::NullF64
             | Value::NullText
             | Value::NullBool
-            | Value::NullBytes => {}
+            | Value::NullBytes
+            | Value::NullTextArray
+            | Value::NullIntegerArray
+            | Value::NullBigIntArray => {}
+            #[cfg(feature = "uuid")]
+            Value::NullUuidArray => {}
             #[cfg(feature = "chrono")]
             Value::NullTimestamptz | Value::NullDate => {}
             #[cfg(feature = "uuid")]
@@ -303,6 +332,11 @@ value_from!(chrono::NaiveDate, Date);
 value_from!(uuid::Uuid, Uuid);
 #[cfg(feature = "decimal")]
 value_from!(rust_decimal::Decimal, Numeric);
+value_from!(Vec<String>, TextArray);
+value_from!(Vec<i32>, IntegerArray);
+value_from!(Vec<i64>, BigIntArray);
+#[cfg(feature = "uuid")]
+value_from!(Vec<uuid::Uuid>, UuidArray);
 
 impl From<&str> for Value {
     fn from(v: &str) -> Self {
@@ -1033,6 +1067,17 @@ sql_leaf_type!(Real, f64, NullF64);
 sql_leaf_type!(Text, String, NullText);
 sql_leaf_type!(Bool, bool, NullBool);
 sql_leaf_type!(Bytes, Vec<u8>, NullBytes);
+
+// Postgres arrays. No new dependency for the three whose element type Rust
+// already has, so they are not behind a feature; `UuidArray` rides the one
+// its element type is already behind. The other two dialects have no array
+// type at all, which is a bind-time failure rather than a render-time one —
+// an `Expr` carries no dialect to gate on.
+sql_leaf_type!(TextArray, Vec<String>, NullTextArray);
+sql_leaf_type!(IntegerArray, Vec<i32>, NullIntegerArray);
+sql_leaf_type!(BigIntArray, Vec<i64>, NullBigIntArray);
+#[cfg(feature = "uuid")]
+sql_leaf_type!(UuidArray, Vec<uuid::Uuid>, NullUuidArray);
 
 // Types a database has and Rust doesn't: each decodes to the crate its
 // feature names, so a schema that has no `timestamptz` column pays for none

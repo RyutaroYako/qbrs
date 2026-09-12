@@ -92,6 +92,16 @@ fn bind_value<'q>(
         Value::NullText => query.bind(None::<String>),
         Value::NullBool => query.bind(None::<bool>),
         Value::NullBytes => query.bind(None::<Vec<u8>>),
+        Value::TextArray(x) => query.bind(x),
+        Value::NullTextArray => query.bind(None::<Vec<String>>),
+        Value::IntegerArray(x) => query.bind(x),
+        Value::NullIntegerArray => query.bind(None::<Vec<i32>>),
+        Value::BigIntArray(x) => query.bind(x),
+        Value::NullBigIntArray => query.bind(None::<Vec<i64>>),
+        #[cfg(feature = "uuid")]
+        Value::UuidArray(x) => query.bind(x),
+        #[cfg(feature = "uuid")]
+        Value::NullUuidArray => query.bind(None::<Vec<uuid::Uuid>>),
         #[cfg(feature = "chrono")]
         Value::Timestamptz(x) => query.bind(x),
         #[cfg(feature = "chrono")]
@@ -404,6 +414,11 @@ decode_row_leaf!(f64);
 decode_row_leaf!(String);
 decode_row_leaf!(bool);
 decode_row_leaf!(Vec<u8>);
+decode_row_leaf!(Vec<String>);
+decode_row_leaf!(Vec<i32>);
+decode_row_leaf!(Vec<i64>);
+#[cfg(feature = "uuid")]
+decode_row_leaf!(Vec<uuid::Uuid>);
 #[cfg(feature = "chrono")]
 decode_row_leaf!(chrono::DateTime<chrono::Utc>);
 #[cfg(feature = "chrono")]

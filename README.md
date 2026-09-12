@@ -141,6 +141,7 @@ compile error.
 aggregates (`count`/`count_of`/`sum`/`min`/`max`/`avg`/`string_agg`),
 `DISTINCT`, upsert (`ON CONFLICT`, partial unique indexes included), `UNION`/`INTERSECT`/`EXCEPT`,
 ranking window functions, non-recursive CTEs, correlated `EXISTS`,
+Postgres array columns (`Vec<T>` as `TEXT[]`/`INTEGER[]`/`BIGINT[]`/`UUID[]`),
 `IN (SELECT ..)`/`NOT IN (SELECT ..)`, transactions, the `sql!{}` escape
 hatch, and typed prepared statements (`prepare!{}`).
 
@@ -236,6 +237,13 @@ Design constraints worth knowing before adopting:
   one. List every name that scope needs in the one invocation.
 - **The derives expand to `::qbrs::` paths**, so depend on the `qbrs` facade
   rather than on `qbrs-core` + `qbrs-macros` directly.
+- **An array column is a value, not a set.** `Vec<T>` binds and decodes as
+  a Postgres array, and `=` compares two of them whole. The array
+  *operators* — `@>`, `&&`, `= ANY(..)`, `array_append` — are not built;
+  they go through `sql!{}`, where the column and the value are still slots.
+  MySQL and SQLite have no array type at all, and since an `Expr` carries no
+  dialect there is nothing to gate on: an array reaches those two as a bind
+  their driver refuses.
 - **Every `?` in a `sql!{}` text is a slot**, with no escape for a literal one
   — MySQL and SQLite spell their bind parameters the same way. Its text must
   be a constant (a literal, a `const`, `concat!`, `include_str!`), so

@@ -106,6 +106,63 @@ fn two_columns_set_to_the_same_null_share_one_parameter() {
     );
 }
 
+#[derive(Table)]
+#[table(name = "feeds")]
+#[allow(dead_code)]
+struct Feeds {
+    #[column(primary_key, generated)]
+    id: i64,
+    topics: Vec<String>,
+    weights: Vec<i32>,
+    seen: Vec<i64>,
+    raw: Vec<u8>,
+    notify: Option<Vec<String>>,
+}
+
+/// An array is one bind parameter, not a rendered list: `IN (a, b)` and
+/// `= ARRAY[a, b]` are different questions, and a `Vec<T>` column holds the
+/// second. `Vec<u8>` stays `bytea`, which is what keeps the derive's `Vec`
+/// arm a decision rather than a guess.
+#[test]
+fn an_array_column_binds_as_one_parameter_and_vec_u8_stays_bytes() {
+    let (sql, params) = select((feeds::id, feeds::topics, feeds::notify))
+        .from(feeds::Table)
+        .filter(feeds::topics.eq(vec!["rust".to_string()]))
+        .filter(feeds::raw.eq(vec![1u8, 2]))
+        .to_sql(Postgres);
+    assert_eq!(
+        sql,
+        r#"SELECT "feeds"."id", "feeds"."topics", "feeds"."notify" FROM "feeds" WHERE ("feeds"."topics" = $1) AND ("feeds"."raw" = $2)"#
+    );
+    assert_eq!(
+        params,
+        vec![
+            qbrs::expr::Value::TextArray(vec!["rust".to_string()]),
+            qbrs::expr::Value::Bytes(vec![1, 2]),
+        ]
+    );
+}
+
+/// An omitted nullable array is a NULL of the array's own type, not an
+/// untyped one — the same reason every other `NullX` variant exists.
+#[test]
+fn an_omitted_nullable_array_binds_a_typed_null() {
+    let (_, params) = qbrs::insert::insert(feeds::Table)
+        .values(
+            FeedsInsert::builder()
+                .topics(vec!["rust".to_string()])
+                .weights(vec![1i32])
+                .seen(vec![1i64])
+                .raw(vec![0u8])
+                .build(),
+        )
+        .to_sql(Postgres);
+    assert!(
+        params.contains(&qbrs::expr::Value::NullTextArray),
+        "{params:?}"
+    );
+}
+
 #[test]
 fn schema_module_and_select_builder_work_together() {
     let (sql, params) = select((users::id, users::display_name, orders::total))

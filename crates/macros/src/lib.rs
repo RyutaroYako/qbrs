@@ -176,10 +176,13 @@ fn sql_type_for(ty: &Type) -> syn::Result<TokenStream2> {
     {
         let name = seg.ident.to_string();
         // A generic type is only the type it looks like when its argument
-        // agrees: `Vec<u8>` is `bytea`, `Vec<String>` is nothing this crate
-        // has, and saying so here is what keeps the match closed.
+        // agrees: `Vec<u8>` is `bytea` while `Vec<String>` is `text[]`, and
+        // saying which is which here is what keeps the match closed.
+        let vec_element = ["u8", "String", "i32", "i64", "Uuid"]
+            .into_iter()
+            .find(|element| generic_argument_is(seg, element));
         let argument_ok = match name.as_str() {
-            "Vec" => generic_argument_is(seg, "u8"),
+            "Vec" => vec_element.is_some(),
             "DateTime" => generic_argument_is(seg, "Utc"),
             _ => true,
         };
@@ -189,7 +192,8 @@ fn sql_type_for(ty: &Type) -> syn::Result<TokenStream2> {
                     ty,
                     format!(
                         "unsupported column type — `{name}` is a column type only as `Vec<u8>` \
-                         (bytes) or `DateTime<Utc>` (timestamptz)"
+                         (bytes), `Vec<String>`/`Vec<i32>`/`Vec<i64>`/`Vec<Uuid>` (a Postgres \
+                         array), or `DateTime<Utc>` (timestamptz)"
                     ),
                 ));
             }
@@ -198,7 +202,13 @@ fn sql_type_for(ty: &Type) -> syn::Result<TokenStream2> {
             "f64" => quote! { ::qbrs::expr::Real },
             "String" => quote! { ::qbrs::expr::Text },
             "bool" => quote! { ::qbrs::expr::Bool },
-            "Vec" => quote! { ::qbrs::expr::Bytes },
+            "Vec" => match vec_element.expect("checked above") {
+                "u8" => quote! { ::qbrs::expr::Bytes },
+                "String" => quote! { ::qbrs::expr::TextArray },
+                "i32" => quote! { ::qbrs::expr::IntegerArray },
+                "i64" => quote! { ::qbrs::expr::BigIntArray },
+                _ => quote! { ::qbrs::expr::UuidArray },
+            },
             // Behind a feature in `qbrs-core`; naming one here without that
             // feature is an unresolved-path error at the marker, which says
             // which feature is missing better than this match could.
@@ -211,8 +221,8 @@ fn sql_type_for(ty: &Type) -> syn::Result<TokenStream2> {
                     ty,
                     format!(
                         "unsupported column type `{other}` — supported: i32, i64, f64, String, bool, Vec<u8>, \
-                         DateTime<Utc>, NaiveDate, Uuid, Decimal (the last four behind a `qbrs` feature), \
-                         or Option<..> of one of those"
+                         Vec<String>, Vec<i32>, Vec<i64>, Vec<Uuid>, DateTime<Utc>, NaiveDate, Uuid, Decimal \
+                         (the last four, and Vec<Uuid>, behind a `qbrs` feature), or Option<..> of one of those"
                     ),
                 ));
             }
