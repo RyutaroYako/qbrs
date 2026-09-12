@@ -7,8 +7,8 @@
 //! one inferred. `excluded(..)` names the row the insert proposed, which is
 //! what an accumulating upsert reads and what a value passed to both halves
 //! of the statement cannot say, and `.filter(..)` on that list decides
-//! whether the update fires at all — a rejected row is not counted, so
-//! `execute` answers "did this write anything".
+//! whether the update fires at all — a rejected row is not counted, so a
+//! one-row upsert's `execute` answers "did this write anything".
 //! Run: `cargo run -p qbrs-examples --example 11_upsert`
 
 use qbrs::prelude::*;
@@ -152,7 +152,7 @@ async fn main() {
 
     // A `WHERE` on the `DO UPDATE` itself: the row is touched only if the
     // condition holds, and a rejected one is not counted — which is what
-    // lets the rows-affected count answer "was this already done?". An
+    // lets a one-row upsert's count answer "was this already done?". An
     // unconditional `DO UPDATE` always reports 1.
     let raise_once = |total: i64| {
         insert(orders::Table)

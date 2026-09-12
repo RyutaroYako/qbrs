@@ -1,10 +1,12 @@
 //! `ON CONFLICT .. DO UPDATE SET .. WHERE ..` against a real Postgres.
 //!
 //! The clause exists for what it does to `rows_affected()`: a conflicting
-//! row the condition rejects is not touched *and not counted*, so a caller
-//! can upsert and read "did this write anything" off the count. An
-//! unconditional `DO UPDATE` always reports 1, which is what makes the
-//! `CASE WHEN` no-op workaround useless for the same question.
+//! row the condition rejects is not touched *and not counted*, so a one-row
+//! upsert's count answers "did this write anything". An unconditional
+//! `DO UPDATE` always reports 1, which is what makes the `CASE WHEN` no-op
+//! workaround useless for the same question. A count is rows written and
+//! not the branch each took, so the multi-row case here shows what it does
+//! and does not say.
 
 mod common;
 
@@ -99,6 +101,68 @@ async fn a_conditional_do_update_leaves_the_rows_it_rejects_uncounted() {
             .expect("the third grant"),
         1
     );
+
+    // The same statement against a partial unique index: the action's
+    // condition and the target's index predicate are two clauses, and this
+    // is the one place both are executed rather than asserted as a string.
+    sqlx::query("DROP INDEX IF EXISTS grants_open")
+        .execute(&pool)
+        .await
+        .expect("drop the index");
+    sqlx::query("CREATE UNIQUE INDEX grants_open ON grants (account) WHERE id > 0")
+        .execute(&pool)
+        .await
+        .expect("create the partial unique index");
+    assert_eq!(
+        qbrs::insert::insert(grants::Table)
+            .values(
+                GrantsInsert::builder()
+                    .account("ada")
+                    .authorization_url("https://fourth")
+                    .build(),
+            )
+            .on_conflict_do_update(
+                qbrs::insert::partial_index(grants::account, grants::id.gt(0i64)),
+                ConflictUpdate::set_to(
+                    grants::authorization_url,
+                    excluded(grants::authorization_url),
+                )
+                .filter(grants::authorization_url.is_null()),
+            )
+            .execute(&pool)
+            .await
+            .expect("both clauses in one statement"),
+        0
+    );
+
+    // A count is rows written, not the branch each took: this upsert
+    // inserts one account and is refused on the other, so the 1 it reports
+    // says something happened and not that the update fired.
+    let mixed = qbrs::insert::insert(grants::Table)
+        .values(
+            GrantsInsert::builder()
+                .account("ada")
+                .authorization_url("https://fifth")
+                .build(),
+        )
+        .values(
+            GrantsInsert::builder()
+                .account("grace")
+                .authorization_url("https://grace")
+                .build(),
+        )
+        .on_conflict_do_update(
+            grants::account,
+            ConflictUpdate::set_to(
+                grants::authorization_url,
+                excluded(grants::authorization_url),
+            )
+            .filter(grants::authorization_url.is_null()),
+        )
+        .execute(&pool)
+        .await
+        .expect("one insert and one refusal");
+    assert_eq!(mixed, 1);
 
     common::shutdown(pool, guard).await;
 }

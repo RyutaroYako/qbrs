@@ -394,7 +394,9 @@ pub fn excluded<C: ColumnKey>(_column: Column<C>) -> Expr<Cons<Excluded<C::Table
 ///
 /// It carries `D` for the reason [`Predicate`](crate::select::Predicate)
 /// does: its `WHERE` is a condition like any other, and a condition pinned
-/// to one dialect must not reach a statement of another.
+/// to one dialect must not reach a statement of another. The statement it
+/// is passed to says which dialect that is, so a value built inline needs
+/// no annotation — one bound to a `let` and never used does.
 pub struct ConflictUpdate<D, T> {
     sets: Vec<(&'static str, ExprKind)>,
     wheres: Vec<ExprKind>,
@@ -443,14 +445,15 @@ impl<D, T: Table> ConflictUpdate<D, T> {
         );
         self
     }
-}
 
-impl<D, T: Table> ConflictUpdate<D, T> {
     /// `DO UPDATE SET .. WHERE <condition>` — which conflicting rows the
     /// update actually touches, over the conflicting row and the proposed
     /// one. A row the condition rejects is left as it is *and is not
-    /// counted*, which is what makes `rows_affected()` the answer to
-    /// "did this write anything" rather than always 1.
+    /// counted*, so a one-row upsert's `rows_affected()` answers "did this
+    /// write anything" rather than always being 1. It counts the rows a
+    /// statement wrote, not the branch each took: a multi-row upsert's
+    /// count still folds inserts together with updates, and only zero says
+    /// nothing happened.
     ///
     /// A different clause from the one [`partial_index`] carries: that one
     /// only picks which index the conflict is inferred against.
@@ -470,19 +473,38 @@ impl<D, T: Table> ConflictUpdate<D, T> {
             .extend(conds.into_iter().map(Predicate::into_kind));
         self
     }
+
+    /// A correlated subquery over the rows this action sees — the same
+    /// `EXISTS` [`Update::correlated`](crate::update::Update::correlated)
+    /// builds, against the conflicting row and the proposed one.
+    pub fn correlated<S, InnerSel>(
+        &self,
+        source: S,
+        selection: InnerSel,
+    ) -> crate::select::Select<
+        D,
+        Cons<TableSlot<S::Table, NotNull>, ConflictScope<T>>,
+        InnerSel,
+        ConflictScope<T>,
+    >
+    where
+        S: crate::select::JoinSource<D>,
+    {
+        crate::select::correlated_with(source, selection)
+    }
 }
 
-impl<D, T> ConflictUpdate<D, T> {
-    fn render_into<Dl: Dialect>(&self, sink: &mut dyn Sink) {
+impl<D: Dialect, T> ConflictUpdate<D, T> {
+    fn render_into(&self, sink: &mut dyn Sink) {
         for (i, (col, value)) in self.sets.iter().enumerate() {
             if i > 0 {
                 sink.text(", ");
             }
-            render_ident::<Dl>(sink, col);
+            render_ident::<D>(sink, col);
             sink.text(" = ");
-            crate::render::render_expr::<Dl>(value, sink);
+            crate::render::render_expr::<D>(value, sink);
         }
-        crate::render::render_and_list::<Dl>(sink, " WHERE ", &self.wheres);
+        crate::render::render_and_list::<D>(sink, " WHERE ", &self.wheres);
     }
 }
 
@@ -513,7 +535,7 @@ fn render_conflict_clause<D: Dialect, T>(clause: &ConflictClause<D, T>, sink: &m
         ConflictAction::DoNothing => sink.text(" DO NOTHING"),
         ConflictAction::DoUpdate(sets) => {
             sink.text(" DO UPDATE SET ");
-            sets.render_into::<D>(sink);
+            sets.render_into(sink);
         }
     }
 }
