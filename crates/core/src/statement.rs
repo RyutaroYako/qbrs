@@ -33,6 +33,18 @@ pub trait Statement: private::Sealed {
     /// same clause. A distinct type rather than `Self` with a flag set: the
     /// execution layer needs `Sel`'s concrete type to know what to decode a
     /// returned row into, and an optional field would erase it.
+    ///
+    /// The selection is checked against [`WrittenTable`] — this statement's
+    /// own row.
+    ///
+    /// **Known limitation**: SQL's `RETURNING` reaches further. A scalar
+    /// subquery there is the deferral
+    /// [`Select::contains`](crate::select::Select::contains) states, and the
+    /// joined columns an `UPDATE .. FROM` / `DELETE .. USING` lets it name
+    /// need those clauses, which aren't built either. Bind this statement as
+    /// a CTE body ([`cte::with`](crate::cte::with)) and join from the outer
+    /// query instead: that is checked, and the write and the read it feeds
+    /// stay one statement.
     fn returning<Sel, Idx>(self, sel: Sel) -> Returning<Self, Sel>
     where
         Self: Sized,

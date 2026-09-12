@@ -178,7 +178,8 @@ referencing another CTE, a data-modifying CTE anywhere but the top level
 (Postgres refuses one inside an `EXISTS`/`IN` subquery or a set-operation
 branch, and that is the server's error rather than the compiler's), row
 locking (`FOR UPDATE`/`SKIP LOCKED`), a scalar
-subquery in an expression position (`col = (SELECT max(x) ..)`), the array
+subquery in an expression position (`col = (SELECT max(x) ..)`, `RETURNING`
+included), `UPDATE .. FROM` / `DELETE .. USING`, the array
 operators (`@>`, `&&`, `array_append` — `= ANY(..)` is `.eq_any(..)`) and the array element
 types beyond the four (`BOOLEAN[]`, `DOUBLE PRECISION[]`, `TIMESTAMPTZ[]`,
 `NUMERIC[]`, and any array whose elements can be NULL), the JSON operators
@@ -211,6 +212,11 @@ Design constraints worth knowing before adopting:
   to the same table — correct, type-checked, and available now — rather
   than the bare-alias SQL shape. The declared column types are the body's:
   `Integer` because `employees::id` is an `i32`.
+- **`RETURNING` names the written row.** SQL's reaches further — a scalar
+  subquery, or a column of an `UPDATE .. FROM` — and neither is built, the
+  first being the deferred scalar subquery. Bind the write as a CTE body and
+  join from the outer query instead: that is checked, and it stays one
+  statement (`29_data_modifying_cte`).
 - **`GROUP BY` isn't related to the selection list.** Every non-aggregated
   selected column has to appear in `GROUP BY` (or be functionally
   dependent), and nothing here checks that — it's the selection-into-`GROUP

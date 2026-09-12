@@ -31,11 +31,11 @@ struct Campaigns {
     #[column(primary_key, generated)]
     id: i64,
     name: String,
-    realm_id: i64,
+    realm_id: Option<i64>,
 }
 
 with! {
-    struct updated { id: BigInt, name: Text, realm_id: BigInt }
+    struct updated { id: BigInt, name: Text, realm_id: Nullable<BigInt> }
 }
 
 /// What the outer query hands back: the written row, plus the joined name
@@ -68,7 +68,7 @@ async fn a_write_runs_as_a_cte_body_and_the_query_reads_what_the_row_doesnt_hold
         "CREATE TABLE campaigns (
             id BIGSERIAL PRIMARY KEY,
             name TEXT NOT NULL,
-            realm_id BIGINT NOT NULL REFERENCES realms(id)
+            realm_id BIGINT REFERENCES realms(id)
         )",
     )
     .execute(&pool)
@@ -143,6 +143,46 @@ async fn a_write_runs_as_a_cte_body_and_the_query_reads_what_the_row_doesnt_hold
         .expect("read the written table from the same statement")
         .expect("one row");
     assert_eq!(before, "summer");
+    // The other half of that rule, and the one a body that returned rows
+    // without writing them would fail: the write did land, and the next
+    // statement is what sees it.
+    let after: String = select(campaigns::name)
+        .from(campaigns::Table)
+        .filter(campaigns::id.eq(campaign_id))
+        .load_one(&pool)
+        .await
+        .expect("read the campaign back")
+        .expect("one row");
+    assert_eq!(after, "autumn");
+
+    // A row whose foreign key is NULL is the case the two-statement
+    // workaround handled by skipping its second query.
+    qbrs::insert::insert(campaigns::Table)
+        .values(CampaignsInsert::builder().name("orphan").build())
+        .execute(&pool)
+        .await
+        .expect("insert a campaign with no realm");
+
+    let both: Vec<(String, Option<String>)> = select((updated::name, realms::name))
+        .from(qbrs::cte::with(
+            updated::Table,
+            &qbrs::update::update(campaigns::Table)
+                .set_to(campaigns::name, "renamed")
+                .returning((campaigns::id, campaigns::name, campaigns::realm_id)),
+        ))
+        .left_join(realms::Table, realms::id.eq(updated::realm_id))
+        .order_by(updated::id.asc())
+        .load(&pool)
+        .await
+        .expect("rename both and read whatever realm each has")
+        .into_tuples();
+    assert_eq!(
+        both,
+        vec![
+            ("renamed".to_string(), Some("west".to_string())),
+            ("renamed".to_string(), None),
+        ]
+    );
 
     // Postgres takes a data-modifying `WITH` at the top level only, so the
     // query binding one has to be the statement. Nothing in the types says
@@ -163,9 +203,8 @@ async fn a_write_runs_as_a_cte_body_and_the_query_reads_what_the_row_doesnt_hold
     };
     assert_eq!(db.code().as_deref(), Some("0A000"));
 
-    // And it really was refused: the row still holds what the snapshot
-    // query above wrote — which that query's own outer `SELECT` could not
-    // see, and a later statement can.
+    // And it really was refused: the row still holds what the last write
+    // that did run left it.
     let untouched: String = select(campaigns::name)
         .from(campaigns::Table)
         .filter(campaigns::id.eq(campaign_id))
@@ -173,7 +212,7 @@ async fn a_write_runs_as_a_cte_body_and_the_query_reads_what_the_row_doesnt_hold
         .await
         .expect("read the campaign back")
         .expect("one row");
-    assert_eq!(untouched, "autumn");
+    assert_eq!(untouched, "renamed");
 
     common::shutdown(pool, guard).await;
 }
