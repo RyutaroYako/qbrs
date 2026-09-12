@@ -29,7 +29,7 @@ struct Methods {
     notify: Option<Vec<String>>,
 }
 
-/// The three non-text arrays a row selects, in selection order.
+/// The three arrays a row selects, in selection order.
 type Arrays = (Vec<i32>, Vec<i64>, Option<Vec<String>>);
 
 #[tokio::test]
@@ -154,6 +154,14 @@ async fn array_columns_bind_and_decode_as_the_vec_the_schema_names() {
         .await
         .expect("update an array column");
     assert_eq!(changed, 1);
+    let replaced: Vec<String> = select(accounts::login_methods)
+        .from(accounts::Table)
+        .filter(accounts::id.eq(id))
+        .load_one(&pool)
+        .await
+        .expect("read the updated array back")
+        .expect("one row");
+    assert_eq!(replaced, vec!["sso".to_string()]);
 
     #[cfg(feature = "uuid")]
     {

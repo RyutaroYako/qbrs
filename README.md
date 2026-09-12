@@ -129,8 +129,8 @@ sqlx = { version = "0.9", features = ["runtime-tokio", "postgres"] }  # for `PgP
 ```
 
 `qbrs-sqlx`'s methods take any `sqlx::PgExecutor`, so the `sqlx` version has
-to be the one it is built against (0.9). Column types beyond the six built in
-are features — `chrono`, `uuid`, `decimal` — and each has to be enabled on
+to be the one it is built against (0.9). Column types that need a crate to
+decode to are features — `chrono`, `uuid`, `decimal` — and each has to be enabled on
 **both** `qbrs` and `qbrs-sqlx`, which are separate `cfg`s over one `Value`:
 enabling only one surfaces as a `FeatureNotEnabled` at bind time, not as a
 compile error.
@@ -171,7 +171,10 @@ Three things that aren't obvious from a signature:
 Deferred rather than half-supported, and documented in the relevant module:
 `WITH RECURSIVE`, aggregates as window functions (`sum(x) OVER (..)`), a CTE
 referencing another CTE, row locking (`FOR UPDATE`/`SKIP LOCKED`), a scalar
-subquery in an expression position (`col = (SELECT max(x) ..)`), and
+subquery in an expression position (`col = (SELECT max(x) ..)`), the array
+operators (`@>`, `&&`, `= ANY(..)`, `array_append`) and the array element
+types beyond the four (`BOOLEAN[]`, `DOUBLE PRECISION[]`, `TIMESTAMPTZ[]`,
+`NUMERIC[]`, and any array whose elements can be NULL), and
 relations/eager-loading. `sql!{}` doesn't reach the last two: it builds an
 expression, not a statement suffix, and a `Select` isn't a slot value.
 `IN (SELECT ..)`/`NOT IN (SELECT ..)` is covered by `Select::contains`/

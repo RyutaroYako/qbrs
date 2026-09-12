@@ -175,43 +175,44 @@ fn sql_type_for(ty: &Type) -> syn::Result<TokenStream2> {
         && let Some(seg) = p.path.segments.last()
     {
         let name = seg.ident.to_string();
-        // A generic type is only the type it looks like when its argument
-        // agrees: `Vec<u8>` is `bytea` while `Vec<String>` is `text[]`, and
-        // saying which is which here is what keeps the match closed.
-        let vec_element = ["u8", "String", "i32", "i64", "Uuid"]
+        // A `Vec` is only the type it looks like once its element is read:
+        // `Vec<u8>` is `bytea` and the rest are Postgres arrays. One match
+        // rather than a list of elements beside a list of markers, which
+        // could line up wrong.
+        if name == "Vec" {
+            return [
+                ("u8", quote! { ::qbrs::expr::Bytes }),
+                ("String", quote! { ::qbrs::expr::TextArray }),
+                ("i32", quote! { ::qbrs::expr::IntegerArray }),
+                ("i64", quote! { ::qbrs::expr::BigIntArray }),
+                ("Uuid", quote! { ::qbrs::expr::UuidArray }),
+            ]
             .into_iter()
-            .find(|element| generic_argument_is(seg, element));
-        let argument_ok = match name.as_str() {
-            "Vec" => vec_element.is_some(),
-            "DateTime" => generic_argument_is(seg, "Utc"),
-            _ => true,
-        };
-        let path = match name.as_str() {
-            _ if !argument_ok => {
-                return Err(syn::Error::new_spanned(
+            .find_map(|(element, marker)| generic_argument_is(seg, element).then_some(marker))
+            .ok_or_else(|| {
+                syn::Error::new_spanned(
                     ty,
-                    format!(
-                        "unsupported column type — `{name}` is a column type only as `Vec<u8>` \
-                         (bytes), `Vec<String>`/`Vec<i32>`/`Vec<i64>`/`Vec<Uuid>` (a Postgres \
-                         array), or `DateTime<Utc>` (timestamptz)"
-                    ),
-                ));
-            }
+                    "unsupported column type — a `Vec` is a column type as `Vec<u8>` (bytes) or \
+                     as `Vec<String>`/`Vec<i32>`/`Vec<i64>`/`Vec<Uuid>` (a Postgres array). An \
+                     array whose elements can be NULL has no column type yet.",
+                )
+            });
+        }
+        if name == "DateTime" && !generic_argument_is(seg, "Utc") {
+            return Err(syn::Error::new_spanned(
+                ty,
+                "unsupported column type — `DateTime` is a column type only as `DateTime<Utc>` \
+                 (timestamptz)",
+            ));
+        }
+        let path = match name.as_str() {
             "i32" => quote! { ::qbrs::expr::Integer },
             "i64" => quote! { ::qbrs::expr::BigInt },
             "f64" => quote! { ::qbrs::expr::Real },
             "String" => quote! { ::qbrs::expr::Text },
             "bool" => quote! { ::qbrs::expr::Bool },
-            "Vec" => match vec_element.expect("checked above") {
-                "u8" => quote! { ::qbrs::expr::Bytes },
-                "String" => quote! { ::qbrs::expr::TextArray },
-                "i32" => quote! { ::qbrs::expr::IntegerArray },
-                "i64" => quote! { ::qbrs::expr::BigIntArray },
-                _ => quote! { ::qbrs::expr::UuidArray },
-            },
             // Behind a feature in `qbrs-core`; naming one here without that
-            // feature is an unresolved-path error at the marker, which says
-            // which feature is missing better than this match could.
+            // feature is an unresolved-path error at the marker.
             "DateTime" => quote! { ::qbrs::expr::Timestamptz },
             "NaiveDate" => quote! { ::qbrs::expr::Date },
             "Uuid" => quote! { ::qbrs::expr::Uuid },

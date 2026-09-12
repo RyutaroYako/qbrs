@@ -1,6 +1,7 @@
-//! Postgres array columns: `TEXT[]`, `INTEGER[]`, `BIGINT[]` and `UUID[]`
-//! declared in a schema as `Vec<T>`, bound as one parameter and decoded
-//! back. `Vec<u8>` stays `bytea` — the element type is what decides.
+//! Postgres array columns: `TEXT[]`, `INTEGER[]` and `BIGINT[]` declared in
+//! a schema as `Vec<T>`, bound as one parameter and decoded back. `UUID[]`
+//! is the same shape as a `Vec<Uuid>` behind the `uuid` feature.
+//! `Vec<u8>` stays `bytea` — the element type is what decides.
 //! Known limitation: no array *operators* yet (`@>`, `&&`, `= ANY(..)`,
 //! `array_append`); those go through `sql!{}`, as the last query shows.
 //! Run: `cargo run -p qbrs-examples --example 24_arrays`
@@ -18,6 +19,7 @@ struct MailingLists {
     name: String,
     recipients: Vec<String>,
     retry_delays: Vec<i32>,
+    sent_message_ids: Vec<i64>,
     cc: Option<Vec<String>>,
 }
 
@@ -33,12 +35,20 @@ struct List {
 async fn main() {
     let (pool, _db) = setup_db().await;
 
+    // `setup_db()` resets the shared schema; a table an example makes is
+    // its own to reset, or a second run against a `DATABASE_URL` server
+    // finds it already there.
+    sqlx::query("DROP TABLE IF EXISTS mailing_lists")
+        .execute(&pool)
+        .await
+        .expect("drop mailing_lists");
     sqlx::query(
         "CREATE TABLE mailing_lists (
             id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
             name TEXT NOT NULL,
             recipients TEXT[] NOT NULL,
             retry_delays INTEGER[] NOT NULL,
+            sent_message_ids BIGINT[] NOT NULL,
             cc TEXT[]
         )",
     )
@@ -55,6 +65,7 @@ async fn main() {
                     "sre@example.com".to_string(),
                 ])
                 .retry_delays(vec![1, 5, 30])
+                .sent_message_ids(vec![9_000_000_000i64, 9_000_000_001])
                 .cc(Some(vec!["cto@example.com".to_string()]))
                 .build(),
         )
@@ -65,6 +76,7 @@ async fn main() {
                 .name("quiet")
                 .recipients(Vec::new())
                 .retry_delays(Vec::new())
+                .sent_message_ids(Vec::new())
                 .build(),
         )
         .execute(&pool)
@@ -95,6 +107,16 @@ async fn main() {
         .expect("one row");
     println!("lists whose retry schedule is exactly [1, 5, 30]: {exact}");
     assert_eq!(exact, 1);
+
+    // `BIGINT[]` is the same shape one element type over.
+    let sent: Vec<Vec<i64>> = select(mailing_lists::sent_message_ids)
+        .from(mailing_lists::Table)
+        .order_by(mailing_lists::id.asc())
+        .load(&pool)
+        .await
+        .expect("read the bigint array");
+    println!("message ids: {sent:?}");
+    assert_eq!(sent, vec![vec![9_000_000_000i64, 9_000_000_001], vec![]]);
 
     // Asking whether an array *contains* something is an operator, and
     // those aren't built yet — the escape hatch takes the column and the

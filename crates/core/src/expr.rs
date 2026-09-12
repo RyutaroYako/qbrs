@@ -190,10 +190,8 @@ pub enum Value {
     Numeric(rust_decimal::Decimal),
     #[cfg(feature = "decimal")]
     NullNumeric,
-    /// Postgres array values. A `Vec<T>` binds as `T[]`, one variant per
-    /// element type rather than a nested `Value`: an array of arrays is a
-    /// different Postgres type from a two-dimensional one, and neither is
-    /// reachable by accident this way.
+    /// Postgres array values: a `Vec<T>` binds as `T[]`, one variant per
+    /// element type.
     TextArray(Vec<String>),
     NullTextArray,
     IntegerArray(Vec<i32>),
@@ -522,7 +520,8 @@ impl<K, Req, S: SqlType> IntoExpr for Keyed<K, Req, S> {
 #[diagnostic::on_unimplemented(
     message = "`{Self}` and `{Other}` aren't comparable",
     label = "both sides of a comparison must be the same SQL type, or two numeric ones",
-    note = "nullability doesn't matter here: a `Nullable<T>` compares with a `T`"
+    note = "nullability doesn't matter here: a `Nullable<T>` compares with a `T`",
+    note = "an unannotated `vec![1, 2]` is an `integer[]`, since that is what an integer literal defaults to — a `bytea` takes `vec![1u8, 2]`"
 )]
 pub trait Comparable<Other: SqlType>: SqlType {}
 
@@ -1068,11 +1067,15 @@ sql_leaf_type!(Text, String, NullText);
 sql_leaf_type!(Bool, bool, NullBool);
 sql_leaf_type!(Bytes, Vec<u8>, NullBytes);
 
-// Postgres arrays. No new dependency for the three whose element type Rust
-// already has, so they are not behind a feature; `UuidArray` rides the one
-// its element type is already behind. The other two dialects have no array
-// type at all, which is a bind-time failure rather than a render-time one —
-// an `Expr` carries no dialect to gate on.
+// Postgres arrays, over the four element types a schema reaches for.
+//
+// **Known limitations**: `BOOLEAN[]`, `DOUBLE PRECISION[]`, `TIMESTAMPTZ[]`
+// and `NUMERIC[]` have no marker, and neither does an array whose elements
+// can be NULL — a `Vec<T>` column decodes every element, so a row holding
+// one fails to decode rather than arriving as `None`. Both wait for a
+// schema that needs them. Arrays are Postgres's alone; an `Expr` carries no
+// dialect, so rendering one for MySQL or SQLite is a bind their driver
+// refuses rather than a compile error.
 sql_leaf_type!(TextArray, Vec<String>, NullTextArray);
 sql_leaf_type!(IntegerArray, Vec<i32>, NullIntegerArray);
 sql_leaf_type!(BigIntArray, Vec<i64>, NullBigIntArray);

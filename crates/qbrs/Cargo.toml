@@ -11,7 +11,7 @@ keywords = ["sql", "database", "query-builder", "type-safe", "postgres"]
 description = "A Drizzle-flavored, type-safe SQL query builder for Rust."
 
 [features]
-# Column types beyond the six a database always has; see `qbrs-core`.
+# Column types that need a crate of their own to decode to; see `qbrs-core`.
 chrono = ["qbrs-core/chrono"]
 uuid = ["qbrs-core/uuid"]
 decimal = ["qbrs-core/decimal"]
