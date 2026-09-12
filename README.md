@@ -211,6 +211,10 @@ Design constraints worth knowing before adopting:
   to the same table — correct, type-checked, and available now — rather
   than the bare-alias SQL shape. The declared column types are the body's:
   `Integer` because `employees::id` is an `i32`.
+- **`RETURNING` names the written row and nothing else**, which is all SQL
+  gives it. A joined table's column alongside it is the outer query's job:
+  bind the write as a CTE body and join from there, which keeps it one
+  statement (`29_data_modifying_cte`).
 - **`GROUP BY` isn't related to the selection list.** Every non-aggregated
   selected column has to appear in `GROUP BY` (or be functionally
   dependent), and nothing here checks that — it's the selection-into-`GROUP

@@ -33,6 +33,12 @@ pub trait Statement: private::Sealed {
     /// same clause. A distinct type rather than `Self` with a flag set: the
     /// execution layer needs `Sel`'s concrete type to know what to decode a
     /// returned row into, and an optional field would erase it.
+    ///
+    /// The selection is checked against [`WrittenTable`] — this statement's
+    /// own row, which is all SQL's `RETURNING` can name. To hand back a
+    /// column of another table alongside it, bind this statement as a CTE
+    /// body ([`cte::with`](crate::cte::with)) and join from the outer
+    /// query: the write and the read it feeds stay one statement.
     fn returning<Sel, Idx>(self, sel: Sel) -> Returning<Self, Sel>
     where
         Self: Sized,
