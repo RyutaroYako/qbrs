@@ -84,8 +84,8 @@ pub mod prelude {
     pub use qbrs_core::expr::{Date, Timestamptz};
     pub use qbrs_core::expr::{Declared, Expr, IntoExpr, Keyed, Labeled};
     pub use qbrs_core::insert::{
-        Defaultable, Insert, InsertRow, InsertSeed, Insertable, IntoColumnValue, Missing,
-        NothingToInsert, insert,
+        ConflictColumns, ConflictTarget, Defaultable, Insert, InsertRow, InsertSeed, Insertable,
+        IntoColumnValue, Missing, NothingToInsert, PartialIndex, insert, partial_index,
     };
     pub use qbrs_core::row::{Anon, FromRow, IntoStructs, IntoTuples, Named, Row, RowCons, RowNil};
     pub use qbrs_core::scope::{

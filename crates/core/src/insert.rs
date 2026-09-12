@@ -6,14 +6,19 @@
 //! renders as the `DEFAULT` keyword in that row's `VALUES (..)` tuple rather
 //! than changing the column list, so rows that omit different fields still
 //! share one statement.
+//!
+//! An `ON CONFLICT` target names columns, and the database infers an index
+//! from them — one over exactly those columns whose own predicate the
+//! target's implies. A *partial* unique index therefore needs its predicate
+//! repeated, which is what `partial_index(..)` is for.
 
 use std::marker::PhantomData;
 
 use crate::dialect::{Dialect, SupportsOnConflict};
-use crate::expr::{Column, ColumnKey, Value};
+use crate::expr::{Column, ColumnKey, ExprKind, Value};
 use crate::render::{QuerySink, Sink, render_ident};
 use crate::scope::{BaseTable, Table};
-use crate::statement::Statement;
+use crate::statement::{Statement, WrittenTable};
 use crate::update::Assignments;
 
 /// What a column's setter accepts, keyed by what that column's field
@@ -190,55 +195,91 @@ impl<C: crate::row::Named, Tail: InsertValues> InsertValues
     }
 }
 
-/// An `ON CONFLICT` target: one or more columns proven by `T` to belong to
-/// the table being inserted into, where a raw `&[&str]` would let a typo
-/// through to the database. Implemented for a bare `Column<C>` and for
-/// tuples of up to three; add arities as real schemas need them.
+/// The columns an `ON CONFLICT` target infers an index from: one or more,
+/// proven by `T` to belong to the table being inserted into, where a raw
+/// `&[&str]` would let a typo through to the database. Implemented for a
+/// bare `Column<C>` and for tuples of up to three; add arities as real
+/// schemas need them.
 #[diagnostic::on_unimplemented(
-    message = "`{Self}` isn't an `ON CONFLICT` target for `{T}`",
+    message = "`{Self}` isn't a column list for `{T}`",
     label = "a column of that table, or a tuple of up to three of them"
 )]
-pub trait ConflictTarget<T: Table>: conflict_target::Sealed {
+pub trait ConflictColumns<T: Table>: conflict_target::ColumnsSealed<T> {
     #[doc(hidden)]
     fn column_names(&self) -> Vec<&'static str>;
+}
+
+/// An `ON CONFLICT` target: the columns, and for a partial unique index the
+/// predicate that picks it. Implemented for everything `ConflictColumns`
+/// is, plus the [`partial_index`] those columns pass through.
+#[diagnostic::on_unimplemented(
+    message = "`{Self}` isn't an `ON CONFLICT` target for `{T}`",
+    label = "a column of that table, a tuple of up to three of them, or `partial_index(..)` of either"
+)]
+pub trait ConflictTarget<T: Table>: conflict_target::Sealed<T> {
+    #[doc(hidden)]
+    fn into_target(self) -> Target;
+}
+
+/// The rendered half of a conflict target: the columns a dialect infers an
+/// index from, and the `index_predicate` that picks a *partial* one.
+#[doc(hidden)]
+pub struct Target {
+    columns: Vec<&'static str>,
+    index_predicate: Option<ExprKind>,
 }
 
 mod conflict_target {
     /// Sealed for the reason `InsertRow` is: a hand-written impl could name
     /// a column that isn't there, and the point of taking `Column<C>`s is
-    /// that it can't.
-    pub trait Sealed {}
-    impl<C: crate::expr::ColumnKey> Sealed for crate::expr::Column<C> {}
-    // Elements constrained, or the seal admits a tuple of anything — and a
-    // hand-written `ConflictTarget` for it could name a column that isn't
-    // there, which is what this seal is for.
-    impl<A: crate::expr::ColumnKey> Sealed for (crate::expr::Column<A>,) {}
-    impl<A: crate::expr::ColumnKey, B: crate::expr::ColumnKey> Sealed
-        for (crate::expr::Column<A>, crate::expr::Column<B>)
-    {
-    }
-    impl<A: crate::expr::ColumnKey, B: crate::expr::ColumnKey, C: crate::expr::ColumnKey> Sealed
-        for (
-            crate::expr::Column<A>,
-            crate::expr::Column<B>,
-            crate::expr::Column<C>,
-        )
-    {
-    }
+    /// that it can't. Both seals carry the trait's own table parameter — a
+    /// seal on `Self` alone leaves that table a free slot the caller fills
+    /// with their own type, which is all the orphan rule asks for, and
+    /// `ON CONFLICT ("nickname")` against a table without one is exactly
+    /// the typo the seal is here to stop.
+    pub trait ColumnsSealed<T> {}
+    pub trait Sealed<T> {}
 }
 
-impl<C: ColumnKey> ConflictTarget<C::Table> for Column<C> {
+impl<C: ColumnKey> conflict_target::ColumnsSealed<C::Table> for Column<C> {}
+impl<C: ColumnKey> conflict_target::Sealed<C::Table> for Column<C> {}
+
+impl<C: ColumnKey> ConflictColumns<C::Table> for Column<C> {
     fn column_names(&self) -> Vec<&'static str> {
         vec![C::NAME]
     }
 }
 
+impl<C: ColumnKey> ConflictTarget<C::Table> for Column<C> {
+    fn into_target(self) -> Target {
+        Target {
+            columns: self.column_names(),
+            index_predicate: None,
+        }
+    }
+}
+
 macro_rules! conflict_target_tuple {
     ($($name:ident),+) => {
+        // Elements constrained, or the seal admits a tuple of anything.
+        impl<T: Table, $($name: ColumnKey<Table = T>,)+> conflict_target::ColumnsSealed<T>
+            for ($(Column<$name>,)+) {}
+        impl<T: Table, $($name: ColumnKey<Table = T>,)+> conflict_target::Sealed<T>
+            for ($(Column<$name>,)+) {}
+
         #[allow(non_snake_case)]
-        impl<T: Table, $($name: ColumnKey<Table = T>,)+> ConflictTarget<T> for ($(Column<$name>,)+) {
+        impl<T: Table, $($name: ColumnKey<Table = T>,)+> ConflictColumns<T> for ($(Column<$name>,)+) {
             fn column_names(&self) -> Vec<&'static str> {
                 vec![$(<$name as crate::row::Named>::NAME),+]
+            }
+        }
+
+        impl<T: Table, $($name: ColumnKey<Table = T>,)+> ConflictTarget<T> for ($(Column<$name>,)+) {
+            fn into_target(self) -> Target {
+                Target {
+                    columns: self.column_names(),
+                    index_predicate: None,
+                }
             }
         }
     };
@@ -248,6 +289,62 @@ macro_rules! conflict_target_tuple {
 conflict_target_tuple!(A);
 conflict_target_tuple!(A, B);
 conflict_target_tuple!(A, B, C);
+
+/// `ON CONFLICT (a, b) WHERE deleted_at IS NULL` — the conflict target of a
+/// **partial** unique index.
+///
+/// A target of bare columns is matched against an index over exactly those
+/// columns whose own predicate the target's implies, and a target with no
+/// predicate implies only an index with none — so a partial index is
+/// unreachable without one. Implication, not equality: a predicate saying
+/// more than the index's still picks it. This is Postgres's
+/// `index_predicate`, and SQLite spells it the same way. It is only ever
+/// that: it does not filter which rows the conflict applies to, and where
+/// the columns also carry an unfiltered unique index that one still wins.
+///
+/// A predicate that implies no index at all is refused by the database
+/// rather than silently matching a different one.
+///
+/// ```ignore
+/// insert(members::Table)
+///     .values(row)
+///     .on_conflict_do_update(
+///         partial_index((members::team, members::handle), members::left_at.is_null()),
+///         assignments,
+///     )
+/// ```
+pub fn partial_index<T, Cols, E, Req, Idxs>(columns: Cols, index_predicate: E) -> PartialIndex<T>
+where
+    T: Table,
+    Cols: ConflictColumns<T>,
+    E: crate::expr::IntoExpr<Req = Req>,
+    E::Sql: crate::expr::BoolLike,
+    WrittenTable<T>: crate::scope::Superset<Req, Idxs>,
+{
+    PartialIndex {
+        target: Target {
+            columns: columns.column_names(),
+            index_predicate: Some(index_predicate.into_expr().kind),
+        },
+        _marker: PhantomData,
+    }
+}
+
+/// A conflict target narrowed to a partial unique index, from
+/// [`partial_index`]. It takes the columns rather than another target, so
+/// the predicate it carries is the only one there is.
+pub struct PartialIndex<T> {
+    target: Target,
+    _marker: PhantomData<fn() -> T>,
+}
+
+impl<T> conflict_target::Sealed<T> for PartialIndex<T> {}
+
+impl<T: Table> ConflictTarget<T> for PartialIndex<T> {
+    fn into_target(self) -> Target {
+        self.target
+    }
+}
 
 enum ConflictAction<T> {
     DoNothing,
@@ -259,23 +356,32 @@ enum ConflictAction<T> {
     /// knows, so referring to it needs its own typed API. Everything else a
     /// `SET` list can say, including expressions over the target's own
     /// columns, works here.
+    ///
+    /// **Known limitation**: no `DO UPDATE SET .. WHERE ..` either. That
+    /// `WHERE` decides whether the update fires at all, which is a
+    /// different clause from the one [`partial_index`] carries — that one
+    /// only picks which index the conflict is inferred against.
     DoUpdate(Assignments<T>),
 }
 
 struct ConflictClause<T> {
-    target: Vec<&'static str>,
+    target: Target,
     action: ConflictAction<T>,
 }
 
 fn render_conflict_clause<D: Dialect, T>(clause: &ConflictClause<T>, sink: &mut dyn Sink) {
     sink.text(" ON CONFLICT (");
-    for (i, c) in clause.target.iter().enumerate() {
+    for (i, c) in clause.target.columns.iter().enumerate() {
         if i > 0 {
             sink.text(", ");
         }
         render_ident::<D>(sink, c);
     }
     sink.ch(')');
+    if let Some(predicate) = &clause.target.index_predicate {
+        sink.text(" WHERE ");
+        crate::render::render_expr::<D>(predicate, sink);
+    }
     match &clause.action {
         ConflictAction::DoNothing => sink.text(" DO NOTHING"),
         ConflictAction::DoUpdate(sets) => {
@@ -429,20 +535,22 @@ impl<D, R: InsertRow + Insertable> Insert<D, R> {
 }
 
 impl<D: Dialect, R: InsertRow> Insert<D, R> {
-    /// `ON CONFLICT (..) DO NOTHING`.
+    /// `ON CONFLICT (..) DO NOTHING`. Pass [`partial_index`] where the
+    /// index to infer is a partial one.
     pub fn on_conflict_do_nothing(mut self, target: impl ConflictTarget<R::Table>) -> Self
     where
         D: SupportsOnConflict,
     {
         self.on_conflict = Some(ConflictClause {
-            target: target.column_names(),
+            target: target.into_target(),
             action: ConflictAction::DoNothing,
         });
         self
     }
 
     /// `ON CONFLICT (..) DO UPDATE SET ..`, taking the same `Assignments`
-    /// an `UPDATE` sets.
+    /// an `UPDATE` sets. Pass [`partial_index`] where the index to infer is
+    /// a partial one.
     pub fn on_conflict_do_update(
         mut self,
         target: impl ConflictTarget<R::Table>,
@@ -452,7 +560,7 @@ impl<D: Dialect, R: InsertRow> Insert<D, R> {
         D: SupportsOnConflict,
     {
         self.on_conflict = Some(ConflictClause {
-            target: target.column_names(),
+            target: target.into_target(),
             action: ConflictAction::DoUpdate(set),
         });
         self

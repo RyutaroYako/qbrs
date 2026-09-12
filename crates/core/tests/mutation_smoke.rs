@@ -4,7 +4,7 @@
 use qbrs_core::delete::delete;
 use qbrs_core::dialect::Postgres;
 use qbrs_core::expr::{ExprMethods, Value};
-use qbrs_core::insert::{Defaultable, InsertRow, InsertValue, insert};
+use qbrs_core::insert::{Defaultable, InsertRow, InsertValue, insert, partial_index};
 use qbrs_core::scope::Table as TableTrait;
 use qbrs_core::statement::Statement;
 use qbrs_core::update::{Assignments, NothingToSet, UpdateRow, update};
@@ -316,6 +316,44 @@ fn upsert_do_nothing_renders_conflict_target() {
     assert_eq!(
         params,
         vec![Value::Text("a@example.com".into()), Value::NullText]
+    );
+}
+
+#[test]
+fn a_partial_index_target_repeats_the_index_predicate() {
+    let (sql, params) = insert(users::Table)
+        .values(UsersInsert::builder().email("a@example.com").build())
+        .on_conflict_do_update(
+            partial_index(users::email, users::display_name.is_null()),
+            Assignments::from_row(UsersUpdate {
+                display_name: Some(Some("A".into())),
+                ..Default::default()
+            })
+            .expect("display_name is set"),
+        )
+        .to_sql(Postgres);
+    assert_eq!(
+        sql,
+        "INSERT INTO \"users\" (\"email\", \"display_name\", \"created_at\") VALUES ($1, $2, DEFAULT) \
+         ON CONFLICT (\"email\") WHERE (\"users\".\"display_name\" IS NULL) DO UPDATE SET \"display_name\" = $3"
+    );
+    assert_eq!(params.len(), 3);
+}
+
+#[test]
+fn a_partial_index_target_of_several_columns_renders_do_nothing_after_the_predicate() {
+    let (sql, _) = insert(users::Table)
+        .values(UsersInsert::builder().email("a@example.com").build())
+        .on_conflict_do_nothing(partial_index(
+            (users::email, users::id),
+            users::display_name.is_null(),
+        ))
+        .to_sql(Postgres);
+    assert!(
+        sql.ends_with(
+            "ON CONFLICT (\"email\", \"id\") WHERE (\"users\".\"display_name\" IS NULL) DO NOTHING"
+        ),
+        "{sql}"
     );
 }
 

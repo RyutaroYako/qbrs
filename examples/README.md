@@ -49,7 +49,7 @@ DATABASE_URL=postgres://postgres:postgres@localhost:5432/qbrs_test \
 | [`08_right_full_join`](examples/08_right_full_join.rs) | RIGHT/FULL JOIN — previously-joined tables retroactively become nullable |
 | [`09_dynamic_join`](examples/09_dynamic_join.rs) | `DynSelect` — the narrow erasure hatch for conditionally joining or not |
 | [`10_prepared`](examples/10_prepared.rs) | `prepare!{}` — a query rendered once, reused across many typed `.load(.., params)` calls |
-| [`11_upsert`](examples/11_upsert.rs) | `ON CONFLICT (..) DO NOTHING` / `DO UPDATE SET ..`, gated to dialects with `SupportsOnConflict` |
+| [`11_upsert`](examples/11_upsert.rs) | `ON CONFLICT (..) DO NOTHING` / `DO UPDATE SET ..`, gated to dialects with `SupportsOnConflict`, and `partial_index(..)` for a partial unique index |
 | [`12_union`](examples/12_union.rs) | `UNION ALL`/`INTERSECT` across `SELECT`s with unrelated `Scope`s |
 | [`13_window`](examples/13_window.rs) | `row_number()`/`rank()` `.over(window()..)` |
 | [`14_cte`](examples/14_cte.rs) | `with!{}` + `cte::with(..)` + `.inner_join(..)` — a CTE used as a real table |

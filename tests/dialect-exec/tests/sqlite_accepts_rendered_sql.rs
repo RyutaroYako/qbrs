@@ -4,6 +4,7 @@
 
 use qbrs::cte::with;
 use qbrs::expr::{Expr, Value, all_of, any_of, avg, count, count_of, max, min, string_agg, sum};
+use qbrs::insert::partial_index;
 use qbrs::prelude::*;
 use qbrs::sql;
 use sqlx::{Row, SqlitePool};
@@ -39,6 +40,9 @@ async fn schema() -> SqlitePool {
     for ddl in [
         "CREATE TABLE users (id INTEGER PRIMARY KEY AUTOINCREMENT, email TEXT NOT NULL UNIQUE, display_name TEXT)",
         "CREATE TABLE orders (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER NOT NULL, total INTEGER NOT NULL)",
+        // A partial unique index, so a conflict target carrying an index
+        // predicate has something to be inferred against.
+        "CREATE UNIQUE INDEX users_named ON users (display_name) WHERE display_name IS NOT NULL",
     ] {
         sqlx::query(sqlx::AssertSqlSafe(ddl))
             .execute(&pool)
@@ -495,6 +499,48 @@ async fn sqlite_executes_every_rendered_statement_shape() {
             .to_sql(Sqlite),
     )
     .await;
+
+    // A conflict target that names a partial unique index. SQLite rejects
+    // a target it cannot infer an index from, so reaching this one at all
+    // is what says the predicate rendered where SQLite reads it — and the
+    // row it conflicts with is inserted here rather than borrowed from
+    // 400 lines up, so what the `RETURNING` says is about this shape.
+    let seeded = run(
+        &pool,
+        insert(users::Table)
+            .values(
+                UsersInsert::builder()
+                    .email("partial-seed@example.com")
+                    .display_name("Partial Seed")
+                    .build(),
+            )
+            .returning(users::id)
+            .to_sql(Sqlite),
+    )
+    .await;
+    assert_eq!(seeded.len(), 1);
+
+    let dropped = run(
+        &pool,
+        insert(users::Table)
+            .values(
+                UsersInsert::builder()
+                    .email("partial-again@example.com")
+                    .display_name("Partial Seed")
+                    .build(),
+            )
+            .on_conflict_do_nothing(partial_index(
+                users::display_name,
+                users::display_name.is_not_null(),
+            ))
+            .returning(users::id)
+            .to_sql(Sqlite),
+    )
+    .await;
+    assert!(
+        dropped.is_empty(),
+        "the partial index should have dropped the row"
+    );
 
     // `count(<column>)` counts non-NULLs, unlike `count(*)`.
     let counted = run(
