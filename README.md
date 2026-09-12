@@ -175,8 +175,9 @@ subquery in an expression position (`col = (SELECT max(x) ..)`), the array
 operators (`@>`, `&&`, `= ANY(..)`, `array_append`) and the array element
 types beyond the four (`BOOLEAN[]`, `DOUBLE PRECISION[]`, `TIMESTAMPTZ[]`,
 `NUMERIC[]`, and any array whose elements can be NULL), `ON CONFLICT` or a
-column subset on an `INSERT .. SELECT` (it fills every column of its
-target), and relations/eager-loading. `sql!{}` doesn't reach the last two: it builds an
+column subset on an `INSERT .. SELECT` (it fills every column the target
+lets a statement write, and its source is a `Select` rather than a
+`UNION` or a `DynSelect`), and relations/eager-loading. `sql!{}` doesn't reach the last two: it builds an
 expression, not a statement suffix, and a `Select` isn't a slot value.
 `IN (SELECT ..)`/`NOT IN (SELECT ..)` is covered by `Select::contains`/
 `.not_contains`, which — like `EXISTS` — is dialect-pinned rather than a

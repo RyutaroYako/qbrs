@@ -163,22 +163,34 @@ fn an_omitted_nullable_array_binds_a_typed_null() {
     );
 }
 
-/// `INSERT INTO t (..) SELECT ..` names the target's columns rather than
-/// relying on the two sides sharing a declaration order, and the source
-/// query's binds are numbered by the statement they land in.
+/// `INSERT INTO t (..) SELECT ..` names the columns the target lets a
+/// statement write — `feeds::id` is generated, so it is the database's to
+/// fill and naming it would be an error Postgres raises. A `RETURNING`
+/// that binds is numbered after the body, which is the whole reason the
+/// body is a `Fragment` rather than a rendered string.
 #[test]
-fn insert_select_names_the_target_columns_and_renumbers_the_source() {
-    let source = select(feeds::All)
-        .from(feeds::Table)
-        .filter(feeds::id.gt(10i64));
+fn insert_select_names_the_writable_columns_and_numbers_returning_after_the_body() {
+    let source = select((
+        feeds::topics,
+        feeds::weights,
+        feeds::seen,
+        feeds::raw,
+        feeds::notify,
+    ))
+    .from(feeds::Table)
+    .filter(feeds::id.gt(10i64));
     let (sql, params) = qbrs::insert::insert(feeds::Table)
         .select(&source)
+        .returning(qbrs::sql!(qbrs::expr::BigInt, "(? + ?)", feeds::id, 1i64))
         .to_sql(Postgres);
     assert_eq!(
         sql,
-        r#"INSERT INTO "feeds" ("id", "topics", "weights", "seen", "raw", "notify") SELECT "feeds"."id", "feeds"."topics", "feeds"."weights", "feeds"."seen", "feeds"."raw", "feeds"."notify" FROM "feeds" WHERE ("feeds"."id" > $1)"#
+        r#"INSERT INTO "feeds" ("topics", "weights", "seen", "raw", "notify") SELECT "feeds"."topics", "feeds"."weights", "feeds"."seen", "feeds"."raw", "feeds"."notify" FROM "feeds" WHERE ("feeds"."id" > $1) RETURNING (("feeds"."id" + $2))"#
     );
-    assert_eq!(params, vec![qbrs::expr::Value::I64(10)]);
+    assert_eq!(
+        params,
+        vec![qbrs::expr::Value::I64(10), qbrs::expr::Value::I64(1)]
+    );
 }
 
 #[test]

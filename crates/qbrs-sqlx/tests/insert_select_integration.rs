@@ -1,6 +1,8 @@
 //! `INSERT INTO t (..) SELECT ..` against a real Postgres: the archival
 //! copy the builder exists for. Only a database says the header and the
-//! query's columns line up, and that the rows land where they were sent.
+//! query's columns line up, that a `GENERATED ALWAYS` key the header leaves
+//! out is filled rather than refused, and that the rows land where they
+//! were sent.
 
 mod common;
 
@@ -17,13 +19,14 @@ struct Tickets {
     closed: bool,
 }
 
-/// The archive's columns are the same names and types, and its key is a
-/// plain column so a copied one is accepted.
+/// The archive keeps an identity of its own. A generated column is not in
+/// the header, so the query fills the rest and the database fills this —
+/// which is what `GENERATED ALWAYS AS IDENTITY` insists on.
 #[derive(Table)]
 #[table(name = "archived_tickets")]
 #[allow(dead_code)]
 struct ArchivedTickets {
-    #[column(primary_key)]
+    #[column(primary_key, generated)]
     id: i64,
     subject: String,
     closed: bool,
@@ -37,7 +40,11 @@ async fn a_query_fills_the_target_and_leaves_the_rows_it_did_not_match() {
         "DROP TABLE IF EXISTS archived_tickets",
         "DROP TABLE IF EXISTS tickets",
         "CREATE TABLE tickets (id BIGSERIAL PRIMARY KEY, subject TEXT NOT NULL, closed BOOLEAN NOT NULL)",
-        "CREATE TABLE archived_tickets (id BIGINT PRIMARY KEY, subject TEXT NOT NULL, closed BOOLEAN NOT NULL)",
+        "CREATE TABLE archived_tickets (
+            id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+            subject TEXT NOT NULL,
+            closed BOOLEAN NOT NULL
+        )",
     ] {
         sqlx::query(sqlx::AssertSqlSafe(ddl))
             .execute(&pool)
@@ -66,7 +73,7 @@ async fn a_query_fills_the_target_and_leaves_the_rows_it_did_not_match() {
 
     // The bound value inside the source query has to be numbered by the
     // statement it lands in, not by the query on its own.
-    let closed_ones = select(tickets::All)
+    let closed_ones = select((tickets::subject, tickets::closed))
         .from(tickets::Table)
         .filter(tickets::closed.eq(true));
     let copied = qbrs::insert::insert(archived_tickets::Table)
@@ -91,7 +98,7 @@ async fn a_query_fills_the_target_and_leaves_the_rows_it_did_not_match() {
     // `RETURNING` is the same clause here as on any other write.
     let second_pass: Vec<i64> = qbrs::insert::insert(archived_tickets::Table)
         .select(
-            &select(tickets::All)
+            &select((tickets::subject, tickets::closed))
                 .from(tickets::Table)
                 .filter(tickets::closed.eq(false)),
         )

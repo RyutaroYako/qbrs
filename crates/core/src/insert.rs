@@ -1,4 +1,4 @@
-//! `INSERT INTO .. VALUES ..`.
+//! `INSERT INTO ..`, from values or from a query.
 //!
 //! A column with a schema default gets a `Defaultable<T>` field, so "omit"
 //! and "explicit value" stay distinguishable — and `Defaultable<Option<T>>`
@@ -422,32 +422,38 @@ impl<D, T: Table> InsertSeed<D, T> {
 
     /// `INSERT INTO t (..) SELECT ..` — the rows a query produces, checked
     /// against the target's own row by `row::SameShape`, the same one
-    /// comparison a `UNION` branch and a CTE body go through. Every column
-    /// of the target is filled, in the target's order, which is the shape
-    /// an archival copy has.
+    /// comparison a `UNION` branch and a CTE body go through.
+    ///
+    /// The query fills every column the target lets a statement write: all
+    /// of them but the generated ones, which the database writes itself and
+    /// refuses a value for. `SameShape` compares name and type cell by
+    /// cell, so the source's columns must be spelled and typed as the
+    /// target's — SQL would widen an `INTEGER` into a `BIGINT` and take a
+    /// NOT NULL value for a nullable column, and neither is accepted here.
+    /// A source column under another name takes a `label!{}` one.
+    ///
+    /// **Known limitations**: the source is a `Select`, so a `SetOp`
+    /// (`UNION`) or a `DynSelect` cannot be one; a one-column target still
+    /// needs a one-tuple (`select((t::only,))`), since a bare selection is
+    /// a value rather than a row.
     pub fn select<Scope, Sel, SelIdx, TgtIdx>(
         self,
         query: &crate::select::Select<D, Scope, Sel>,
     ) -> InsertSelect<D, T>
     where
         D: Dialect,
-        T: crate::select::AllColumns,
-        T::Columns: crate::select::ColumnList<crate::statement::WrittenTable<T>, TgtIdx>,
+        T: WrittenColumns,
+        T::Columns: crate::select::ColumnList<WrittenTable<T>, TgtIdx>,
+        TargetRow<T, TgtIdx>: crate::row::ColumnNames,
         Sel: crate::select::Selection<Scope, SelIdx>,
-        Sel::Output: crate::row::SameShape<
-                crate::row::Row<
-                    <T::Columns as crate::select::ColumnList<
-                        crate::statement::WrittenTable<T>,
-                        TgtIdx,
-                    >>::Fields<crate::row::RowNil>,
-                >,
-            >,
+        Sel::Output: crate::row::SameShape<crate::row::Row<TargetRow<T, TgtIdx>>>,
     {
-        let mut header = Vec::new();
-        <T::Columns as crate::select::ColumnList<crate::statement::WrittenTable<T>, TgtIdx>>::push_names(&mut header);
         InsertSelect {
-            header,
-            body: query.fragment(),
+            // Read off the very row the query was checked against, the way
+            // a `WITH` header is: one fact rather than two that could name
+            // different columns.
+            header: <TargetRow<T, TgtIdx> as crate::row::ColumnNames>::names(),
+            body: query.fragment::<SelIdx>(),
             _marker: PhantomData,
         }
     }
@@ -472,20 +478,34 @@ impl<D, T: Table> InsertSeed<D, T> {
     }
 }
 
+/// The columns of a table an `INSERT` may name: all of them but the
+/// generated ones, which the database writes itself and refuses a value
+/// for. Emitted by `#[derive(Table)]` beside `select::AllColumns`, which is
+/// the other list — what a `SELECT` of the whole table reads.
+#[doc(hidden)]
+pub trait WrittenColumns {
+    /// `Cons<Column<C>, ..>`, in the schema's own order.
+    type Columns;
+}
+
+/// The row an `INSERT INTO t (..) SELECT ..` has to be handed: the target's
+/// writable columns, read in the one-table scope a write statement has.
+type TargetRow<T, Idx> = <<T as WrittenColumns>::Columns as crate::select::ColumnList<
+    WrittenTable<T>,
+    Idx,
+>>::Fields<crate::row::RowNil>;
+
 /// `INSERT INTO t (..) SELECT ..` — rows a query produces rather than rows
 /// a caller holds. From [`InsertSeed::select`].
 ///
-/// The header is the target's own column list, so the two sides line up by
-/// the target's order rather than by whatever order its `CREATE TABLE`
-/// happened to use. The body is a [`render::Fragment`], rendered before the
-/// statement knows how many parameters precede it, for the reason a CTE
-/// body is one.
+/// The header is the target's own writable columns, so the two sides line
+/// up by the target's order rather than by whatever order its
+/// `CREATE TABLE` happened to use. The body is a `render::Fragment`,
+/// rendered before the statement knows how many parameters precede it, for
+/// the reason a CTE body is one.
 ///
 /// **Known limitation**: no `ON CONFLICT` on this shape, and no column
-/// subset — the query fills every column the target has, which is what the
-/// archival copy this exists for wants. A target whose key is `GENERATED
-/// ALWAYS` refuses a copied one; declare it a plain column, as an archive
-/// table normally does.
+/// subset — the query fills every column the target lets one write.
 pub struct InsertSelect<D, T> {
     header: Vec<&'static str>,
     body: crate::render::Fragment,

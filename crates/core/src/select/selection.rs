@@ -249,17 +249,11 @@ mod column_list {
 pub trait ColumnList<Scope, Idx>: column_list::Sealed {
     type Fields<Tail>;
     fn push_items(out: &mut Vec<SelectItem>);
-    /// The same list as bare names, for the one place a column list is a
-    /// header rather than a selection: `INSERT INTO t (..) SELECT ..`.
-    /// Walked here beside the other two so a header can never name a
-    /// different set of columns than the row it is checked against.
-    fn push_names(out: &mut Vec<&'static str>);
 }
 
 impl<Scope, Idx> ColumnList<Scope, Idx> for crate::scope::Nil {
     type Fields<Tail> = Tail;
     fn push_items(_out: &mut Vec<SelectItem>) {}
-    fn push_names(_out: &mut Vec<&'static str>) {}
 }
 
 impl<C: ColumnKey, Tail, Scope, Idx> ColumnList<Scope, Idx> for crate::scope::Cons<Column<C>, Tail>
@@ -271,10 +265,6 @@ where
     fn push_items(out: &mut Vec<SelectItem>) {
         out.push(RowField::item(&Column::<C>::new()));
         Tail::push_items(out);
-    }
-    fn push_names(out: &mut Vec<&'static str>) {
-        out.push(<C as crate::row::Named>::NAME);
-        <Tail as ColumnList<Scope, Idx>>::push_names(out);
     }
 }
 
