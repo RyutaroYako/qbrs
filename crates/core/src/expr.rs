@@ -1298,6 +1298,16 @@ aggregate!(
     <C::Sql as Summable>::AVG_CAST,
     "`avg(column)`. NULL over zero rows."
 );
+aggregate!(
+    CountOf,
+    count_of,
+    "count",
+    BigInt,
+    SqlType,
+    None,
+    "`count(column)` — non-NULL values, unlike `count()`'s `count(*)` rows."
+);
+
 /// What `string_agg` accepts. Postgres defines it for `text` and for
 /// `bytea` — and the `bytea` one concatenates bytes and returns `bytea`,
 /// which is a different question than the one this asks — so text is the
@@ -1318,10 +1328,18 @@ impl<S: Concatenable> Concatenable for crate::scope::Nullable<S> {}
 /// `string_agg(column, ", ")` — a group's values run together, separated.
 /// NULL over zero rows, and over a group whose every value is NULL.
 ///
-/// The separator is written into the SQL rather than bound, so it is a
-/// `&'static str` and not a runtime string: MySQL's `SEPARATOR` takes a
-/// literal and rejects a parameter, and a separator that renders in only
-/// two of the three dialects is not one this builder can offer.
+/// The separator binds like any other value under Postgres and SQLite,
+/// which take it as an ordinary argument. MySQL's grammar takes a literal
+/// after `SEPARATOR` and rejects a parameter, so there alone it is written
+/// into the SQL and escaped — which is why it is a `&'static str` at all,
+/// and why a MySQL session running `NO_BACKSLASH_ESCAPES` renders a
+/// separator containing a backslash as more backslashes than were asked
+/// for. `&'static str` is a nudge and not a guarantee, since `Box::leak`
+/// reaches it; the guarantee is that the two dialects this crate executes
+/// never write it out at all.
+///
+/// Two `string_agg`s over one column key alike, since the separator is not
+/// part of the key — give one a `label!{}` name to read both back.
 ///
 /// **Known limitation**: no `ORDER BY` inside the call
 /// (`string_agg(x, ',' ORDER BY x)`) and no `DISTINCT`. Ordering inside an
@@ -1347,16 +1365,6 @@ where
         separator,
     })
 }
-
-aggregate!(
-    CountOf,
-    count_of,
-    "count",
-    BigInt,
-    SqlType,
-    None,
-    "`count(column)` — non-NULL values, unlike `count()`'s `count(*)` rows."
-);
 
 /// One `?` slot of a `sql!{}` fragment: every expression, plus the `Option`
 /// a request field already holds — a slot is the one place a NULL arrives

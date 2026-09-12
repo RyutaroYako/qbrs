@@ -207,9 +207,12 @@ Design constraints worth knowing before adopting:
   take a bare column: `sum(price * qty)` and `count(DISTINCT x)` need
   `sql!{}`, as does an `ORDER BY` inside a `string_agg` — SQLite reached
   that only in 3.44, past the 3.39 this crate targets, and MySQL spells it
-  elsewhere in the call. `string_agg`'s separator is a `&'static str`
-  written into the SQL rather than bound, since MySQL's `SEPARATOR` takes a
-  literal and rejects a parameter.
+  elsewhere in the call. `string_agg`'s separator binds under Postgres and
+  SQLite, which take it as an argument; MySQL's `SEPARATOR` takes a literal
+  and rejects a parameter, so there it is written into the SQL, which is
+  why it is a `&'static str` everywhere. MySQL also truncates the result at
+  `group_concat_max_len` (1024 bytes by default) with a warning rather than
+  an error.
 - **`ORDER BY` has a checked and an unchecked form.** Plain `.order_by(..)`
   only checks scope membership, since a non-`DISTINCT` query may sort by any
   column in scope. `.order_by_selected(..)`/`.order_by_selection(..)` also

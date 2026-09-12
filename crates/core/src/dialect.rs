@@ -43,18 +43,12 @@ pub trait Dialect: 'static + Copy + Default + private::Sealed {
     /// spells "no limit" differently.
     const OFFSET_WITHOUT_LIMIT: Option<&'static str> = None;
 
-    /// How this dialect spells "concatenate a group's values, separated".
-    /// Postgres's `string_agg(x, sep)` and SQLite's `group_concat(x, sep)`
-    /// differ only in name; MySQL puts the separator behind a keyword
-    /// instead, which is what the second half is.
-    const STRING_AGG: &'static str = "group_concat";
-    const STRING_AGG_SEPARATOR: &'static str = ", ";
-
-    /// Whether a backslash escapes the next character inside a string
-    /// literal. MySQL reads one that way by default; Postgres and SQLite
-    /// take the SQL-standard reading, where the only escape is a doubled
-    /// quote.
-    const BACKSLASH_ESCAPES_LITERALS: bool = false;
+    /// How this dialect spells "concatenate a group's values, separated",
+    /// and with it whether the separator can be a parameter. One value
+    /// rather than a name beside a syntax, because the two only make sense
+    /// together: `group_concat(x, ', ')` is valid MySQL and means something
+    /// else entirely — each row's values run together, not the group's.
+    const STRING_AGG: StringAggSyntax = StringAggSyntax::Argument("group_concat");
 
     /// Whether one bound parameter can be named from several places in a
     /// statement. It follows from how the dialect spells a placeholder:
@@ -76,12 +70,34 @@ pub trait Dialect: 'static + Copy + Default + private::Sealed {
     }
 }
 
+/// Where a `string_agg` separator goes, and so whether it is a value or
+/// text. Two dialects take it as an ordinary argument, where it binds like
+/// any other value; MySQL's grammar takes a literal after a keyword and
+/// rejects a parameter there, which is the only reason this crate ever
+/// writes a value into SQL instead of handing it to the driver.
+#[derive(Debug, Clone, Copy)]
+pub enum StringAggSyntax {
+    /// `string_agg(x, $1)` / `group_concat(x, ?)`.
+    Argument(&'static str),
+    /// `group_concat(x SEPARATOR '...')`, the separator written out and
+    /// escaped. `backslash_escapes` says how: MySQL reads a backslash
+    /// inside a literal as an escape, so a lone one would carry the closing
+    /// quote away and has to be doubled. A session running
+    /// `NO_BACKSLASH_ESCAPES` reads the doubled pair as two backslashes —
+    /// a separator that isn't the one asked for, though still not a way out
+    /// of the literal, since a doubled quote escapes under either mode.
+    SeparatorKeyword {
+        func: &'static str,
+        backslash_escapes: bool,
+    },
+}
+
 #[derive(Debug, Clone, Copy, Default)]
 pub struct Postgres;
 impl private::Sealed for Postgres {}
 impl Dialect for Postgres {
     const IDENTIFIER_QUOTE: char = '"';
-    const STRING_AGG: &'static str = "string_agg";
+    const STRING_AGG: StringAggSyntax = StringAggSyntax::Argument("string_agg");
     const PLACEHOLDERS_ARE_NUMBERED: bool = true;
     fn write_placeholder(n: usize, out: &mut String) {
         use std::fmt::Write as _;
@@ -98,9 +114,10 @@ impl Dialect for MySql {
     const OFFSET_WITHOUT_LIMIT: Option<&'static str> = Some("18446744073709551615");
     const IDENTIFIER_QUOTE: char = '`';
     const INSERT_NO_COLUMNS: &'static str = " () VALUES ()";
-    const STRING_AGG: &'static str = "group_concat";
-    const STRING_AGG_SEPARATOR: &'static str = " SEPARATOR ";
-    const BACKSLASH_ESCAPES_LITERALS: bool = true;
+    const STRING_AGG: StringAggSyntax = StringAggSyntax::SeparatorKeyword {
+        func: "group_concat",
+        backslash_escapes: true,
+    };
     // Uses the default `?` placeholder.
 }
 

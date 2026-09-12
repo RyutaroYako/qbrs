@@ -71,7 +71,7 @@ pub mod prelude {
     pub use qbrs_core::expr::Column;
     #[cfg(feature = "decimal")]
     pub use qbrs_core::expr::Numeric;
-    pub use qbrs_core::expr::{Agg, Avg, Count, CountOf, Max, Min, Sum};
+    pub use qbrs_core::expr::{Agg, Avg, Count, CountOf, Max, Min, StringAgg, Sum};
     pub use qbrs_core::expr::{
         AssignsTo, BoolLike, Comparable, Concatenable, Ordered, SqlType, Summable, TextLike,
         Writable, null,

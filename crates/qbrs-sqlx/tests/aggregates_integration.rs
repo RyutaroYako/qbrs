@@ -82,6 +82,21 @@ async fn every_aggregate_helper_is_a_function_postgres_has() {
         vec![(1, 3, 3, 0, Some(10), Some(2), Some(10.0 / 3.0))]
     );
 
+    // A separator Postgres would read as syntax if it were written out
+    // instead of bound — and does read that way under
+    // `standard_conforming_strings = off`, which a session can set. What
+    // comes back says which of the two the renderer did.
+    let injected: Option<String> = select(string_agg(line_items::label, r"') FROM x -- \"))
+        .from(line_items::Table)
+        .load_one(&pool)
+        .await
+        .expect("a separator that is only ever data")
+        .expect("one row");
+    let joined = injected.expect("three labels run together");
+    let mut parts: Vec<&str> = joined.split(r"') FROM x -- \").collect();
+    parts.sort_unstable();
+    assert_eq!(parts, vec!["bolt", "nut", "washer"]);
+
     let labels: Vec<Option<String>> = select(string_agg(line_items::label, ", "))
         .from(line_items::Table)
         .group_by(line_items::order_id)

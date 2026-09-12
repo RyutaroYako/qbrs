@@ -4,7 +4,7 @@
 //! costs one instantiation per dialect used in a program rather than one per
 //! query shape.
 
-use crate::dialect::Dialect;
+use crate::dialect::{Dialect, StringAggSyntax};
 use crate::expr::{BinOp, CastTarget, ExprKind, SortDir, Value};
 
 /// Where rendered SQL goes. A bind parameter is *told* to the sink rather
@@ -189,11 +189,26 @@ pub(crate) fn render_expr<D: Dialect>(expr: &ExprKind, sink: &mut dyn Sink) {
             sink.ch(')');
         }
         ExprKind::StringAgg { arg, separator } => {
-            sink.text(D::STRING_AGG);
+            let (func, escapes) = match D::STRING_AGG {
+                StringAggSyntax::Argument(func) => (func, None),
+                StringAggSyntax::SeparatorKeyword {
+                    func,
+                    backslash_escapes,
+                } => (func, Some(backslash_escapes)),
+            };
+            sink.text(func);
             sink.ch('(');
             render_expr::<D>(arg, sink);
-            sink.text(D::STRING_AGG_SEPARATOR);
-            render_string_literal::<D>(sink, separator);
+            match escapes {
+                None => {
+                    sink.text(", ");
+                    sink.bind(&Value::Text((*separator).to_string()));
+                }
+                Some(backslash_escapes) => {
+                    sink.text(" SEPARATOR ");
+                    render_string_literal(sink, separator, backslash_escapes);
+                }
+            }
             sink.ch(')');
         }
         ExprKind::IsNull { expr, negated } => {
@@ -370,14 +385,14 @@ pub(crate) fn render_ident<D: Dialect>(sink: &mut dyn Sink, ident: &str) {
 }
 
 /// Writes a SQL string literal. The one place this crate writes a value
-/// into the SQL instead of binding it, because MySQL's `SEPARATOR` takes a
-/// literal and rejects a parameter. A quote is escaped by doubling it in
-/// every dialect; MySQL also reads a backslash as an escape, where a
-/// trailing one would otherwise carry the closing quote away.
-fn render_string_literal<D: Dialect>(sink: &mut dyn Sink, text: &str) {
+/// into SQL instead of binding it, reached only by the one dialect whose
+/// grammar refuses a parameter where the value goes. A quote is escaped by
+/// doubling it; a backslash too where the dialect reads one as an escape,
+/// since a lone trailing one would carry the closing quote away.
+fn render_string_literal(sink: &mut dyn Sink, text: &str, backslash_escapes: bool) {
     sink.ch('\'');
     for c in text.chars() {
-        if c == '\'' || (D::BACKSLASH_ESCAPES_LITERALS && c == '\\') {
+        if c == '\'' || (backslash_escapes && c == '\\') {
             sink.ch(c);
         }
         sink.ch(c);
