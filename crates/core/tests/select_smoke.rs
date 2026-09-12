@@ -483,6 +483,29 @@ fn group_by_and_having_render() {
 }
 
 #[test]
+fn a_bind_carrying_expression_reused_across_clauses_keeps_one_placeholder() {
+    let bucket = qbrs_core::sql!(
+        qbrs_core::expr::Integer,
+        "((? / ?) * ?)",
+        users::id,
+        10i32,
+        10i32
+    );
+    let (sql, params) = select((bucket.clone(), qbrs_core::expr::count()))
+        .from(users::Table)
+        .group_by(bucket.clone())
+        .order_by(bucket.asc())
+        .to_sql(Postgres);
+    assert_eq!(
+        sql,
+        "SELECT (((\"users\".\"id\" / $1) * $1)), count(*) FROM \"users\" \
+         GROUP BY (((\"users\".\"id\" / $1) * $1)) \
+         ORDER BY (((\"users\".\"id\" / $1) * $1)) ASC"
+    );
+    assert_eq!(params, vec![qbrs_core::expr::Value::I32(10)]);
+}
+
+#[test]
 fn raw_sql_escape_hatch_renders_and_renumbers_params() {
     let q = select((users::id,))
         .from(users::Table)

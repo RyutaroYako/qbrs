@@ -9,6 +9,13 @@
 //! query's scope like any other expression. Only the text between the slots
 //! is unchecked.
 //!
+//! One fragment reused across clauses of one statement — selected, grouped
+//! by, ordered by — renders as one expression under Postgres, whose
+//! numbered placeholders let its binds be named again rather than rebound.
+//! `?` is the next parameter rather than a name for one, so under MySQL and
+//! SQLite each occurrence rebinds and the occurrences are only textually
+//! equal where the fragment carries no bind at all.
+//!
 //! `sql!` binds that text to a `const` first, so text assembled at runtime
 //! cannot reach SQL through this macro. The primitive it expands to,
 //! `expr::raw_expr`, takes a bare `&'static str` and has no such guard —

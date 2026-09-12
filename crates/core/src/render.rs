@@ -17,11 +17,21 @@ pub(crate) trait Sink {
     fn bind(&mut self, value: &Value);
 }
 
-/// Builds a finished statement, numbering each parameter as it arrives.
+/// Builds a finished statement, numbering each parameter as it arrives. A
+/// dialect whose placeholders are numbered reuses the number a value
+/// already has, so an expression carrying binds renders the same text
+/// everywhere it recurs in one statement — which is what lets a `sql!{}`
+/// fragment be selected and grouped by.
 #[doc(hidden)]
 pub struct QuerySink<D> {
     sql: String,
     params: Vec<Value>,
+    /// Which parameters hold which value, so a value bound again is named
+    /// again rather than re-bound. Bucketed by `Value::hash_key` and
+    /// confirmed with `==`, since `Value` has no `Eq` to key a map on.
+    /// Stays empty under a dialect whose placeholders are positional, where
+    /// there is no naming a parameter twice.
+    bound: std::collections::HashMap<u64, Vec<usize>>,
     _dialect: std::marker::PhantomData<fn() -> D>,
 }
 
@@ -30,12 +40,37 @@ impl<D: Dialect> QuerySink<D> {
         QuerySink {
             sql: String::new(),
             params: Vec::new(),
+            bound: std::collections::HashMap::new(),
             _dialect: std::marker::PhantomData,
         }
     }
 
     pub(crate) fn finish(self) -> (String, Vec<Value>) {
         (self.sql, self.params)
+    }
+
+    /// The 1-based position of a parameter already holding this value.
+    fn position_of(&self, value: &Value) -> Option<usize> {
+        if !D::PLACEHOLDERS_ARE_NUMBERED {
+            return None;
+        }
+        self.bound
+            .get(&value.hash_key())?
+            .iter()
+            .find(|&&i| self.params[i] == *value)
+            .map(|&i| i + 1)
+    }
+
+    /// Appends a parameter, returning its 1-based position.
+    fn push_param(&mut self, value: &Value) -> usize {
+        self.params.push(value.clone());
+        if D::PLACEHOLDERS_ARE_NUMBERED {
+            self.bound
+                .entry(value.hash_key())
+                .or_default()
+                .push(self.params.len() - 1);
+        }
+        self.params.len()
     }
 }
 
@@ -47,8 +82,11 @@ impl<D: Dialect> Sink for QuerySink<D> {
         self.sql.push(c);
     }
     fn bind(&mut self, value: &Value) {
-        self.params.push(value.clone());
-        D::write_placeholder(self.params.len(), &mut self.sql);
+        let n = match self.position_of(value) {
+            Some(n) => n,
+            None => self.push_param(value),
+        };
+        D::write_placeholder(n, &mut self.sql);
     }
 }
 

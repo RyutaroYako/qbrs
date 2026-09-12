@@ -62,7 +62,7 @@ fn multiple_independent_ctes_render_comma_separated() {
     assert_eq!(
         sql,
         "WITH \"big_orders\" (\"id\", \"total\") AS (SELECT \"orders\".\"id\", \"orders\".\"total\" FROM \"orders\" WHERE (\"orders\".\"total\" > $1)), \
-         \"small_orders\" (\"id\", \"total\") AS (SELECT \"orders\".\"id\", \"orders\".\"total\" FROM \"orders\" WHERE (\"orders\".\"total\" <= $2)) \
+         \"small_orders\" (\"id\", \"total\") AS (SELECT \"orders\".\"id\", \"orders\".\"total\" FROM \"orders\" WHERE (\"orders\".\"total\" <= $1)) \
          SELECT \"big_orders\".\"id\", \"small_orders\".\"id\" FROM \"big_orders\" INNER JOIN \"small_orders\" ON (\"small_orders\".\"id\" = \"big_orders\".\"id\")"
     );
 }

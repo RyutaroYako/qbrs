@@ -254,7 +254,7 @@ fn insert_bulk_and_returning() {
         .to_sql(Postgres);
     assert_eq!(
         sql,
-        "INSERT INTO \"users\" (\"email\", \"display_name\", \"created_at\") VALUES ($1, $2, DEFAULT), ($3, $4, DEFAULT) RETURNING \"users\".\"id\""
+        "INSERT INTO \"users\" (\"email\", \"display_name\", \"created_at\") VALUES ($1, $2, DEFAULT), ($3, $2, DEFAULT) RETURNING \"users\".\"id\""
     );
 }
 
@@ -270,9 +270,9 @@ fn values_all_appends_to_a_statement_that_already_has_a_row() {
         .to_sql(Postgres);
     assert_eq!(
         sql,
-        "INSERT INTO \"users\" (\"email\", \"display_name\", \"created_at\") VALUES ($1, $2, DEFAULT), ($3, $4, DEFAULT), ($5, $6, DEFAULT)"
+        "INSERT INTO \"users\" (\"email\", \"display_name\", \"created_at\") VALUES ($1, $2, DEFAULT), ($3, $2, DEFAULT), ($4, $2, DEFAULT)"
     );
-    assert_eq!(params.len(), 6);
+    assert_eq!(params.len(), 4);
 }
 
 #[test]

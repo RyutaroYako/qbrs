@@ -34,7 +34,12 @@ fn a_nullable_defaulted_column_says_its_three_states_apart() {
     // Omitted: the schema's default. `None`: the same, since that is what a
     // request field without a value means. `_null()`: an explicit NULL.
     let omitted = qbrs::insert::insert(users::Table)
-        .values(UsersInsert::builder().email("a@example.com").build())
+        .values(
+            UsersInsert::builder()
+                .email("a@example.com")
+                .display_name("Ada")
+                .build(),
+        )
         .to_sql(Postgres)
         .0;
     assert!(
@@ -47,6 +52,7 @@ fn a_nullable_defaulted_column_says_its_three_states_apart() {
         .values(
             UsersInsert::builder()
                 .email("a@example.com")
+                .display_name("Ada")
                 .nickname(absent)
                 .build(),
         )
@@ -61,6 +67,7 @@ fn a_nullable_defaulted_column_says_its_three_states_apart() {
         .values(
             UsersInsert::builder()
                 .email("a@example.com")
+                .display_name("Ada")
                 .nickname_null()
                 .build(),
         )

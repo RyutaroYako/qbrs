@@ -210,6 +210,48 @@ impl Value {
             Value::Numeric(_) | Value::NullNumeric => "Numeric",
         }
     }
+
+    /// A hash of this value, for finding the parameter a statement already
+    /// bound it to. Not a `Hash` impl: `f64` has no `Eq`, so `-0.0` and
+    /// `0.0` are one value to `==` and two bit patterns here, which breaks
+    /// the contract a `Hash` impl owes its callers. The only caller is
+    /// `render::QuerySink`, which verifies a candidate with `==` and at
+    /// worst binds a second parameter.
+    pub(crate) fn hash_key(&self) -> u64 {
+        use std::hash::{Hash, Hasher};
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        std::mem::discriminant(self).hash(&mut hasher);
+        match self {
+            Value::I32(v) => v.hash(&mut hasher),
+            Value::I64(v) => v.hash(&mut hasher),
+            Value::F64(v) => v.to_bits().hash(&mut hasher),
+            Value::Text(v) => v.hash(&mut hasher),
+            Value::Bool(v) => v.hash(&mut hasher),
+            Value::Bytes(v) => v.hash(&mut hasher),
+            Value::Placeholder(v) => v.hash(&mut hasher),
+            #[cfg(feature = "chrono")]
+            Value::Timestamptz(v) => v.hash(&mut hasher),
+            #[cfg(feature = "chrono")]
+            Value::Date(v) => v.hash(&mut hasher),
+            #[cfg(feature = "uuid")]
+            Value::Uuid(v) => v.hash(&mut hasher),
+            #[cfg(feature = "decimal")]
+            Value::Numeric(v) => v.hash(&mut hasher),
+            Value::NullI32
+            | Value::NullI64
+            | Value::NullF64
+            | Value::NullText
+            | Value::NullBool
+            | Value::NullBytes => {}
+            #[cfg(feature = "chrono")]
+            Value::NullTimestamptz | Value::NullDate => {}
+            #[cfg(feature = "uuid")]
+            Value::NullUuid => {}
+            #[cfg(feature = "decimal")]
+            Value::NullNumeric => {}
+        }
+        hasher.finish()
+    }
 }
 
 macro_rules! value_from {
