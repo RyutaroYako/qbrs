@@ -505,6 +505,32 @@ fn a_bind_carrying_expression_reused_across_clauses_keeps_one_placeholder() {
     assert_eq!(params, vec![qbrs_core::expr::Value::I32(10)]);
 }
 
+/// `1.0` and `1.00` are one value to `Decimal`'s `==` and two to a
+/// `numeric` column, which keeps the scale it was handed. Sharing one
+/// parameter between them would bind the first one twice.
+#[cfg(feature = "decimal")]
+#[test]
+fn two_decimals_of_the_same_value_and_different_scale_bind_separately() {
+    use std::str::FromStr as _;
+    let one_dp = rust_decimal::Decimal::from_str("1.0").expect("a decimal");
+    let two_dp = rust_decimal::Decimal::from_str("1.00").expect("a decimal");
+    assert_eq!(one_dp, two_dp);
+
+    let (sql, params) = select((users::id,))
+        .from(users::Table)
+        .filter(qbrs_core::sql!(
+            Bool,
+            "(? = ? OR ? = ?)",
+            one_dp,
+            two_dp,
+            one_dp,
+            one_dp
+        ))
+        .to_sql(Postgres);
+    assert!(sql.ends_with("WHERE (($1 = $2 OR $1 = $1))"), "{sql}");
+    assert_eq!(params.len(), 2);
+}
+
 #[test]
 fn raw_sql_escape_hatch_renders_and_renumbers_params() {
     let q = select((users::id,))

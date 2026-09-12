@@ -47,9 +47,11 @@ pub trait Dialect: 'static + Copy + Default + private::Sealed {
     /// statement. It follows from how the dialect spells a placeholder:
     /// Postgres's `$N` names a parameter, so repeating `$1` is repeating one
     /// value, while `?` *is* the next parameter, so a second one consumes a
-    /// second value. Repeating a parameter is what makes an expression
-    /// bound to a value render identically wherever it recurs, which
-    /// Postgres's `GROUP BY` matching requires.
+    /// second value. Naming one again keeps a statement's parameters down to
+    /// the values it actually holds, at the cost of a rendered text that
+    /// depends on which of them are equal: a driver caching prepared
+    /// statements by SQL text sees a bulk `INSERT` as one statement per
+    /// repetition pattern, as it already sees one per row count.
     const PLACEHOLDERS_ARE_NUMBERED: bool = false;
 
     /// Writes the placeholder for the `n`th bound parameter (1-indexed).

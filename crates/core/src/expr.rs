@@ -211,32 +211,48 @@ impl Value {
         }
     }
 
-    /// A hash of this value, for finding the parameter a statement already
-    /// bound it to. Not a `Hash` impl: `f64` has no `Eq`, so `-0.0` and
-    /// `0.0` are one value to `==` and two bit patterns here, which breaks
-    /// the contract a `Hash` impl owes its callers. The only caller is
-    /// `render::QuerySink`, which verifies a candidate with `==` and at
-    /// worst binds a second parameter.
-    pub(crate) fn hash_key(&self) -> u64 {
-        use std::hash::{Hash, Hasher};
-        let mut hasher = std::collections::hash_map::DefaultHasher::new();
-        std::mem::discriminant(self).hash(&mut hasher);
-        match self {
-            Value::I32(v) => v.hash(&mut hasher),
-            Value::I64(v) => v.hash(&mut hasher),
-            Value::F64(v) => v.to_bits().hash(&mut hasher),
-            Value::Text(v) => v.hash(&mut hasher),
-            Value::Bool(v) => v.hash(&mut hasher),
-            Value::Bytes(v) => v.hash(&mut hasher),
-            Value::Placeholder(v) => v.hash(&mut hasher),
-            #[cfg(feature = "chrono")]
-            Value::Timestamptz(v) => v.hash(&mut hasher),
-            #[cfg(feature = "chrono")]
-            Value::Date(v) => v.hash(&mut hasher),
-            #[cfg(feature = "uuid")]
-            Value::Uuid(v) => v.hash(&mut hasher),
+    /// Whether these two values reach the database as the same parameter.
+    /// Not `==`, which calls values equal that a column then stores apart:
+    /// a `Decimal` compares by numeric value while Postgres's `numeric`
+    /// keeps the scale it was handed, so `1.0` and `1.00` are equal and are
+    /// stored as written; `0.0 == -0.0` while `double precision` keeps the
+    /// sign. Sharing a parameter between two such values would bind the
+    /// first one twice.
+    pub(crate) fn binds_same_as(&self, other: &Value) -> bool {
+        match (self, other) {
+            (Value::F64(a), Value::F64(b)) => a.to_bits() == b.to_bits(),
             #[cfg(feature = "decimal")]
-            Value::Numeric(v) => v.hash(&mut hasher),
+            (Value::Numeric(a), Value::Numeric(b)) => a.serialize() == b.serialize(),
+            _ => self == other,
+        }
+    }
+
+    /// Hashes what `binds_same_as` compares, so a statement can bucket the
+    /// parameters it holds. Not a `Hash` impl: it answers `binds_same_as`,
+    /// which is finer than `PartialEq`, and a `Hash` disagreeing with
+    /// `PartialEq` breaks the contract one owes its callers. The caller
+    /// supplies the hasher so the bucketing is keyed by the map's own
+    /// `RandomState` — with a fixed seed, colliding text chosen by whoever
+    /// supplies the values would walk the bucket the index exists to avoid.
+    pub(crate) fn hash_into<H: std::hash::Hasher>(&self, hasher: &mut H) {
+        use std::hash::Hash as _;
+        std::mem::discriminant(self).hash(hasher);
+        match self {
+            Value::I32(v) => v.hash(hasher),
+            Value::I64(v) => v.hash(hasher),
+            Value::F64(v) => v.to_bits().hash(hasher),
+            Value::Text(v) => v.hash(hasher),
+            Value::Bool(v) => v.hash(hasher),
+            Value::Bytes(v) => v.hash(hasher),
+            Value::Placeholder(v) => v.hash(hasher),
+            #[cfg(feature = "chrono")]
+            Value::Timestamptz(v) => v.hash(hasher),
+            #[cfg(feature = "chrono")]
+            Value::Date(v) => v.hash(hasher),
+            #[cfg(feature = "uuid")]
+            Value::Uuid(v) => v.hash(hasher),
+            #[cfg(feature = "decimal")]
+            Value::Numeric(v) => v.serialize().hash(hasher),
             Value::NullI32
             | Value::NullI64
             | Value::NullF64
@@ -250,7 +266,6 @@ impl Value {
             #[cfg(feature = "decimal")]
             Value::NullNumeric => {}
         }
-        hasher.finish()
     }
 }
 

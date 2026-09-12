@@ -17,21 +17,55 @@ pub(crate) trait Sink {
     fn bind(&mut self, value: &Value);
 }
 
-/// Builds a finished statement, numbering each parameter as it arrives. A
-/// dialect whose placeholders are numbered reuses the number a value
-/// already has, so an expression carrying binds renders the same text
-/// everywhere it recurs in one statement — which is what lets a `sql!{}`
+/// The parameters a statement has already bound, so a value bound again is
+/// named again rather than bound twice. Bucketed by hash and confirmed with
+/// `Value::binds_same_as`, since `Value` has no `Eq` to key a map on and
+/// `==` is too coarse to share a parameter on. A dialect whose placeholders
+/// are positional has no way to name a parameter twice, and so has no
+/// `BoundValues` at all rather than an index it never reads.
+struct BoundValues {
+    by_key: std::collections::HashMap<u64, Vec<usize>>,
+}
+
+impl BoundValues {
+    fn new() -> Self {
+        BoundValues {
+            by_key: std::collections::HashMap::new(),
+        }
+    }
+
+    fn key(&self, value: &Value) -> u64 {
+        use std::hash::{BuildHasher as _, Hasher as _};
+        let mut hasher = self.by_key.hasher().build_hasher();
+        value.hash_into(&mut hasher);
+        hasher.finish()
+    }
+
+    /// The 1-based position of a parameter already holding this value.
+    fn position_in(&self, params: &[Value], value: &Value) -> Option<usize> {
+        self.by_key
+            .get(&self.key(value))?
+            .iter()
+            .find(|&&i| params[i].binds_same_as(value))
+            .map(|&i| i + 1)
+    }
+
+    fn record(&mut self, index: usize, value: &Value) {
+        let key = self.key(value);
+        self.by_key.entry(key).or_default().push(index);
+    }
+}
+
+/// Builds a finished statement, numbering each parameter as it arrives.
+/// Where the dialect numbers them, a value already bound is named again
+/// instead — so an expression carrying binds renders the same text
+/// everywhere it recurs in one statement, which is what lets a `sql!{}`
 /// fragment be selected and grouped by.
 #[doc(hidden)]
 pub struct QuerySink<D> {
     sql: String,
     params: Vec<Value>,
-    /// Which parameters hold which value, so a value bound again is named
-    /// again rather than re-bound. Bucketed by `Value::hash_key` and
-    /// confirmed with `==`, since `Value` has no `Eq` to key a map on.
-    /// Stays empty under a dialect whose placeholders are positional, where
-    /// there is no naming a parameter twice.
-    bound: std::collections::HashMap<u64, Vec<usize>>,
+    bound: Option<BoundValues>,
     _dialect: std::marker::PhantomData<fn() -> D>,
 }
 
@@ -40,7 +74,7 @@ impl<D: Dialect> QuerySink<D> {
         QuerySink {
             sql: String::new(),
             params: Vec::new(),
-            bound: std::collections::HashMap::new(),
+            bound: D::PLACEHOLDERS_ARE_NUMBERED.then(BoundValues::new),
             _dialect: std::marker::PhantomData,
         }
     }
@@ -49,26 +83,11 @@ impl<D: Dialect> QuerySink<D> {
         (self.sql, self.params)
     }
 
-    /// The 1-based position of a parameter already holding this value.
-    fn position_of(&self, value: &Value) -> Option<usize> {
-        if !D::PLACEHOLDERS_ARE_NUMBERED {
-            return None;
-        }
-        self.bound
-            .get(&value.hash_key())?
-            .iter()
-            .find(|&&i| self.params[i] == *value)
-            .map(|&i| i + 1)
-    }
-
     /// Appends a parameter, returning its 1-based position.
     fn push_param(&mut self, value: &Value) -> usize {
         self.params.push(value.clone());
-        if D::PLACEHOLDERS_ARE_NUMBERED {
-            self.bound
-                .entry(value.hash_key())
-                .or_default()
-                .push(self.params.len() - 1);
+        if let Some(bound) = &mut self.bound {
+            bound.record(self.params.len() - 1, value);
         }
         self.params.len()
     }
@@ -82,7 +101,11 @@ impl<D: Dialect> Sink for QuerySink<D> {
         self.sql.push(c);
     }
     fn bind(&mut self, value: &Value) {
-        let n = match self.position_of(value) {
+        let already = self
+            .bound
+            .as_ref()
+            .and_then(|bound| bound.position_in(&self.params, value));
+        let n = match already {
             Some(n) => n,
             None => self.push_param(value),
         };

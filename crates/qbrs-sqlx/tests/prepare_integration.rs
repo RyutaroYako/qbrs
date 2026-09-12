@@ -80,6 +80,39 @@ async fn prepared_query_reused_across_different_params() {
         .expect("load for dan");
     assert_eq!(dan, vec![ids[1]]);
 
+    // A placeholder named from two clauses is one parameter in the rendered
+    // statement, so `resolve` has one slot to fill where the query has two
+    // occurrences. Postgres says whether the numbering and the substituted
+    // list still line up.
+    let twice = select(users::id)
+        .from(users::Table)
+        .filter(users::email.eq(ByEmail::email()))
+        .filter(users::email.gte(ByEmail::email()))
+        .prepare::<ByEmail, _>(Postgres);
+    let (sql, params) = twice
+        .resolve(ByEmail {
+            email: "ada@example.com".to_string(),
+        })
+        .expect("every placeholder resolved");
+    assert!(
+        sql.ends_with(
+            r#"WHERE ("users_prepare_test"."email" = $1) AND ("users_prepare_test"."email" >= $1)"#
+        ),
+        "{sql}"
+    );
+    assert_eq!(params.len(), 1);
+
+    let ada_again: Vec<i64> = twice
+        .load(
+            &pool,
+            ByEmail {
+                email: "ada@example.com".to_string(),
+            },
+        )
+        .await
+        .expect("load through a placeholder named twice");
+    assert_eq!(ada_again, vec![ids[0]]);
+
     sqlx::query("DROP TABLE users_prepare_test")
         .execute(&pool)
         .await
