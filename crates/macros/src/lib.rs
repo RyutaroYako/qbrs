@@ -316,10 +316,22 @@ fn gen_schema_mod(
     }
 
     let col_names: Vec<_> = columns.iter().map(|c| c.field_name.clone()).collect();
-    let column_list = col_names.iter().rev().fold(
-        quote! { ::qbrs::scope::Nil },
-        |tail, name| quote! { ::qbrs::scope::Cons<::qbrs::expr::Column<columns::#name>, #tail> },
-    );
+    let cons_list = |names: &[proc_macro2::Ident]| {
+        names.iter().rev().fold(
+            quote! { ::qbrs::scope::Nil },
+            |tail, name| quote! { ::qbrs::scope::Cons<::qbrs::expr::Column<columns::#name>, #tail> },
+        )
+    };
+    let column_list = cons_list(&col_names);
+    // What an `INSERT` may name: a generated column is the database's to
+    // write, and naming one is an error it raises rather than a value it
+    // takes.
+    let written_names: Vec<_> = columns
+        .iter()
+        .filter(|c| !c.generated)
+        .map(|c| c.field_name.clone())
+        .collect();
+    let written_list = cons_list(&written_names);
     // The row `select(<table>::All)` decodes to with the table joined
     // not-null — the one type a stored `Prepared`/`DynSelect` field would
     // otherwise have to spell by hand.
@@ -378,6 +390,10 @@ fn gen_schema_mod(
 
             impl ::qbrs::select::AllColumns for Table {
                 type Columns = #column_list;
+            }
+
+            impl ::qbrs::insert::WrittenColumns for Table {
+                type Columns = #written_list;
             }
         }
 

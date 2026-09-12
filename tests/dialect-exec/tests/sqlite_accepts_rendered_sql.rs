@@ -20,6 +20,16 @@ struct Users {
 }
 
 #[derive(Table)]
+#[table(name = "archived_orders")]
+#[allow(dead_code)]
+struct ArchivedOrders {
+    #[column(primary_key, generated)]
+    id: i64,
+    user_id: i64,
+    total: i64,
+}
+
+#[derive(Table)]
 #[table(name = "orders")]
 #[allow(dead_code)]
 struct Orders {
@@ -40,6 +50,7 @@ async fn schema() -> SqlitePool {
     for ddl in [
         "CREATE TABLE users (id INTEGER PRIMARY KEY AUTOINCREMENT, email TEXT NOT NULL UNIQUE, display_name TEXT)",
         "CREATE TABLE orders (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER NOT NULL, total INTEGER NOT NULL)",
+        "CREATE TABLE archived_orders (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER NOT NULL, total INTEGER NOT NULL)",
         // A partial unique index, so a conflict target carrying an index
         // predicate has something to be inferred against.
         "CREATE UNIQUE INDEX users_named ON users (display_name) WHERE display_name IS NOT NULL",
@@ -652,6 +663,32 @@ async fn sqlite_executes_every_rendered_statement_shape() {
     )
     .await;
     assert_eq!(mixed.len(), 1);
+
+    // `INSERT INTO t (..) SELECT ..` into a table of its own, so the rows
+    // it copies can be counted rather than the statement merely parsed.
+    // The source query's bind is numbered by the statement it lands in.
+    run(
+        &pool,
+        insert(archived_orders::Table)
+            .select(
+                &select((orders::user_id, orders::total))
+                    .from(orders::Table)
+                    .filter(orders::total.gt(50i64)),
+            )
+            .to_sql(Sqlite),
+    )
+    .await;
+    let archived = run(
+        &pool,
+        select((archived_orders::total,))
+            .from(archived_orders::Table)
+            .to_sql(Sqlite),
+    )
+    .await;
+    assert!(
+        archived.iter().all(|row| row.get::<i64, _>(0) > 50),
+        "only the orders over 50 should have been copied"
+    );
 
     let in_list = run(
         &pool,
