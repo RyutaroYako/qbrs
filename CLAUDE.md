@@ -46,7 +46,9 @@ built, from GitHub Releases into `~/.cache/pglite-rs`. That directory is outside
 cargo tracks, while `target/` records the absolute path into it, which is why CI caches the
 two together. Set `DATABASE_URL` to run the same tests/examples against an external Postgres
 instead — integration tests are written to be idempotent (`DROP TABLE IF EXISTS` first) so
-they work against a persistent server too.
+they work against a persistent server too. No two of them name the same table, which is
+what lets them run at once against the one server `DATABASE_URL` points at; a new test
+brings its own table names.
 
 `initdb` is what makes a cold run slow — bootstrapping the template databases costs about
 seven seconds, against a fifth of a second for everything else a test does. So it runs once
@@ -54,10 +56,11 @@ per `target/`, into `target/tmp/pg-template`, which every test and example then 
 (`tests/embedded-pg`): `pglite-rs` skips `initdb` when the data directory it is handed
 already has a `PG_VERSION` in it. Concurrent binaries each build one and publish it by
 renaming onto the shared path, which fails for all but the first — no lock, and nothing to
-go stale but the template itself. That one case is a `pglite-rs` bump that moves the
-PostgreSQL major: the server then refuses the old data directory outright, and
-`rm -rf target/tmp/pg-template` is the fix. CI keys its cache of that directory on
-`Cargo.lock` with no `restore-keys`, so it never gets there.
+go stale but the template itself — a `pglite-rs` bump that moves the PostgreSQL major
+leaves copies the new server refuses. That is why a copy which fails to start discards the
+template and builds it again rather than reporting: it is a cache of what `initdb` wrote,
+and there is nothing else the failure can mean. CI keys its cache of the directory on
+`Cargo.lock` with no `restore-keys` besides.
 
 The embedded-server guard value must stay bound for the whole test/example body
 (`let (pool, _db) = setup_db().await;`) — dropping it kills the postmaster out from under

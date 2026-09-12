@@ -18,6 +18,12 @@ concurrency:
 env:
   CARGO_TERM_COLOR: always
 
+# Nothing here writes to the repository, and a third-party action runs in the
+# job — `taiki-e/install-action` — which reaches `github.token` whether or not
+# it is handed one. Unlisted permissions are dropped.
+permissions:
+  contents: read
+
 jobs:
   check:
     runs-on: ubuntu-latest

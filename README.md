@@ -304,7 +304,7 @@ makes `Defaultable::Default` unusable there.
 
 ```sh
 cargo test --workspace --all-features
-cargo nextest run --workspace --all-features   # the same tests, in parallel
+cargo nextest run --workspace --all-features   # all but the doctests, in parallel
 ```
 
 No setup required: the real-DB tests start their own throwaway PostgreSQL
