@@ -4,9 +4,20 @@
 
 mod common;
 
-use futures_util::StreamExt as _;
 use qbrs::prelude::*;
+// `StreamExt::next` comes from the same prelude the terminal does, so a
+// caller needs no `futures` dependency of their own.
 use qbrs_sqlx::prelude::*;
+
+#[derive(Table)]
+#[table(name = "readings_stream_drop")]
+#[allow(dead_code)]
+struct ReadingsStreamDrop {
+    #[column(primary_key, generated)]
+    id: i64,
+    label: String,
+    value: i64,
+}
 
 #[derive(Table)]
 #[table(name = "readings_stream")]
@@ -106,5 +117,86 @@ async fn a_stream_yields_the_rows_load_would_have_collected() {
     assert_eq!(bumped_values, vec![0i64, 1, 2]);
     drop(bumped);
 
+    common::shutdown(pool, guard).await;
+}
+
+/// A stream holds its connection until it ends — dropped early, the
+/// connection goes back. Only a pool with one connection in it says so.
+#[tokio::test]
+async fn a_stream_dropped_early_gives_its_connection_back() {
+    let (pool, guard) = common::test_pool("qbrs_stream_drop").await;
+    let one_at_a_time = sqlx::postgres::PgPoolOptions::new()
+        .max_connections(1)
+        .acquire_timeout(std::time::Duration::from_secs(5))
+        .connect_with(pool.connect_options().as_ref().clone())
+        .await
+        .expect("a pool of one");
+
+    sqlx::query("DROP TABLE IF EXISTS readings_stream_drop")
+        .execute(&one_at_a_time)
+        .await
+        .expect("drop the table");
+    sqlx::query(
+        "CREATE TABLE readings_stream_drop (
+            id BIGSERIAL PRIMARY KEY,
+            label TEXT NOT NULL,
+            value BIGINT NOT NULL
+        )",
+    )
+    .execute(&one_at_a_time)
+    .await
+    .expect("create the table");
+    qbrs::insert::insert(readings_stream_drop::Table)
+        .values_all((0..50i64).map(|n| {
+            ReadingsStreamDropInsert::builder()
+                .label(format!("row-{n}"))
+                .value(n)
+                .build()
+        }))
+        .expect("fifty rows")
+        .execute(&one_at_a_time)
+        .await
+        .expect("seed the rows");
+
+    let query = select(readings_stream_drop::value)
+        .from(readings_stream_drop::Table)
+        .order_by(readings_stream_drop::value.asc());
+
+    let mut rows = query.stream(&one_at_a_time).expect("open the stream");
+    let first = rows.next().await.expect("a row").expect("decode it");
+    assert_eq!(first, 0);
+    drop(rows);
+
+    // The only connection there is has to be free again.
+    let all = query
+        .load(&one_at_a_time)
+        .await
+        .expect("the pool's one connection is back");
+    assert_eq!(all.len(), 50);
+
+    // A `UNION` streams for the same reason a `SELECT` does: the terminal
+    // is cut by what a statement produces.
+    let low = select((readings_stream_drop::value,))
+        .from(readings_stream_drop::Table)
+        .filter(readings_stream_drop::value.lt(2i64));
+    let high = select((readings_stream_drop::value,))
+        .from(readings_stream_drop::Table)
+        .filter(readings_stream_drop::value.gte(48i64));
+    let mut both = low
+        .union(&high)
+        .stream(&one_at_a_time)
+        .expect("open the union stream");
+    let mut values = Vec::new();
+    while let Some(row) = both.next().await {
+        values.push(
+            *row.expect("decode a union row")
+                .get(readings_stream_drop::value),
+        );
+    }
+    drop(both);
+    values.sort_unstable();
+    assert_eq!(values, vec![0, 1, 48, 49]);
+
+    one_at_a_time.close().await;
     common::shutdown(pool, guard).await;
 }

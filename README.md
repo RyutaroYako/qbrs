@@ -271,6 +271,7 @@ Design constraints worth knowing before adopting:
 | Dialect capability gating (`RETURNING`, `ON CONFLICT`, `RIGHT`/`FULL JOIN`) |    ✅    |   ✅    |   ✅    |
 | Execution (via `qbrs-sqlx`)                                                 |    ✅    | not yet | not yet |
 | Transactions (via `qbrs-sqlx`)                                              |    ✅    | not yet | not yet |
+| Streaming (`.stream(..)`, via `qbrs-sqlx`)                                  |    ✅    | not yet | not yet |
 
 MySQL is rendered and asserted as strings only, so its dialect differences are
 caught only where someone thought to look. One known difference: `DEFAULT` in

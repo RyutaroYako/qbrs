@@ -34,7 +34,6 @@ default-features = false
 features = ["postgres", "runtime-tokio", "tls-rustls"]
 
 [dev-dependencies]
-futures-util = { version = "0.3", default-features = false }
 pglite-rs = { version = "0.2.7", features = ["multiple-process"] }
 qbrs = { path = "../qbrs" }
 tempfile = "3.27.0"

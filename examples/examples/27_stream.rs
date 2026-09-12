@@ -4,9 +4,9 @@
 //! held until the stream ends; what this bounds is the client's memory.
 //! Run: `cargo run -p qbrs-examples --example 27_stream`
 
-use futures_util::StreamExt as _;
 use qbrs::prelude::*;
 use qbrs_examples::*;
+// `StreamExt::next` comes from the same prelude `.stream(..)` does.
 use qbrs_sqlx::prelude::*;
 
 #[tokio::main]

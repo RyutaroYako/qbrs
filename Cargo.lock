@@ -1120,7 +1120,6 @@ dependencies = [
 name = "qbrs-examples"
 version = "0.2.0"
 dependencies = [
- "futures-util",
  "pglite-rs",
  "qbrs",
  "qbrs-sqlx",
