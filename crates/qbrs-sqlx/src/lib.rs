@@ -3,6 +3,10 @@
 //! query building, SQL rendering, and every compile-time guarantee live in
 //! `qbrs-core`, which stays independent of any async runtime or driver.
 
+/// Re-exported so a caller can name what `LoadExt::stream` returns without
+/// taking a `futures` dependency of their own. `StreamExt::next` still
+/// comes from theirs.
+pub use futures_util::Stream;
 use qbrs_core::delete::Delete;
 use qbrs_core::dialect::Postgres;
 use qbrs_core::expr::Value;
@@ -65,7 +69,7 @@ pub mod prelude {
     pub use crate::Error;
     pub use crate::{
         CountExt, CountQuery, DecodeRow, ExecuteExt, LoadExt, PreparedCountExt, PreparedExt,
-        PreparedQuery, PreparedTotal, RowQuery, WriteStatement,
+        PreparedQuery, PreparedTotal, RowQuery, Stream, WriteStatement,
     };
 }
 
@@ -167,6 +171,20 @@ async fn fetch_optional<'e, T: DecodeRow, E: sqlx::PgExecutor<'e>>(
         .transpose()
 }
 
+/// The streaming counterpart: rows are decoded as they arrive rather than
+/// collected first. The query owns its SQL and its binds, so the stream
+/// borrows only the executor.
+fn fetch_stream<'e, T: DecodeRow + 'e, E: sqlx::PgExecutor<'e>>(
+    executor: E,
+    sql: String,
+    params: Vec<Value>,
+) -> Result<impl Stream<Item = Result<T>> + 'e> {
+    let query = bind_all(sqlx::query(sqlx::AssertSqlSafe(sql)), params)?;
+    Ok(futures_util::StreamExt::map(query.fetch(executor), |row| {
+        T::decode_at(&row?, &mut 0).map_err(Error::from)
+    }))
+}
+
 async fn execute_only<'e, E: sqlx::PgExecutor<'e>>(
     executor: E,
     sql: &str,
@@ -232,6 +250,31 @@ pub trait LoadExt {
     {
         let (sql, params) = self.rendered();
         async move { fetch_optional::<<Self as RowQuery<Idx>>::Output, E>(executor, &sql, params).await }
+    }
+
+    /// The rows one at a time, for a result too large to hold: an export
+    /// that writes as it reads rather than collecting first. Yields the
+    /// same values `.load(..)` would, decoded as each row arrives.
+    ///
+    /// Not a cursor: the server still produces the whole result, and the
+    /// connection is held until the stream is dropped or exhausted. What
+    /// this bounds is the client's memory, which is what a `Vec` of every
+    /// row costs.
+    ///
+    /// Returns a `Result` around the stream rather than as its first item,
+    /// because the one thing that can fail before a row arrives —
+    /// an unresolved `prepare!{}` placeholder — is a misuse rather than a
+    /// row that didn't decode.
+    fn stream<'e, Idx, E: sqlx::PgExecutor<'e>>(
+        &self,
+        executor: E,
+    ) -> Result<impl Stream<Item = Result<<Self as RowQuery<Idx>>::Output>> + 'e>
+    where
+        Self: RowQuery<Idx>,
+        <Self as RowQuery<Idx>>::Output: 'e,
+    {
+        let (sql, params) = self.rendered();
+        fetch_stream::<<Self as RowQuery<Idx>>::Output, E>(executor, sql, params)
     }
 }
 

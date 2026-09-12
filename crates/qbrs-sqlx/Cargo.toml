@@ -21,6 +21,9 @@ decimal = ["qbrs-core/decimal", "sqlx/rust_decimal", "dep:rust_decimal"]
 [dependencies]
 qbrs-core.workspace = true
 thiserror = "2"
+# The `Stream` trait `.stream()` returns, and the one adapter that maps a
+# row to what it decodes to. Already in the tree under `sqlx`.
+futures-util = { version = "0.3", default-features = false }
 chrono = { version = "0.4", default-features = false, features = ["std"], optional = true }
 uuid = { version = "1", default-features = false, optional = true }
 rust_decimal = { version = "1", default-features = false, optional = true }
@@ -31,6 +34,7 @@ default-features = false
 features = ["postgres", "runtime-tokio", "tls-rustls"]
 
 [dev-dependencies]
+futures-util = { version = "0.3", default-features = false }
 pglite-rs = { version = "0.2.7", features = ["multiple-process"] }
 qbrs = { path = "../qbrs" }
 tempfile = "3.27.0"

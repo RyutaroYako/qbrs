@@ -11,3 +11,4 @@ sqlx = { version = "0.9", default-features = false, features = ["postgres", "run
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 pglite-rs = { version = "0.2.7", features = ["multiple-process"] }
 tempfile = "3.27.0"
+futures-util = { version = "0.3", default-features = false }

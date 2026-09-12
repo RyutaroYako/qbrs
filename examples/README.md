@@ -65,3 +65,4 @@ DATABASE_URL=postgres://postgres:postgres@localhost:5432/qbrs_test \
 | [`24_arrays`](examples/24_arrays.rs) | Postgres array columns — `Vec<T>` as `TEXT[]`/`INTEGER[]`/`BIGINT[]`/`UUID[]`, an empty array against a NULL one, and `sql!{}` for the operators |
 | [`25_insert_select`](examples/25_insert_select.rs) | `INSERT INTO t (..) SELECT ..` — an archival copy, the target's columns checked against the query by `SameShape` |
 | [`26_no_from`](examples/26_no_from.rs) | `SELECT` with no `FROM` — an advisory lock and a computed row, where naming a column has nowhere to resolve |
+| [`27_stream`](examples/27_stream.rs) | `.stream(..)` — the rows one at a time for an export too large to collect, holding one batch rather than the whole result |
