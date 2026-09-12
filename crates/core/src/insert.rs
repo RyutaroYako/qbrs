@@ -16,7 +16,7 @@ use std::marker::PhantomData;
 
 use crate::dialect::{Dialect, SupportsOnConflict};
 use crate::expr::{AssignsTo, Column, ColumnKey, Expr, ExprKind, IntoExpr, Value, Writable};
-use crate::render::{QuerySink, Sink, render_ident};
+use crate::render::{Sink, render_ident};
 use crate::scope::{BaseTable, Cons, Nil, NotNull, Superset, Table, TableSlot};
 use crate::select::{Condition, Predicate};
 use crate::statement::{Statement, WrittenTable};
@@ -666,20 +666,18 @@ impl<D: Dialect, T: Table> crate::statement::private::Sealed for InsertSelect<D,
 impl<D: Dialect, T: Table> Statement for InsertSelect<D, T> {
     type Dialect = D;
     type Table = T;
-    fn render(&self) -> QuerySink<D> {
-        let mut sink = QuerySink::<D>::new();
+    fn render_into(&self, sink: &mut dyn Sink) {
         sink.text("INSERT INTO ");
-        render_ident::<D>(&mut sink, T::NAME);
+        render_ident::<D>(sink, T::NAME);
         sink.text(" (");
         for (i, name) in self.header.iter().enumerate() {
             if i > 0 {
                 sink.text(", ");
             }
-            render_ident::<D>(&mut sink, name);
+            render_ident::<D>(sink, name);
         }
         sink.text(") ");
-        self.body.splice_into(&mut sink);
-        sink
+        self.body.splice_into(sink);
     }
 }
 
@@ -698,12 +696,12 @@ impl std::fmt::Display for NothingToInsert {
 impl std::error::Error for NothingToInsert {}
 
 fn render_values_clause<D: Dialect, R: InsertRow>(
+    sink: &mut dyn Sink,
     rows: &[Vec<InsertValue>],
     on_conflict: &Option<ConflictClause<D, R::Table>>,
-) -> QuerySink<D> {
-    let mut sink = QuerySink::<D>::new();
+) {
     sink.text("INSERT INTO ");
-    render_ident::<D>(&mut sink, <R::Table as Table>::NAME);
+    render_ident::<D>(sink, <R::Table as Table>::NAME);
 
     // Header and values come from one chain, so a row has exactly one cell
     // per column named — no reconciliation, nothing to drop.
@@ -717,9 +715,9 @@ fn render_values_clause<D: Dialect, R: InsertRow>(
     if header.is_empty() {
         sink.text(D::INSERT_NO_COLUMNS);
         if let Some(clause) = on_conflict {
-            render_conflict_clause::<D, _>(clause, &mut sink);
+            render_conflict_clause::<D, _>(clause, sink);
         }
-        return sink;
+        return;
     }
 
     sink.text(" (");
@@ -727,7 +725,7 @@ fn render_values_clause<D: Dialect, R: InsertRow>(
         if i > 0 {
             sink.text(", ");
         }
-        render_ident::<D>(&mut sink, name);
+        render_ident::<D>(sink, name);
     }
     sink.text(") VALUES ");
 
@@ -749,10 +747,8 @@ fn render_values_clause<D: Dialect, R: InsertRow>(
     }
 
     if let Some(clause) = on_conflict {
-        render_conflict_clause::<D, _>(clause, &mut sink);
+        render_conflict_clause::<D, _>(clause, sink);
     }
-
-    sink
 }
 
 pub struct Insert<D, R: InsertRow> {
@@ -817,7 +813,7 @@ impl<D: Dialect, R: InsertRow> crate::statement::private::Sealed for Insert<D, R
 impl<D: Dialect, R: InsertRow> Statement for Insert<D, R> {
     type Dialect = D;
     type Table = R::Table;
-    fn render(&self) -> QuerySink<D> {
-        render_values_clause::<D, R>(&self.rows, &self.on_conflict)
+    fn render_into(&self, sink: &mut dyn Sink) {
+        render_values_clause::<D, R>(sink, &self.rows, &self.on_conflict);
     }
 }

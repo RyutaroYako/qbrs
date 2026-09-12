@@ -69,3 +69,4 @@ DATABASE_URL=postgres://postgres:postgres@localhost:5432/qbrs_test \
 | [`26_no_from`](examples/26_no_from.rs) | `SELECT` with no `FROM` — an advisory lock and a computed row, where naming a column has nowhere to resolve |
 | [`27_stream`](examples/27_stream.rs) | `.stream(..)` — the rows one at a time for an export too large to collect, holding one batch rather than the whole result |
 | [`28_json`](examples/28_json.rs) | a `JSON`/`JSONB` column as `serde_json::Value` — carried whole, with `sql!{}` for the operators that look inside one |
+| [`29_data_modifying_cte`](examples/29_data_modifying_cte.rs) | `WITH x AS (UPDATE .. RETURNING ..) SELECT ..` — a write and the read it feeds in one round-trip, gated to Postgres |

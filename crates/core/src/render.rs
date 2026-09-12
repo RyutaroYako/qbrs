@@ -11,10 +11,21 @@ use crate::expr::{BinOp, CastTarget, ExprKind, SortDir, Value};
 /// than written as text, which is what lets the same renderer produce either
 /// a finished statement or a `Fragment` whose parameters aren't numbered
 /// yet — with no character standing in for one, and so nothing to escape.
-pub(crate) trait Sink {
+///
+/// `#[doc(hidden)] pub` because
+/// [`Statement::render_into`](crate::statement::Statement::render_into)
+/// names it, and sealed so that door stays a door: a foreign sink handed
+/// one could write a bind into the text, which is the one thing this trait
+/// exists to prevent.
+#[doc(hidden)]
+pub trait Sink: sink::Sealed {
     fn text(&mut self, s: &str);
     fn ch(&mut self, c: char);
     fn bind(&mut self, value: &Value);
+}
+
+mod sink {
+    pub trait Sealed {}
 }
 
 /// The parameters a statement has already bound, so a value bound again is
@@ -93,6 +104,8 @@ impl<D: Dialect> QuerySink<D> {
     }
 }
 
+impl<D> sink::Sealed for QuerySink<D> {}
+
 impl<D: Dialect> Sink for QuerySink<D> {
     fn text(&mut self, s: &str) {
         self.sql.push_str(s);
@@ -126,6 +139,8 @@ impl FragmentSink {
         self.0
     }
 }
+
+impl sink::Sealed for FragmentSink {}
 
 impl Sink for FragmentSink {
     fn text(&mut self, s: &str) {

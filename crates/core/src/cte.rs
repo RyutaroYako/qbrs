@@ -13,17 +13,34 @@
 //! types would accept a body whose columns are type-compatible but
 //! transposed, and the outer query reads those columns by key.
 //!
+//! A body can be a write statement with a `RETURNING`, where the dialect
+//! has data-modifying CTEs — which is Postgres alone. That is what turns
+//! "write a row, then read a value the row doesn't hold" into one
+//! round-trip instead of two statements in a transaction. Every part of
+//! such a statement sees one snapshot, so the outer query reads the rows
+//! the body returned and not the table it wrote.
+//!
 //! **Known limitations**: non-recursive, single-level CTEs only.
 //! `WITH RECURSIVE` and a CTE body referencing another CTE both need a CTE
 //! to be nameable *inside* another query being built.
+//!
+//! A write body must be the whole statement's, and that one is unchecked:
+//! Postgres takes a data-modifying `WITH` at the top level only, so a query
+//! binding one and then used as an `EXISTS`/`IN` subquery or a set-operation
+//! branch is refused by the server (`0A000`) rather than by the compiler.
+//! Saying it in the types would mean tracking, on every `Select`, whether
+//! its scope was reached through such a binding — which is what `Scope`
+//! deliberately does not carry, since a scope is the tables in it and
+//! nothing about how they got there.
 
 use std::marker::PhantomData;
 
-use crate::dialect::Dialect;
-use crate::render::Fragment;
+use crate::dialect::{Dialect, SupportsDataModifyingCte};
+use crate::render::{Fragment, FragmentSink, Sink};
 use crate::row::{Row, SameShape};
 use crate::scope::Table;
 use crate::select::{Select, Selection};
+use crate::statement::{Returning, Statement, WrittenTable};
 
 /// Implemented by a `with!{}`-generated pseudo-table's `Table` marker,
 /// pinning down the exact tuple of native types its CTE body must produce.
@@ -70,19 +87,80 @@ impl<D, Marker> Clone for Cte<D, Marker> {
     }
 }
 
-/// Builds a `Cte` from `query`, checking that `query`'s selected columns
-/// match `Marker`'s `with!{}`-declared shape exactly — same count, order,
-/// names, and native types.
-pub fn with<D: Dialect, Marker: CteShape, Scope, Sel, Idx>(
-    _marker: Marker,
-    query: &Select<D, Scope, Sel>,
-) -> Cte<D, Marker>
-where
-    Sel: Selection<Scope, Idx>,
-    Sel::Output: SameShape<Row<Marker::Row>>,
+/// What a `WITH` clause can bind: a `SELECT`, or — where the dialect has
+/// data-modifying CTEs — an `INSERT`/`UPDATE`/`DELETE` with a `RETURNING`.
+/// `Output` is the row the body produces, which is what [`with`] checks
+/// against the declared shape.
+///
+/// Sealed, for the reason [`CteShape`] is: it pairs a type-level claim
+/// with the rendered body that is supposed to match it, and an impl saying
+/// otherwise would have the outer query read columns by keys the body
+/// never selected.
+#[diagnostic::on_unimplemented(
+    message = "`{Self}` isn't something a `WITH` clause can bind",
+    label = "a `SELECT`, or a write statement with `.returning(..)` on a dialect that has data-modifying CTEs",
+    note = "an `INSERT`/`UPDATE`/`DELETE` body is Postgres's alone, and needs the `RETURNING` that gives the CTE its columns"
+)]
+pub trait CteBody<D, Idx>: cte_body::Sealed<D, Idx> {
+    /// The row the body produces — a selection's `Output` either way.
+    type Output;
+
+    #[doc(hidden)]
+    fn render_body(&self, sink: &mut dyn Sink);
+}
+
+mod cte_body {
+    /// Carries the trait's own parameters, so there is nothing to project
+    /// and nothing an outside crate can implement.
+    pub trait Sealed<D, Idx> {}
+}
+
+impl<D: Dialect, Scope, Sel: Selection<Scope, Idx>, Idx> cte_body::Sealed<D, Idx>
+    for Select<D, Scope, Sel>
 {
+}
+
+impl<D: Dialect, Scope, Sel: Selection<Scope, Idx>, Idx> CteBody<D, Idx> for Select<D, Scope, Sel> {
+    type Output = Sel::Output;
+
+    fn render_body(&self, sink: &mut dyn Sink) {
+        Select::render_body_into::<Idx>(self, sink);
+    }
+}
+
+impl<D, S, Sel, Idx> cte_body::Sealed<D, Idx> for Returning<S, Sel>
+where
+    D: SupportsDataModifyingCte,
+    S: Statement<Dialect = D>,
+    Sel: Selection<WrittenTable<S::Table>, Idx>,
+{
+}
+
+impl<D, S, Sel, Idx> CteBody<D, Idx> for Returning<S, Sel>
+where
+    D: SupportsDataModifyingCte,
+    S: Statement<Dialect = D>,
+    Sel: Selection<WrittenTable<S::Table>, Idx>,
+{
+    type Output = Sel::Output;
+
+    fn render_body(&self, sink: &mut dyn Sink) {
+        Returning::render_into(self, sink);
+    }
+}
+
+/// Builds a `Cte` from `body`, checking that the columns it produces match
+/// `Marker`'s `with!{}`-declared shape exactly — same count, order, names,
+/// and native types.
+pub fn with<D: Dialect, Marker: CteShape, Body, Idx>(_marker: Marker, body: &Body) -> Cte<D, Marker>
+where
+    Body: CteBody<D, Idx>,
+    Body::Output: SameShape<Row<Marker::Row>>,
+{
+    let mut sink = FragmentSink::new();
+    body.render_body(&mut sink);
     Cte {
-        body: query.fragment::<Idx>(),
+        body: sink.finish(),
         _marker: PhantomData,
     }
 }

@@ -1,0 +1,34 @@
+// Deliberately-broken example: a write statement as a CTE body under a
+// dialect that has no data-modifying CTEs. Used to eyeball the
+// #[diagnostic::on_unimplemented] messages on `CteBody` and
+// `SupportsDataModifyingCte`. Not meant to compile — copy into
+// tests/compile-bench/examples/ and run with:
+//   cargo build -p compile-bench --example data_modifying_cte_on_sqlite
+use qbrs::dialect::Sqlite;
+use qbrs::prelude::*;
+use qbrs::update::update;
+
+#[derive(Table)]
+#[table(name = "orders")]
+#[allow(dead_code)]
+struct Orders {
+    #[column(primary_key, generated)]
+    id: i64,
+    total: i64,
+}
+
+with! {
+    struct raised { id: BigInt, total: BigInt }
+}
+
+fn main() {
+    // error[E0277]: `Returning<Update<Sqlite, orders::Table>, ..>` isn't
+    //   something a `WITH` clause can bind
+    //   an `INSERT`/`UPDATE`/`DELETE` body is Postgres's alone
+    let bump: qbrs::statement::Returning<_, _> = update(orders::Table)
+        .set_to(orders::total, 1i64)
+        .returning((orders::id, orders::total));
+    let _ = select((raised::id,))
+        .from(cte::with(raised::Table, &bump))
+        .to_sql(Sqlite);
+}

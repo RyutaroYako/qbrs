@@ -4,7 +4,7 @@ use std::marker::PhantomData;
 
 use crate::dialect::Dialect;
 use crate::expr::ExprKind;
-use crate::render::{QuerySink, Sink, render_and_list, render_ident};
+use crate::render::{Sink, render_and_list, render_ident};
 use crate::scope::{BaseTable, Table};
 use crate::select::{Condition, Predicate};
 use crate::statement::{Statement, WrittenTable};
@@ -16,14 +16,10 @@ pub fn delete<D, T: BaseTable>(_table: T) -> Delete<D, T> {
     }
 }
 
-fn render_delete<D: Dialect, T: Table>(wheres: &[ExprKind]) -> QuerySink<D> {
-    let mut sink = QuerySink::<D>::new();
+fn render_delete<D: Dialect, T: Table>(sink: &mut dyn Sink, wheres: &[ExprKind]) {
     sink.text("DELETE FROM ");
-    render_ident::<D>(&mut sink, T::NAME);
-
-    render_and_list::<D>(&mut sink, " WHERE ", wheres);
-
-    sink
+    render_ident::<D>(sink, T::NAME);
+    render_and_list::<D>(sink, " WHERE ", wheres);
 }
 
 pub struct Delete<D, T: Table> {
@@ -76,7 +72,7 @@ impl<D: Dialect, T: Table> crate::statement::private::Sealed for Delete<D, T> {}
 impl<D: Dialect, T: Table> Statement for Delete<D, T> {
     type Dialect = D;
     type Table = T;
-    fn render(&self) -> QuerySink<D> {
-        render_delete::<D, T>(&self.wheres)
+    fn render_into(&self, sink: &mut dyn Sink) {
+        render_delete::<D, T>(sink, &self.wheres);
     }
 }

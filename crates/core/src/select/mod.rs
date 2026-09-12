@@ -853,9 +853,15 @@ impl<D: Dialect, Scope, Sel> Select<D, Scope, Sel> {
         Sel: Selection<Scope, Idx>,
     {
         let mut sink = FragmentSink::new();
-        self.body
-            .render_into::<D>(&self.selection.items(), &mut sink);
+        self.render_body_into::<Idx>(&mut sink);
         sink.finish()
+    }
+
+    pub(crate) fn render_body_into<Idx>(&self, sink: &mut dyn crate::render::Sink)
+    where
+        Sel: Selection<Scope, Idx>,
+    {
+        self.body.render_into::<D>(&self.selection.items(), sink);
     }
 
     fn render_as<Idx>(&self) -> (String, Vec<Value>)
