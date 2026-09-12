@@ -138,7 +138,8 @@ compile error.
 ## What's in it
 
 `SELECT`/`INSERT`/`UPDATE`/`DELETE`, every JOIN kind, `GROUP BY`/`HAVING`,
-aggregates, `DISTINCT`, upsert (`ON CONFLICT`), `UNION`/`INTERSECT`/`EXCEPT`,
+aggregates (`count`/`count_of`/`sum`/`min`/`max`/`avg`/`string_agg`),
+`DISTINCT`, upsert (`ON CONFLICT`), `UNION`/`INTERSECT`/`EXCEPT`,
 ranking window functions, non-recursive CTEs, correlated `EXISTS`,
 `IN (SELECT ..)`/`NOT IN (SELECT ..)`, transactions, the `sql!{}` escape
 hatch, and typed prepared statements (`prepare!{}`).
@@ -204,7 +205,14 @@ Design constraints worth knowing before adopting:
   doesn't exist). An aggregate or window function in `WHERE` or `RETURNING`
   is accepted by the builder and rejected by the database, too. Aggregates
   take a bare column: `sum(price * qty)` and `count(DISTINCT x)` need
-  `sql!{}`.
+  `sql!{}`, as does an `ORDER BY` inside a `string_agg` — SQLite reached
+  that only in 3.44, past the 3.39 this crate targets, and MySQL spells it
+  elsewhere in the call. `string_agg`'s separator binds under Postgres and
+  SQLite, which take it as an argument; MySQL's `SEPARATOR` takes a literal
+  and rejects a parameter, so there it is written into the SQL, which is
+  why it is a `&'static str` everywhere. MySQL also truncates the result at
+  `group_concat_max_len` (1024 bytes by default) with a warning rather than
+  an error.
 - **`ORDER BY` has a checked and an unchecked form.** Plain `.order_by(..)`
   only checks scope membership, since a non-`DISTINCT` query may sort by any
   column in scope. `.order_by_selected(..)`/`.order_by_selection(..)` also

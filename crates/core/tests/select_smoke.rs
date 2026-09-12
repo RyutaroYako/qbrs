@@ -602,6 +602,60 @@ fn aggregates_render_as_function_calls_over_real_columns() {
 }
 
 #[test]
+fn string_agg_puts_its_separator_where_each_dialect_takes_one() {
+    use qbrs_core::dialect::{MySql, Sqlite};
+    use qbrs_core::expr::string_agg;
+    // Postgres and SQLite take the separator as an ordinary argument, so it
+    // binds; MySQL's grammar rejects a parameter after `SEPARATOR`.
+    let (sql, params) = select((users::id, string_agg(users::name, ", ")))
+        .from::<Postgres, _>(users::Table)
+        .group_by(users::id)
+        .to_sql(Postgres);
+    assert_eq!(
+        sql,
+        r#"SELECT "users"."id", string_agg("users"."name", $1) FROM "users" GROUP BY "users"."id""#
+    );
+    assert_eq!(params, vec![qbrs_core::expr::Value::Text(", ".into())]);
+
+    let (sql, params) = select((users::id, string_agg(users::name, ", ")))
+        .from::<Sqlite, _>(users::Table)
+        .group_by(users::id)
+        .to_sql(Sqlite);
+    assert_eq!(
+        sql,
+        r#"SELECT "users"."id", group_concat("users"."name", ?) FROM "users" GROUP BY "users"."id""#
+    );
+    assert_eq!(params, vec![qbrs_core::expr::Value::Text(", ".into())]);
+
+    let (sql, params) = select((users::id, string_agg(users::name, ", ")))
+        .from::<MySql, _>(users::Table)
+        .group_by(users::id)
+        .to_sql(MySql);
+    assert_eq!(
+        sql,
+        "SELECT `users`.`id`, group_concat(`users`.`name` SEPARATOR ', ') FROM `users` GROUP BY `users`.`id`"
+    );
+    assert!(params.is_empty());
+}
+
+/// The one dialect that writes the separator out is the one that has to
+/// escape it. Asserted as a string here because this crate does not execute
+/// MySQL; what Postgres and SQLite do with a separator like this is checked
+/// by running it, in `aggregates_integration` and `dialect-exec`.
+#[test]
+fn a_separator_written_out_for_mysql_is_escaped_the_way_mysql_reads_one() {
+    use qbrs_core::dialect::MySql;
+    use qbrs_core::expr::string_agg;
+    assert_eq!(
+        select((string_agg(users::name, r"'\"),))
+            .from::<MySql, _>(users::Table)
+            .to_sql(MySql)
+            .0,
+        r"SELECT group_concat(`users`.`name` SEPARATOR '''\\') FROM `users`"
+    );
+}
+
+#[test]
 fn a_literal_question_mark_travels_as_a_bound_value() {
     // There is no `??` escape: MySQL and SQLite write their own bind
     // parameters as `?`, so a `?` left in the text would be read as one.

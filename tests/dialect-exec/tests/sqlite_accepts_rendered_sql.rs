@@ -3,7 +3,7 @@
 //! says SQLite agrees.
 
 use qbrs::cte::with;
-use qbrs::expr::{Expr, Value, all_of, any_of, avg, count, count_of, max, min, sum};
+use qbrs::expr::{Expr, Value, all_of, any_of, avg, count, count_of, max, min, string_agg, sum};
 use qbrs::prelude::*;
 use qbrs::sql;
 use sqlx::{Row, SqlitePool};
@@ -539,6 +539,35 @@ async fn sqlite_executes_every_rendered_statement_shape() {
     )
     .await;
     assert_eq!(paged_union.len(), 2);
+
+    // A separator SQLite would read as syntax if it were written out
+    // instead of bound, so the returned string says which of the two it is.
+    let names = run(
+        &pool,
+        select((string_agg(users::email, r"')--"),))
+            .from(users::Table)
+            .filter(users::email.like("%@example.com"))
+            .to_sql(Sqlite),
+    )
+    .await;
+    let emails = run(
+        &pool,
+        select((users::email,))
+            .from(users::Table)
+            .filter(users::email.like("%@example.com"))
+            .order_by(users::email.asc())
+            .to_sql(Sqlite),
+    )
+    .await;
+    let expected: Vec<String> = emails.iter().map(|row| row.get(0)).collect();
+    let joined: Option<String> = names[0].get(0);
+    let joined = joined.expect("the users run together");
+    let mut parts: Vec<&str> = joined.split("')--").collect();
+    parts.sort_unstable();
+    assert_eq!(
+        parts,
+        expected.iter().map(String::as_str).collect::<Vec<_>>()
+    );
 
     // The aggregates that render a `CAST`, and a `NOT EXISTS`.
     let stats = run(
