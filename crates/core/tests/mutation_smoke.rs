@@ -3,8 +3,9 @@
 
 use qbrs_core::delete::delete;
 use qbrs_core::dialect::Postgres;
+use qbrs_core::expr::Integer;
 use qbrs_core::expr::{ExprMethods, Value};
-use qbrs_core::insert::{Defaultable, InsertRow, InsertValue, insert, partial_index};
+use qbrs_core::insert::{Defaultable, InsertRow, InsertValue, excluded, insert, partial_index};
 use qbrs_core::scope::Table as TableTrait;
 use qbrs_core::statement::Statement;
 use qbrs_core::update::{Assignments, NothingToSet, UpdateRow, update};
@@ -316,6 +317,44 @@ fn upsert_do_nothing_renders_conflict_target() {
     assert_eq!(
         params,
         vec![Value::Text("a@example.com".into()), Value::NullText]
+    );
+}
+
+#[test]
+fn an_upsert_assigns_the_row_the_insert_proposed() {
+    let (sql, params) = insert(users::Table)
+        .values(UsersInsert::builder().email("a@example.com").build())
+        .on_conflict_do_update(
+            users::email,
+            Assignments::set_to(users::display_name, excluded(users::display_name)),
+        )
+        .to_sql(Postgres);
+    assert_eq!(
+        sql,
+        "INSERT INTO \"users\" (\"email\", \"display_name\", \"created_at\") VALUES ($1, $2, DEFAULT) \
+         ON CONFLICT (\"email\") DO UPDATE SET \"display_name\" = excluded.\"display_name\""
+    );
+    assert_eq!(params.len(), 2);
+}
+
+/// The proposed row is an ordinary expression over the target's columns, so
+/// the two compose — which is the assignment a counter upsert is written
+/// with, and the one passing the same Rust value to both halves can't say.
+#[test]
+fn the_proposed_row_composes_with_the_conflicting_one() {
+    let (sql, _) = insert(users::Table)
+        .values(UsersInsert::builder().email("a@example.com").build())
+        .on_conflict_do_update(
+            users::email,
+            Assignments::set_to(
+                users::id,
+                qbrs_core::sql!(Integer, "(? + ?)", users::id, excluded(users::id)),
+            ),
+        )
+        .to_sql(Postgres);
+    assert!(
+        sql.ends_with("DO UPDATE SET \"id\" = ((\"users\".\"id\" + excluded.\"id\"))"),
+        "{sql}"
     );
 }
 

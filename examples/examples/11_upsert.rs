@@ -4,8 +4,9 @@
 //! separate future API). `ConflictTarget` proves the target column(s)
 //! actually belong to the table being inserted into, and `partial_index(..)`
 //! repeats an index's own predicate so a *partial* unique index can be the
-//! one inferred.
-//! Known limitation: no typed way yet to reference `EXCLUDED.column`.
+//! one inferred. `excluded(..)` names the row the insert proposed, which is
+//! what an accumulating upsert reads and what a value passed to both halves
+//! of the statement cannot say.
 //! Run: `cargo run -p qbrs-examples --example 11_upsert`
 
 use qbrs::prelude::*;
@@ -119,6 +120,33 @@ async fn main() {
         .expect("returning row");
     println!("the open order's total is now: {raised}");
     assert_eq!(raised, 250);
+
+    // Passing the same Rust value to both halves of an upsert stands in
+    // for the proposed row only while the value is one the caller holds.
+    // `excluded(..)` names that row itself, so the assignment can read it
+    // and the conflicting row together — here, adding to a running total
+    // rather than replacing it.
+    let accumulated: i64 = insert(orders::Table)
+        .values(OrdersInsert::builder().user_id(id).total(75).build())
+        .on_conflict_do_update(
+            partial_index(orders::user_id, orders::shipped.eq(false)),
+            Assignments::set_to(
+                orders::total,
+                qbrs::sql!(
+                    qbrs::expr::BigInt,
+                    "(? + ?)",
+                    orders::total,
+                    excluded(orders::total)
+                ),
+            ),
+        )
+        .returning(orders::total)
+        .load_one(&pool)
+        .await
+        .expect("accumulate onto the open order")
+        .expect("returning row");
+    println!("after adding the proposed row's total: {accumulated}");
+    assert_eq!(accumulated, 325);
 
     // Without the predicate there is no index over `user_id` alone to
     // infer, and the database says so rather than picking another.

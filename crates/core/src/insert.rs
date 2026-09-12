@@ -15,9 +15,9 @@
 use std::marker::PhantomData;
 
 use crate::dialect::{Dialect, SupportsOnConflict};
-use crate::expr::{Column, ColumnKey, ExprKind, Value};
+use crate::expr::{Column, ColumnKey, Expr, ExprKind, Value};
 use crate::render::{QuerySink, Sink, render_ident};
-use crate::scope::{BaseTable, Table};
+use crate::scope::{BaseTable, Cons, Nil, NotNull, Table, TableSlot};
 use crate::statement::{Statement, WrittenTable};
 use crate::update::Assignments;
 
@@ -346,30 +346,54 @@ impl<T: Table> ConflictTarget<T> for PartialIndex<T> {
     }
 }
 
-enum ConflictAction<T> {
-    DoNothing,
-    /// The same `SET` list `UPDATE` takes: an `*Update` value, or
-    /// `Assignments` of expressions.
-    ///
-    /// **Known limitation**: no `EXCLUDED.column` (`SET total = total +
-    /// EXCLUDED.total`) — the row being inserted isn't a table the scope
-    /// knows, so referring to it needs its own typed API. Everything else a
-    /// `SET` list can say, including expressions over the target's own
-    /// columns, works here.
-    ///
-    /// **Known limitation**: no `DO UPDATE SET .. WHERE ..` either. That
-    /// `WHERE` decides whether the update fires at all, which is a
-    /// different clause from the one [`partial_index`] carries — that one
-    /// only picks which index the conflict is inferred against.
-    DoUpdate(Assignments<T>),
+/// The row an `INSERT` proposed, as `ON CONFLICT DO UPDATE` sees it: a
+/// pseudo-table holding the target's own columns, spelled `excluded`.
+/// Deliberately not a [`BaseTable`], so it is not a table a query can
+/// select from — [`excluded`] is the only way to name a column of it.
+pub struct Excluded<T>(PhantomData<fn() -> T>);
+
+impl<T: Table> Table for Excluded<T> {
+    const NAME: &'static str = "excluded";
 }
 
-struct ConflictClause<T> {
+/// What a `DO UPDATE` assignment may name: the conflicting row and the
+/// proposed one. An `UPDATE`'s own `SET` list is discharged against
+/// [`WrittenTable`] alone, which is what keeps [`excluded`] out of a
+/// statement that has no proposed row.
+pub type ConflictScope<T> = Cons<TableSlot<Excluded<T>, NotNull>, WrittenTable<T>>;
+
+/// `excluded.column` — the value the column would have taken had the row
+/// inserted, which is what `SET total = total + EXCLUDED.total` and the
+/// plain `SET v = EXCLUDED.v` of every upsert are written with. Reads as
+/// an ordinary expression over the target's columns, so it composes with
+/// them: only the scope it is discharged against says where it may appear,
+/// and [`InsertSeed::on_conflict_do_update`]'s `SET` list is the one place
+/// that has it.
+pub fn excluded<C: ColumnKey>(_column: Column<C>) -> Expr<Cons<Excluded<C::Table>, Nil>, C::Sql> {
+    Expr::from_kind(ExprKind::Excluded {
+        name: <C as crate::row::Named>::NAME,
+    })
+}
+
+enum ConflictAction<T: Table> {
+    DoNothing,
+    /// The same `SET` list `UPDATE` takes — an `*Update` value, or
+    /// `Assignments` of expressions — over one table more: [`excluded`]
+    /// names the proposed row.
+    ///
+    /// **Known limitation**: no `DO UPDATE SET .. WHERE ..`. That `WHERE`
+    /// decides whether the update fires at all, which is a different
+    /// clause from the one [`partial_index`] carries — that one only picks
+    /// which index the conflict is inferred against.
+    DoUpdate(Assignments<T, ConflictScope<T>>),
+}
+
+struct ConflictClause<T: Table> {
     target: Target,
     action: ConflictAction<T>,
 }
 
-fn render_conflict_clause<D: Dialect, T>(clause: &ConflictClause<T>, sink: &mut dyn Sink) {
+fn render_conflict_clause<D: Dialect, T: Table>(clause: &ConflictClause<T>, sink: &mut dyn Sink) {
     sink.text(" ON CONFLICT (");
     for (i, c) in clause.target.columns.iter().enumerate() {
         if i > 0 {
@@ -642,13 +666,14 @@ impl<D: Dialect, R: InsertRow> Insert<D, R> {
         self
     }
 
-    /// `ON CONFLICT (..) DO UPDATE SET ..`, taking the same `Assignments`
-    /// an `UPDATE` sets. Pass [`partial_index`] where the index to infer is
-    /// a partial one.
+    /// `ON CONFLICT (..) DO UPDATE SET ..`, taking the `Assignments` an
+    /// `UPDATE` sets plus [`excluded`], which names the row the `INSERT`
+    /// proposed. Pass [`partial_index`] where the index to infer is a
+    /// partial one.
     pub fn on_conflict_do_update(
         mut self,
         target: impl ConflictTarget<R::Table>,
-        set: Assignments<R::Table>,
+        set: Assignments<R::Table, ConflictScope<R::Table>>,
     ) -> Self
     where
         D: SupportsOnConflict,

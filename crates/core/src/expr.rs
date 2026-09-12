@@ -33,6 +33,13 @@ pub(crate) enum ExprKind {
         table: &'static str,
         name: &'static str,
     },
+    /// `excluded."col"` — the row an `INSERT` proposed, as `ON CONFLICT DO
+    /// UPDATE` sees it. Its own node rather than a `Column` over a table
+    /// spelled `excluded`: no schema declares that pseudo-table, and only
+    /// the dialects with `ON CONFLICT` have one at all.
+    Excluded {
+        name: &'static str,
+    },
     Value(Value),
     BinOp {
         op: BinOp,

@@ -33,15 +33,21 @@ pub use private::Sealed as UpdateRowSealed;
 /// PATCH handler holds when the request changed nothing — has no
 /// assignments at all, so the check belongs where such a value enters a
 /// statement rather than at rendering time.
-pub struct Assignments<T> {
+/// `Scope` is what an assigned expression may name. An `UPDATE`'s own
+/// `SET` list has the written table and nothing else; `ON CONFLICT DO
+/// UPDATE` widens it to [`insert::ConflictScope`](crate::insert::ConflictScope),
+/// which is what lets `excluded(..)` be written there and nowhere else. No
+/// call site spells it: every constructor is generic over it, so it is
+/// inferred from the statement the list goes into.
+pub struct Assignments<T, Scope = WrittenTable<T>> {
     sets: Vec<(&'static str, ExprKind)>,
-    _marker: PhantomData<fn() -> T>,
+    _marker: PhantomData<fn() -> (T, Scope)>,
 }
 
 // Hand-written for the reason `Expr`'s are: a derive would ask the phantom
 // table marker to be `Clone`/`Debug`, and a schema's marker is a bare unit
 // struct — so the derived impls would apply to no table at all.
-impl<T> Clone for Assignments<T> {
+impl<T, Scope> Clone for Assignments<T, Scope> {
     fn clone(&self) -> Self {
         Assignments {
             sets: self.sets.clone(),
@@ -50,7 +56,7 @@ impl<T> Clone for Assignments<T> {
     }
 }
 
-impl<T> std::fmt::Debug for Assignments<T> {
+impl<T, Scope> std::fmt::Debug for Assignments<T, Scope> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Assignments")
             .field("sets", &self.sets)
@@ -58,7 +64,7 @@ impl<T> std::fmt::Debug for Assignments<T> {
     }
 }
 
-impl<T: Table> Assignments<T> {
+impl<T: Table, Scope> Assignments<T, Scope> {
     /// `column = <expression>` — the assignments a value can't say:
     /// `updated_at = now()`, `version = version + 1`. The expression is
     /// checked against the table being written to, exactly as a `WHERE`
@@ -68,7 +74,7 @@ impl<T: Table> Assignments<T> {
         C: ColumnKey<Table = T> + Writable,
         V: IntoExpr,
         V::Sql: AssignsTo<C::Sql>,
-        WrittenTable<T>: Superset<V::Req, Idxs>,
+        Scope: Superset<V::Req, Idxs>,
     {
         Assignments {
             sets: vec![(<C as crate::row::Named>::NAME, value.into_expr().kind)],
@@ -82,7 +88,7 @@ impl<T: Table> Assignments<T> {
         C: ColumnKey<Table = T> + Writable,
         V: IntoExpr,
         V::Sql: AssignsTo<C::Sql>,
-        WrittenTable<T>: Superset<V::Req, Idxs>,
+        Scope: Superset<V::Req, Idxs>,
     {
         // A column assigned twice is not a statement any database accepts,
         // and layering a computed assignment over a request's is exactly
@@ -94,7 +100,7 @@ impl<T: Table> Assignments<T> {
     }
 }
 
-impl<T> Assignments<T> {
+impl<T, Scope> Assignments<T, Scope> {
     /// `col = $n, col = $n` — the one renderer for a `SET` list, shared by
     /// `UPDATE` and `ON CONFLICT DO UPDATE`.
     pub(crate) fn render_into<D: Dialect>(&self, sink: &mut dyn Sink) {
