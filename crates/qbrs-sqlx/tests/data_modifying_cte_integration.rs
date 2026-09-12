@@ -143,18 +143,25 @@ async fn a_write_runs_as_a_cte_body_and_the_query_reads_what_the_row_doesnt_hold
         .expect("read the written table from the same statement")
         .expect("one row");
     assert_eq!(before, "summer");
-
-    // A row whose foreign key is NULL is the case the two-statement
-    // workaround handles by skipping the second query. Here it is a
-    // `LEFT JOIN` off the CTE, so one statement covers both rows — which
-    // is what a `RETURNING` naming a joined column would have been for.
-    let unattached: i64 = qbrs::insert::insert(campaigns::Table)
-        .values(CampaignsInsert::builder().name("orphan").build())
-        .returning(campaigns::id)
+    // The other half of that rule, and the one a body that returned rows
+    // without writing them would fail: the write did land, and the next
+    // statement is what sees it.
+    let after: String = select(campaigns::name)
+        .from(campaigns::Table)
+        .filter(campaigns::id.eq(campaign_id))
         .load_one(&pool)
         .await
-        .expect("insert a campaign with no realm")
-        .expect("returning row");
+        .expect("read the campaign back")
+        .expect("one row");
+    assert_eq!(after, "autumn");
+
+    // A row whose foreign key is NULL is the case the two-statement
+    // workaround handled by skipping its second query.
+    qbrs::insert::insert(campaigns::Table)
+        .values(CampaignsInsert::builder().name("orphan").build())
+        .execute(&pool)
+        .await
+        .expect("insert a campaign with no realm");
 
     let both: Vec<(String, Option<String>)> = select((updated::name, realms::name))
         .from(qbrs::cte::with(
@@ -176,7 +183,6 @@ async fn a_write_runs_as_a_cte_body_and_the_query_reads_what_the_row_doesnt_hold
             ("renamed".to_string(), None),
         ]
     );
-    let _ = unattached;
 
     // Postgres takes a data-modifying `WITH` at the top level only, so the
     // query binding one has to be the statement. Nothing in the types says

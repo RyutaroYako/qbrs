@@ -3,6 +3,8 @@
 //! on `SupportsDataModifyingCte` — which is what turns "write the row, then
 //! read a value the row doesn't hold" into one round-trip instead of two
 //! statements pinned to the same transaction.
+//! The join belongs to the outer query, so it can be a `LEFT JOIN` — which
+//! is what a `RETURNING` naming a joined column would not have given.
 //! Known limitations: every part of such a statement sees one snapshot, so
 //! the outer query reads the CTE's own returned rows rather than the table
 //! it wrote — the second-to-last query shows what that means; and the query
@@ -16,6 +18,10 @@ use qbrs_sqlx::prelude::*;
 
 with! {
     struct shipped { id: BigInt, user_id: BigInt, total: BigInt }
+}
+
+with! {
+    struct touched { id: BigInt, email: Text }
 }
 
 /// The DTO a handler would return: the written row, plus the owner's email,
@@ -51,6 +57,24 @@ async fn main() {
         .into_structs();
     println!("shipped, with the owner each belongs to: {notified:?}");
     assert!(!notified.is_empty());
+
+    // The reason this replaces a `RETURNING` that names a joined column
+    // rather than merely standing in for one: the join belongs to the outer
+    // query, so it can be a `LEFT JOIN`. A user with no orders is written
+    // and still comes back — the row a second query handled by not running.
+    let deactivate = update(users::Table)
+        .set_to(users::active, false)
+        .returning((users::id, users::email));
+    let touched_rows: Vec<(String, Option<i64>)> = select((touched::email, orders::total))
+        .from(cte::with(touched::Table, &deactivate))
+        .left_join(orders::Table, orders::user_id.eq(touched::id))
+        .order_by(touched::email.asc())
+        .load(&pool)
+        .await
+        .expect("deactivate everyone and read whatever orders each has")
+        .into_tuples();
+    println!("deactivated, with each one's orders: {touched_rows:?}");
+    assert!(touched_rows.iter().any(|(_, total)| total.is_none()));
 
     // The write is real, not just returned.
     let unshipped: i64 = select(qbrs::expr::count())
