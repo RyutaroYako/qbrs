@@ -690,6 +690,15 @@ async fn sqlite_executes_every_rendered_statement_shape() {
         "only the orders over 50 should have been copied"
     );
 
+    // A `SELECT` with no `FROM`. SQLite has it too, and its own bind is
+    // numbered the same way.
+    let computed = run(
+        &pool,
+        select((sql!(BigInt, "(? + ?)", 2i64, 3i64),)).to_sql(Sqlite),
+    )
+    .await;
+    assert_eq!(computed[0].get::<i64, _>(0), 5);
+
     let in_list = run(
         &pool,
         select((users::email,))

@@ -431,6 +431,35 @@ pub fn select<Sel>(selection: Sel) -> SelectSeed<Sel> {
 }
 
 impl<Sel> SelectSeed<Sel> {
+    /// `SELECT <expr>` with no `FROM` at all: `now()`,
+    /// `current_setting('..')`, `pg_try_advisory_lock($1)` — a value the
+    /// database computes rather than a row it reads.
+    ///
+    /// The seed is the whole statement here, which is why this sits on it
+    /// rather than on `Select`: without a `FROM` there is no scope, so no
+    /// join, filter or ordering has anything to name. What makes it safe is
+    /// the empty scope itself — a selection is checked against `Nil`, so a
+    /// column reference has nowhere to resolve and does not compile.
+    ///
+    /// The dialect is an argument for the reason `Select::to_sql`'s is.
+    pub fn to_sql<D: Dialect, Idx>(&self, _dialect: D) -> (String, Vec<Value>)
+    where
+        Sel: Selection<Nil, Idx>,
+    {
+        self.render_without_from::<D, Idx>().finish()
+    }
+
+    #[doc(hidden)]
+    pub fn render_without_from<D: Dialect, Idx>(&self) -> QuerySink<D>
+    where
+        Sel: Selection<Nil, Idx>,
+    {
+        let mut sink = QuerySink::<D>::new();
+        sink.text("SELECT ");
+        render_select_list::<D>(&self.selection.items(), &mut sink);
+        sink
+    }
+
     /// `source` is a value, not a turbofish — a schema table's zero-sized
     /// token (`users::Table`) or a `cte::with(..)` binding. A CTE brings its
     /// `WITH` clause along, so it cannot be selected from unbound.

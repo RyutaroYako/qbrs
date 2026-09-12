@@ -141,6 +141,7 @@ compile error.
 aggregates (`count`/`count_of`/`sum`/`min`/`max`/`avg`/`string_agg`),
 `DISTINCT`, upsert (`ON CONFLICT`, partial unique indexes included), `UNION`/`INTERSECT`/`EXCEPT`,
 ranking window functions, non-recursive CTEs, correlated `EXISTS`,
+a `SELECT` with no `FROM` (`now()`, `pg_try_advisory_lock($1)`),
 Postgres array columns (`Vec<T>` as `TEXT[]`/`INTEGER[]`/`BIGINT[]`/`UUID[]`),
 `IN (SELECT ..)`/`NOT IN (SELECT ..)`, transactions, the `sql!{}` escape
 hatch, and typed prepared statements (`prepare!{}`).

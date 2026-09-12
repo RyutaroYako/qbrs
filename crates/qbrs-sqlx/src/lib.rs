@@ -236,6 +236,7 @@ pub trait LoadExt {
 }
 
 impl<D, Scope, Sel, Outer> LoadExt for Select<D, Scope, Sel, Outer> {}
+impl<Sel> LoadExt for qbrs_core::select::SelectSeed<Sel> {}
 impl<S, Sel> LoadExt for Returning<S, Sel> {}
 impl<D, Output> LoadExt for DynSelect<D, Output> {}
 impl<D, Output> LoadExt for SetOp<D, Output> {}
@@ -253,6 +254,20 @@ where
 
     fn rendered(&self) -> (String, Vec<Value>) {
         self.to_sql::<Idx>(Postgres)
+    }
+}
+
+/// A `SELECT` with no `FROM`: the seed is the whole statement, so it is
+/// what carries the terminal.
+impl<Sel, Idx> RowQuery<Idx> for qbrs_core::select::SelectSeed<Sel>
+where
+    Sel: Selection<qbrs_core::scope::Nil, Idx>,
+    Sel::Output: DecodeRow,
+{
+    type Output = Sel::Output;
+
+    fn rendered(&self) -> (String, Vec<Value>) {
+        self.to_sql::<Postgres, Idx>(Postgres)
     }
 }
 
@@ -284,6 +299,7 @@ pub trait CountExt {
 }
 
 impl<D, Scope, Sel, Outer> CountExt for Select<D, Scope, Sel, Outer> {}
+impl<Sel> CountExt for qbrs_core::select::SelectSeed<Sel> {}
 impl<S, Sel> CountExt for Returning<S, Sel> {}
 impl<D, Output> CountExt for DynSelect<D, Output> {}
 impl<D, Output> CountExt for SetOp<D, Output> {}
@@ -357,6 +373,7 @@ pub trait ExecuteExt {
 }
 
 impl<D, Scope, Sel, Outer> ExecuteExt for Select<D, Scope, Sel, Outer> {}
+impl<Sel> ExecuteExt for qbrs_core::select::SelectSeed<Sel> {}
 impl<S, Sel> ExecuteExt for Returning<S, Sel> {}
 impl<D, Output> ExecuteExt for DynSelect<D, Output> {}
 impl<D, Output> ExecuteExt for SetOp<D, Output> {}

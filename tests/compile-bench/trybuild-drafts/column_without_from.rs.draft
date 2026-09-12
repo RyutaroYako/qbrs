@@ -1,0 +1,23 @@
+//! A column selected with no `FROM` at all. Copy into
+//! `tests/compile-bench/examples/` to read the diagnostic.
+//!
+//! Expected: the selection is checked against the empty scope, so the
+//! column's table has nowhere to resolve — `Nil` is not a `Superset` of
+//! the table it names, and `Find` has no `Here`/`There` to offer.
+
+use qbrs::dialect::Postgres;
+use qbrs::prelude::*;
+
+#[derive(Table)]
+#[table(name = "users")]
+#[allow(dead_code)]
+struct Users {
+    #[column(primary_key, generated)]
+    id: i64,
+    email: String,
+}
+
+fn main() {
+    // error[E0277]: `users::Table` is not available in this query's scope
+    let _ = select((users::id,)).to_sql(Postgres);
+}

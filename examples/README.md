@@ -64,3 +64,4 @@ DATABASE_URL=postgres://postgres:postgres@localhost:5432/qbrs_test \
 | [`23_aggregates`](examples/23_aggregates.rs) | `count()`/`count_of()`/`sum()`/`min()`/`max()`/`avg()`/`string_agg()` — an aggregate keyed by the column it aggregates, and the two questions `count` answers |
 | [`24_arrays`](examples/24_arrays.rs) | Postgres array columns — `Vec<T>` as `TEXT[]`/`INTEGER[]`/`BIGINT[]`/`UUID[]`, an empty array against a NULL one, and `sql!{}` for the operators |
 | [`25_insert_select`](examples/25_insert_select.rs) | `INSERT INTO t (..) SELECT ..` — an archival copy, the target's columns checked against the query by `SameShape` |
+| [`26_no_from`](examples/26_no_from.rs) | a `SELECT` with no `FROM` — an advisory lock and a computed row, where naming a column has nowhere to resolve |
