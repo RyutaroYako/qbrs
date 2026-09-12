@@ -2,8 +2,10 @@
 //! a schema as `Vec<T>`, bound as one parameter and decoded back. `UUID[]`
 //! is the same shape as a `Vec<Uuid>` behind the `uuid` feature.
 //! `Vec<u8>` stays `bytea` — the element type is what decides.
-//! Known limitation: no array *operators* yet (`@>`, `&&`, `= ANY(..)`,
-//! `array_append`); those go through `sql!{}`, as the last query shows.
+//! `.eq_any(..)` asks whether a value is one of an array column's elements
+//! (`x = ANY(arr)`).
+//! Known limitation: the array *operators* (`@>`, `&&`, `array_append`) are
+//! not built; those go through `sql!{}`, as the last query shows.
 //! Run: `cargo run -p qbrs-examples --example 24_arrays`
 
 use qbrs::prelude::*;
@@ -118,9 +120,25 @@ async fn main() {
     println!("message ids: {sent:?}");
     assert_eq!(sent, vec![vec![9_000_000_000i64, 9_000_000_001], vec![]]);
 
-    // Asking whether an array *contains* something is an operator, and
-    // those aren't built yet — the escape hatch takes the column and the
-    // value as slots, so both are still checked and bound.
+    // "Is this value one of the elements" is the question `is_in` asks of
+    // a written-out list, asked of an array the database unnests — so the
+    // array can be a column, which a list cannot.
+    let listing: Vec<String> = select(mailing_lists::name)
+        .from(mailing_lists::Table)
+        .filter(
+            "sre@example.com"
+                .to_string()
+                .eq_any(mailing_lists::recipients),
+        )
+        .load(&pool)
+        .await
+        .expect("membership in an array column");
+    println!("lists with sre@example.com as a recipient: {listing:?}");
+    assert_eq!(listing, vec!["ops".to_string()]);
+
+    // Comparing two whole *arrays* is still an operator, and those aren't
+    // built — the escape hatch takes the column and the value as slots, so
+    // both are still checked and bound.
     let containing: Vec<String> = select(mailing_lists::name)
         .from(mailing_lists::Table)
         .filter(qbrs::sql!(

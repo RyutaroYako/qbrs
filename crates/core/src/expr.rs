@@ -62,6 +62,13 @@ pub(crate) enum ExprKind {
         expr: Box<ExprKind>,
         values: Vec<ExprKind>,
     },
+    /// `x = ANY(<array>)`. Not an `InList` with one element: the right side
+    /// is one array-typed value, which the database unnests, rather than a
+    /// list the renderer writes out.
+    EqAny {
+        expr: Box<ExprKind>,
+        array: Box<ExprKind>,
+    },
     /// `EXISTS (<subquery>)`. Held unrendered, because an `Expr` carries
     /// no dialect: rendering it here would let a subquery written for one
     /// dialect be filtered onto a statement of another.
@@ -581,6 +588,35 @@ comparable_across!(
     Real => BigInt,
 );
 
+/// The element type of a Postgres array, which is what `x = ANY(arr)`
+/// compares against. Needs no seal for the reason [`Comparable`] needs
+/// none: every position is a [`SqlType`], and that is sealed, so an outside
+/// crate has no type to put in one.
+#[diagnostic::on_unimplemented(
+    message = "`{Self}` isn't an array of `{Element}`",
+    label = "the right side of `= ANY(..)` is an array whose elements are the left side's type",
+    note = "nullability doesn't matter here, on either side"
+)]
+pub trait ArrayOf<Element: SqlType>: SqlType {}
+
+macro_rules! array_of {
+    ($($array:ty => $element:ty),+ $(,)?) => {
+        $(
+            impl ArrayOf<$element> for $array {}
+            impl ArrayOf<$element> for crate::scope::Nullable<$array> {}
+            impl ArrayOf<crate::scope::Nullable<$element>> for $array {}
+            impl ArrayOf<crate::scope::Nullable<$element>> for crate::scope::Nullable<$array> {}
+        )+
+    };
+}
+array_of!(
+    TextArray => Text,
+    IntegerArray => Integer,
+    BigIntArray => BigInt,
+);
+#[cfg(feature = "uuid")]
+array_of!(UuidArray => Uuid);
+
 macro_rules! assigns_across {
     ($($from:ty => $to:ty),+ $(,)?) => {
         $(
@@ -812,6 +848,28 @@ pub trait ExprMethods: IntoExpr + Sized {
         Expr::from_kind(ExprKind::InList {
             expr: Box::new(self.into_expr().kind),
             values,
+        })
+    }
+
+    /// `x = ANY(<array>)` — is this value one of the elements of that array
+    /// column. The mirror of [`is_in`](Self::is_in), which asks the same
+    /// question of a list the statement writes out: here the list is one
+    /// value the database unnests, so the array can be a column.
+    ///
+    /// `!` it for "not one of them": that is `NOT (x = ANY(a))`, which SQL
+    /// also spells `x <> ALL(a)` — and not `x <> ANY(a)`, which is true as
+    /// soon as *some* element differs.
+    fn eq_any<Rhs: IntoExpr>(
+        self,
+        array: Rhs,
+    ) -> Expr<<Self::Req as Concat<Rhs::Req>>::Output, Bool>
+    where
+        Rhs::Sql: ArrayOf<Self::Sql>,
+        Self::Req: Concat<Rhs::Req>,
+    {
+        Expr::from_kind(ExprKind::EqAny {
+            expr: Box::new(self.into_expr().kind),
+            array: Box::new(array.into_expr().kind),
         })
     }
 }

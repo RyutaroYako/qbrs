@@ -174,5 +174,46 @@ async fn array_columns_bind_and_decode_as_the_vec_the_schema_names() {
         assert_eq!(denied, vec![vec![uuid::Uuid::nil()], vec![]]);
     }
 
+    // The shape the issue was stuck on: is this value referenced inside
+    // any row's array column — a scalar against an array, which `is_in`
+    // (a scalar against a written-out list) cannot ask.
+    let referencing: i64 = select(qbrs::expr::count())
+        .from(accounts::Table)
+        .filter("sso".to_string().eq_any(accounts::login_methods))
+        .load_one(&pool)
+        .await
+        .expect("count the rows referencing it")
+        .expect("one row");
+    assert_eq!(referencing, 1);
+
+    // `!` is "none of them", which is `<> ALL(..)` and not `<> ANY(..)` —
+    // the row whose array holds only `sso` is the one it excludes.
+    let others: i64 = select(qbrs::expr::count())
+        .from(accounts::Table)
+        .filter(!"sso".to_string().eq_any(accounts::login_methods))
+        .load_one(&pool)
+        .await
+        .expect("count the rest")
+        .expect("one row");
+    assert_eq!(others, 1);
+
+    // A nullable array column answers it as SQL says a NULL does: not as
+    // false, so the row is neither in the count nor in its complement.
+    let notified: i64 = select(qbrs::expr::count())
+        .from(accounts::Table)
+        .filter("ops".to_string().eq_any(accounts::notify))
+        .load_one(&pool)
+        .await
+        .expect("count over the nullable array")
+        .expect("one row");
+    let not_notified: i64 = select(qbrs::expr::count())
+        .from(accounts::Table)
+        .filter(!"ops".to_string().eq_any(accounts::notify))
+        .load_one(&pool)
+        .await
+        .expect("count its complement")
+        .expect("one row");
+    assert_eq!(notified + not_notified, 1);
+
     common::shutdown(pool, guard).await;
 }
