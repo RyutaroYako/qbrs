@@ -360,6 +360,50 @@ fn the_proposed_row_composes_with_the_conflicting_one() {
     );
 }
 
+/// The action's `WHERE` narrows which conflicting rows the update touches;
+/// the target's picks which index the conflict is inferred against. Both in
+/// one statement, so their positions can't be confused.
+#[test]
+fn a_do_update_where_renders_after_the_set_list() {
+    let (sql, _) = insert(users::Table)
+        .values(UsersInsert::builder().email("a@example.com").build())
+        .on_conflict_do_update(
+            partial_index(users::email, users::display_name.is_null()),
+            ConflictUpdate::set_to(users::display_name, excluded(users::display_name))
+                .filter(users::display_name.is_null()),
+        )
+        .to_sql(Postgres);
+    assert!(
+        sql.ends_with(
+            "ON CONFLICT (\"email\") WHERE (\"users\".\"display_name\" IS NULL) \
+             DO UPDATE SET \"display_name\" = excluded.\"display_name\" \
+             WHERE (\"users\".\"display_name\" IS NULL)"
+        ),
+        "{sql}"
+    );
+}
+
+#[test]
+fn a_do_update_where_reads_the_proposed_row_too_and_and_folds() {
+    let (sql, _) = insert(users::Table)
+        .values(UsersInsert::builder().email("a@example.com").build())
+        .on_conflict_do_update(
+            users::email,
+            ConflictUpdate::set_to(users::display_name, excluded(users::display_name))
+                .filter(users::display_name.is_null())
+                .filter(excluded(users::display_name).is_not_null()),
+        )
+        .to_sql(Postgres);
+    assert!(
+        sql.ends_with(
+            "DO UPDATE SET \"display_name\" = excluded.\"display_name\" \
+             WHERE (\"users\".\"display_name\" IS NULL) \
+             AND (excluded.\"display_name\" IS NOT NULL)"
+        ),
+        "{sql}"
+    );
+}
+
 #[test]
 fn a_partial_index_target_repeats_the_index_predicate() {
     let (sql, params) = insert(users::Table)

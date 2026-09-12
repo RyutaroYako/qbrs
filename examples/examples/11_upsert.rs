@@ -6,7 +6,9 @@
 //! repeats an index's own predicate so a *partial* unique index can be the
 //! one inferred. `excluded(..)` names the row the insert proposed, which is
 //! what an accumulating upsert reads and what a value passed to both halves
-//! of the statement cannot say.
+//! of the statement cannot say, and `.filter(..)` on that list decides
+//! whether the update fires at all — a rejected row is not counted, so a
+//! one-row upsert's `execute` answers "did this write anything".
 //! Run: `cargo run -p qbrs-examples --example 11_upsert`
 
 use qbrs::prelude::*;
@@ -147,6 +149,27 @@ async fn main() {
         .expect("returning row");
     println!("after adding the proposed row's total: {accumulated}");
     assert_eq!(accumulated, 325);
+
+    // A `WHERE` on the `DO UPDATE` itself: the row is touched only if the
+    // condition holds, and a rejected one is not counted — which is what
+    // lets a one-row upsert's count answer "was this already done?". An
+    // unconditional `DO UPDATE` always reports 1.
+    let raise_once = |total: i64| {
+        insert(orders::Table)
+            .values(OrdersInsert::builder().user_id(id).total(total).build())
+            .on_conflict_do_update(
+                partial_index(orders::user_id, orders::shipped.eq(false)),
+                ConflictUpdate::set_to(orders::total, excluded(orders::total))
+                    .filter(orders::total.lt(excluded(orders::total))),
+            )
+    };
+    let raised_again = raise_once(500)
+        .execute(&pool)
+        .await
+        .expect("a higher total");
+    let refused = raise_once(10).execute(&pool).await.expect("a lower total");
+    println!("raising the total wrote {raised_again} row(s); lowering it wrote {refused}");
+    assert_eq!((raised_again, refused), (1, 0));
 
     // Without the predicate there is no index over `user_id` alone to
     // infer, and the database says so rather than picking another.
