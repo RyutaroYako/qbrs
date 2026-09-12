@@ -17,7 +17,9 @@ engine linked into the binary and served over a unix socket, so `sqlx`
 connects to it exactly as it would to any Postgres. No Docker and no Postgres
 install. The engine is downloaded once, when the crate is first built, and
 cached under `~/.cache/pglite-rs`, so nothing is fetched while an example runs;
-the server is torn down when the example exits.
+the server is torn down when the example exits. The first run in a fresh
+`target/` also pays a few seconds for an `initdb`, then caches that data
+directory for every later example — and test — to copy.
 
 That teardown is why `setup_db()` hands back a second value:
 

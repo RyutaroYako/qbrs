@@ -304,14 +304,16 @@ makes `Defaultable::Default` unusable there.
 
 ```sh
 cargo test --workspace --all-features
+cargo nextest run --workspace --all-features   # all but the doctests, in parallel
 ```
 
 No setup required: the real-DB tests start their own throwaway PostgreSQL
 17.5, embedded via [`pglite-rs`](https://crates.io/crates/pglite-rs) — no
 Docker and no service to launch. The engine is downloaded once, when the crate
 is first built, and cached under `~/.cache/pglite-rs`; nothing is fetched while
-a test runs. Set `DATABASE_URL` to run them against an external Postgres
-instead.
+a test runs. The first run also pays for an `initdb`, then caches the data
+directory under `target/` for every later test and example to copy. Set
+`DATABASE_URL` to run them against an external Postgres instead.
 
 ## License
 
