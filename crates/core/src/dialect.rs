@@ -43,6 +43,19 @@ pub trait Dialect: 'static + Copy + Default + private::Sealed {
     /// spells "no limit" differently.
     const OFFSET_WITHOUT_LIMIT: Option<&'static str> = None;
 
+    /// How this dialect spells "concatenate a group's values, separated".
+    /// Postgres's `string_agg(x, sep)` and SQLite's `group_concat(x, sep)`
+    /// differ only in name; MySQL puts the separator behind a keyword
+    /// instead, which is what the second half is.
+    const STRING_AGG: &'static str = "group_concat";
+    const STRING_AGG_SEPARATOR: &'static str = ", ";
+
+    /// Whether a backslash escapes the next character inside a string
+    /// literal. MySQL reads one that way by default; Postgres and SQLite
+    /// take the SQL-standard reading, where the only escape is a doubled
+    /// quote.
+    const BACKSLASH_ESCAPES_LITERALS: bool = false;
+
     /// Whether one bound parameter can be named from several places in a
     /// statement. It follows from how the dialect spells a placeholder:
     /// Postgres's `$N` names a parameter, so repeating `$1` is repeating one
@@ -68,6 +81,7 @@ pub struct Postgres;
 impl private::Sealed for Postgres {}
 impl Dialect for Postgres {
     const IDENTIFIER_QUOTE: char = '"';
+    const STRING_AGG: &'static str = "string_agg";
     const PLACEHOLDERS_ARE_NUMBERED: bool = true;
     fn write_placeholder(n: usize, out: &mut String) {
         use std::fmt::Write as _;
@@ -84,6 +98,9 @@ impl Dialect for MySql {
     const OFFSET_WITHOUT_LIMIT: Option<&'static str> = Some("18446744073709551615");
     const IDENTIFIER_QUOTE: char = '`';
     const INSERT_NO_COLUMNS: &'static str = " () VALUES ()";
+    const STRING_AGG: &'static str = "group_concat";
+    const STRING_AGG_SEPARATOR: &'static str = " SEPARATOR ";
+    const BACKSLASH_ESCAPES_LITERALS: bool = true;
     // Uses the default `?` placeholder.
 }
 

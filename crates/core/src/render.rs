@@ -188,6 +188,14 @@ pub(crate) fn render_expr<D: Dialect>(expr: &ExprKind, sink: &mut dyn Sink) {
             }
             sink.ch(')');
         }
+        ExprKind::StringAgg { arg, separator } => {
+            sink.text(D::STRING_AGG);
+            sink.ch('(');
+            render_expr::<D>(arg, sink);
+            sink.text(D::STRING_AGG_SEPARATOR);
+            render_string_literal::<D>(sink, separator);
+            sink.ch(')');
+        }
         ExprKind::IsNull { expr, negated } => {
             sink.ch('(');
             render_expr::<D>(expr, sink);
@@ -359,6 +367,22 @@ pub(crate) fn render_ident<D: Dialect>(sink: &mut dyn Sink, ident: &str) {
         }
         render_ident_part::<D>(sink, part);
     }
+}
+
+/// Writes a SQL string literal. The one place this crate writes a value
+/// into the SQL instead of binding it, because MySQL's `SEPARATOR` takes a
+/// literal and rejects a parameter. A quote is escaped by doubling it in
+/// every dialect; MySQL also reads a backslash as an escape, where a
+/// trailing one would otherwise carry the closing quote away.
+fn render_string_literal<D: Dialect>(sink: &mut dyn Sink, text: &str) {
+    sink.ch('\'');
+    for c in text.chars() {
+        if c == '\'' || (D::BACKSLASH_ESCAPES_LITERALS && c == '\\') {
+            sink.ch(c);
+        }
+        sink.ch(c);
+    }
+    sink.ch('\'');
 }
 
 fn render_ident_part<D: Dialect>(sink: &mut dyn Sink, ident: &str) {

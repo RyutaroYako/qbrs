@@ -73,11 +73,12 @@ pub mod prelude {
     pub use qbrs_core::expr::Numeric;
     pub use qbrs_core::expr::{Agg, Avg, Count, CountOf, Max, Min, Sum};
     pub use qbrs_core::expr::{
-        AssignsTo, BoolLike, Comparable, Ordered, SqlType, Summable, TextLike, Writable, null,
+        AssignsTo, BoolLike, Comparable, Concatenable, Ordered, SqlType, Summable, TextLike,
+        Writable, null,
     };
     pub use qbrs_core::expr::{
         BigInt, Bool, Bytes, ExprMethods, HasCount, Integer, LabelExt, Real, SortDir, Text, Value,
-        all_of, any_of, avg, count, count_of, max, min, sum,
+        all_of, any_of, avg, count, count_of, max, min, string_agg, sum,
     };
     #[cfg(feature = "chrono")]
     pub use qbrs_core::expr::{Date, Timestamptz};

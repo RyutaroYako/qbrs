@@ -99,6 +99,17 @@ pub(crate) enum ExprKind {
         name: &'static str,
         arg: Option<Box<ExprKind>>,
     },
+    /// `string_agg(x, ', ')` and the two other spellings of it. Its own
+    /// node rather than a `Func`, because the dialects disagree on the
+    /// function's name and on where the separator goes, and an `Expr`
+    /// carries no dialect to decide that when it is built. The separator is
+    /// a `&'static str` written into the SQL rather than a bound value:
+    /// MySQL's `SEPARATOR` takes a literal and rejects a parameter, so
+    /// binding it would make the node unrenderable in one of the three.
+    StringAgg {
+        arg: Box<ExprKind>,
+        separator: &'static str,
+    },
     /// `func OVER (PARTITION BY .. ORDER BY ..)`. `func` is rendered
     /// literally: it's always one of the closed set of niladic ranking
     /// functions, so there's no sub-expression to recurse into.
@@ -1287,6 +1298,56 @@ aggregate!(
     <C::Sql as Summable>::AVG_CAST,
     "`avg(column)`. NULL over zero rows."
 );
+/// What `string_agg` accepts. Postgres defines it for `text` and for
+/// `bytea` — and the `bytea` one concatenates bytes and returns `bytea`,
+/// which is a different question than the one this asks — so text is the
+/// set, as it is the set the other two dialects coerce their arguments
+/// into anyway.
+#[diagnostic::on_unimplemented(
+    message = "`string_agg` concatenates text, and `{Self}` isn't text",
+    label = "reach for a cast, or a raw fragment, in front of a column that isn't"
+)]
+pub trait Concatenable: SqlType {}
+
+impl Concatenable for Text {}
+
+/// A nullable column concatenates like its base type: `string_agg` skips
+/// the NULLs rather than being undefined over them.
+impl<S: Concatenable> Concatenable for crate::scope::Nullable<S> {}
+
+/// `string_agg(column, ", ")` — a group's values run together, separated.
+/// NULL over zero rows, and over a group whose every value is NULL.
+///
+/// The separator is written into the SQL rather than bound, so it is a
+/// `&'static str` and not a runtime string: MySQL's `SEPARATOR` takes a
+/// literal and rejects a parameter, and a separator that renders in only
+/// two of the three dialects is not one this builder can offer.
+///
+/// **Known limitation**: no `ORDER BY` inside the call
+/// (`string_agg(x, ',' ORDER BY x)`) and no `DISTINCT`. Ordering inside an
+/// aggregate reached SQLite only in 3.44, past the 3.39 this crate targets,
+/// and MySQL spells it before the separator rather than after the
+/// argument — three spellings of a clause two of the dialects would have
+/// to be told to skip. Reach for `sql!{}` where the order matters.
+pub struct StringAgg;
+
+/// `string_agg(column, ", ")`. See [`StringAgg`].
+pub fn string_agg<C: ColumnKey>(
+    _column: Column<C>,
+    separator: &'static str,
+) -> Keyed<Agg<StringAgg, C>, Cons<C::Table, Nil>, crate::scope::Nullable<Text>>
+where
+    C::Sql: Concatenable,
+{
+    Keyed::from_kind(ExprKind::StringAgg {
+        arg: Box::new(ExprKind::Column {
+            table: <C::Table as Table>::NAME,
+            name: <C as crate::row::Named>::NAME,
+        }),
+        separator,
+    })
+}
+
 aggregate!(
     CountOf,
     count_of,

@@ -3,7 +3,7 @@
 //! says SQLite agrees.
 
 use qbrs::cte::with;
-use qbrs::expr::{Expr, Value, all_of, any_of, avg, count, count_of, max, min, sum};
+use qbrs::expr::{Expr, Value, all_of, any_of, avg, count, count_of, max, min, string_agg, sum};
 use qbrs::prelude::*;
 use qbrs::sql;
 use sqlx::{Row, SqlitePool};
@@ -541,6 +541,15 @@ async fn sqlite_executes_every_rendered_statement_shape() {
     assert_eq!(paged_union.len(), 2);
 
     // The aggregates that render a `CAST`, and a `NOT EXISTS`.
+    let names = run(
+        &pool,
+        select((string_agg(users::email, ", "),))
+            .from(users::Table)
+            .to_sql(Sqlite),
+    )
+    .await;
+    assert_eq!(names.len(), 1);
+
     let stats = run(
         &pool,
         select((avg(orders::total), min(orders::total), max(orders::total)))
