@@ -86,35 +86,46 @@ async fn main() {
     assert_eq!(updated, Some("Grace Brewster Hopper".to_string()));
 
     // A conflict target of bare columns is inferred against an index over
-    // exactly those columns and no predicate, so a *partial* unique index
-    // is unreachable without repeating its predicate. The soft-delete
-    // shape — a natural key unique only among the rows still current — is
-    // what usually needs this.
-    sqlx::query("CREATE UNIQUE INDEX users_active_email ON users (email) WHERE active")
+    // exactly those columns whose predicate the target's implies — and no
+    // predicate implies nothing, so a *partial* unique index needs its own
+    // repeated. `orders` has no unique constraint on `user_id`, so the
+    // partial index below is the only one there is to infer.
+    sqlx::query(
+        "CREATE UNIQUE INDEX orders_one_open_per_user ON orders (user_id) WHERE NOT shipped",
+    )
+    .execute(&pool)
+    .await
+    .expect("create the partial unique index");
+    insert(orders::Table)
+        .values(OrdersInsert::builder().user_id(id).total(100).build())
         .execute(&pool)
         .await
-        .expect("create the partial unique index");
+        .expect("the user's open order");
 
-    let reactivated: Option<String> = insert(users::Table)
-        .values(
-            UsersInsert::builder()
-                .email("grace@example.com")
-                .display_name("Grace Hopper")
-                .build(),
-        )
+    let raised: i64 = insert(orders::Table)
+        .values(OrdersInsert::builder().user_id(id).total(250).build())
         .on_conflict_do_update(
-            partial_index(users::email, users::active.eq(true)),
-            Assignments::from_row(UsersUpdate {
-                display_name: Some(Some("Grace M. Hopper".into())),
+            partial_index(orders::user_id, orders::shipped.eq(false)),
+            Assignments::from_row(OrdersUpdate {
+                total: Some(250),
                 ..Default::default()
             })
-            .expect("display_name is set"),
+            .expect("total is set"),
         )
-        .returning(users::display_name)
+        .returning(orders::total)
         .load_one(&pool)
         .await
-        .expect("upsert against a partial unique index")
+        .expect("upsert against the partial unique index")
         .expect("returning row");
-    println!("after the partial-index upsert: {reactivated:?}");
-    assert_eq!(reactivated, Some("Grace M. Hopper".to_string()));
+    println!("the open order's total is now: {raised}");
+    assert_eq!(raised, 250);
+
+    // Without the predicate there is no index over `user_id` alone to
+    // infer, and the database says so rather than picking another.
+    let unqualified = insert(orders::Table)
+        .values(OrdersInsert::builder().user_id(id).total(999).build())
+        .on_conflict_do_nothing(orders::user_id)
+        .execute(&pool)
+        .await;
+    println!("without the index predicate: {}", unqualified.unwrap_err());
 }

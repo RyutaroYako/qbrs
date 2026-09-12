@@ -101,5 +101,43 @@ async fn a_conflict_target_reaches_a_partial_unique_index() {
         .expect("one row");
     assert_eq!(current, 2);
 
+    // Matching is implication, not equality: a predicate that says more
+    // than the index's still picks it.
+    let narrower = qbrs::insert::insert(memberships::Table)
+        .values(
+            MembershipsInsert::builder()
+                .team("core")
+                .handle("ada")
+                .build(),
+        )
+        .on_conflict_do_nothing(partial_index(
+            (memberships::team, memberships::handle),
+            memberships::left_at
+                .is_null()
+                .and(memberships::team.eq("core")),
+        ))
+        .returning(memberships::id)
+        .load(&pool)
+        .await
+        .expect("a predicate that implies the index's own");
+    assert!(narrower.is_empty(), "the current row is the conflict");
+
+    // One that implies no index is refused rather than quietly matching a
+    // different one.
+    let unmatched = qbrs::insert::insert(memberships::Table)
+        .values(
+            MembershipsInsert::builder()
+                .team("core")
+                .handle("ada")
+                .build(),
+        )
+        .on_conflict_do_nothing((memberships::team, memberships::handle))
+        .execute(&pool)
+        .await;
+    assert!(
+        unmatched.is_err(),
+        "bare columns must not reach the partial index"
+    );
+
     common::shutdown(pool, guard).await;
 }

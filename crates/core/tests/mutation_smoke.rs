@@ -341,7 +341,7 @@ fn a_partial_index_target_repeats_the_index_predicate() {
 }
 
 #[test]
-fn a_partial_index_target_of_several_columns_does_nothing_on_conflict() {
+fn a_partial_index_target_of_several_columns_renders_do_nothing_after_the_predicate() {
     let (sql, _) = insert(users::Table)
         .values(UsersInsert::builder().email("a@example.com").build())
         .on_conflict_do_nothing(partial_index(

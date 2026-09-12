@@ -503,24 +503,44 @@ async fn sqlite_executes_every_rendered_statement_shape() {
     // A conflict target that names a partial unique index. SQLite rejects
     // a target it cannot infer an index from, so reaching this one at all
     // is what says the predicate rendered where SQLite reads it — and the
-    // display name is one the index already covers, so the row is dropped
-    // rather than added.
-    run(
+    // row it conflicts with is inserted here rather than borrowed from
+    // 400 lines up, so what the `RETURNING` says is about this shape.
+    let seeded = run(
         &pool,
         insert(users::Table)
             .values(
                 UsersInsert::builder()
-                    .email("ada-again@example.com")
-                    .display_name("Ada Lovelace")
+                    .email("partial-seed@example.com")
+                    .display_name("Partial Seed")
+                    .build(),
+            )
+            .returning(users::id)
+            .to_sql(Sqlite),
+    )
+    .await;
+    assert_eq!(seeded.len(), 1);
+
+    let dropped = run(
+        &pool,
+        insert(users::Table)
+            .values(
+                UsersInsert::builder()
+                    .email("partial-again@example.com")
+                    .display_name("Partial Seed")
                     .build(),
             )
             .on_conflict_do_nothing(partial_index(
                 users::display_name,
                 users::display_name.is_not_null(),
             ))
+            .returning(users::id)
             .to_sql(Sqlite),
     )
     .await;
+    assert!(
+        dropped.is_empty(),
+        "the partial index should have dropped the row"
+    );
 
     // `count(<column>)` counts non-NULLs, unlike `count(*)`.
     let counted = run(
