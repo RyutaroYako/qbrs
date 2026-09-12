@@ -10,7 +10,7 @@ use qbrs::expr::{ExprMethods, Text};
 use qbrs::select::select;
 use qbrs::statement::Statement;
 use qbrs::{Table, prepare};
-use qbrs_sqlx::{LoadExt, PreparedExt};
+use qbrs_sqlx::{LoadExt, PreparedExt, StreamExt as _};
 
 #[derive(Table)]
 #[table(name = "users_prepare_test")]
@@ -112,6 +112,23 @@ async fn prepared_query_reused_across_different_params() {
         .await
         .expect("load through a placeholder named twice");
     assert_eq!(ada_again, vec![ids[0]]);
+
+    // A prepared query streams with the params that arrive at the call —
+    // which is the shape a reusable export has.
+    let mut streamed = query
+        .stream(
+            &pool,
+            ByEmail {
+                email: "dan@example.com".to_string(),
+            },
+        )
+        .expect("open the prepared stream");
+    let mut streamed_ids = Vec::new();
+    while let Some(id) = streamed.next().await {
+        streamed_ids.push(id.expect("decode a streamed row"));
+    }
+    drop(streamed);
+    assert_eq!(streamed_ids, vec![ids[1]]);
 
     sqlx::query("DROP TABLE users_prepare_test")
         .execute(&pool)

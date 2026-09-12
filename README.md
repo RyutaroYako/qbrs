@@ -143,8 +143,9 @@ aggregates (`count`/`count_of`/`sum`/`min`/`max`/`avg`/`string_agg`),
 ranking window functions, non-recursive CTEs, correlated `EXISTS`,
 a `SELECT` with no `FROM` (`now()`, `pg_try_advisory_lock($1)`),
 Postgres array columns (`Vec<T>` as `TEXT[]`/`INTEGER[]`/`BIGINT[]`/`UUID[]`),
-`IN (SELECT ..)`/`NOT IN (SELECT ..)`, transactions, the `sql!{}` escape
-hatch, and typed prepared statements (`prepare!{}`).
+`IN (SELECT ..)`/`NOT IN (SELECT ..)`, transactions, streaming
+(`.stream(..)`), the `sql!{}` escape hatch, and typed prepared statements
+(`prepare!{}`).
 
 A schema is a `#[derive(Table)]` struct; `use qbrs::prelude::*;` and
 `use qbrs_sqlx::prelude::*;` cover a query. Everything above has a runnable,
@@ -270,6 +271,7 @@ Design constraints worth knowing before adopting:
 | Dialect capability gating (`RETURNING`, `ON CONFLICT`, `RIGHT`/`FULL JOIN`) |    ✅    |   ✅    |   ✅    |
 | Execution (via `qbrs-sqlx`)                                                 |    ✅    | not yet | not yet |
 | Transactions (via `qbrs-sqlx`)                                              |    ✅    | not yet | not yet |
+| Streaming (`.stream(..)`, via `qbrs-sqlx`)                                  |    ✅    | not yet | not yet |
 
 MySQL is rendered and asserted as strings only, so its dialect differences are
 caught only where someone thought to look. One known difference: `DEFAULT` in

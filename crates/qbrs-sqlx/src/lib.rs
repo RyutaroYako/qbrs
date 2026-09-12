@@ -3,6 +3,10 @@
 //! query building, SQL rendering, and every compile-time guarantee live in
 //! `qbrs-core`, which stays independent of any async runtime or driver.
 
+/// Re-exported so a caller can name what `LoadExt::stream` returns and
+/// consume it — `StreamExt::next` is how a stream is read — without taking
+/// a `futures` dependency of their own.
+pub use futures_util::{Stream, StreamExt};
 use qbrs_core::delete::Delete;
 use qbrs_core::dialect::Postgres;
 use qbrs_core::expr::Value;
@@ -65,7 +69,7 @@ pub mod prelude {
     pub use crate::Error;
     pub use crate::{
         CountExt, CountQuery, DecodeRow, ExecuteExt, LoadExt, PreparedCountExt, PreparedExt,
-        PreparedQuery, PreparedTotal, RowQuery, WriteStatement,
+        PreparedQuery, PreparedTotal, RowQuery, Stream, StreamExt, WriteStatement,
     };
 }
 
@@ -167,6 +171,20 @@ async fn fetch_optional<'e, T: DecodeRow, E: sqlx::PgExecutor<'e>>(
         .transpose()
 }
 
+/// The streaming counterpart: rows are decoded as they arrive rather than
+/// collected first. The query owns its SQL and its binds, so the stream
+/// borrows only the executor.
+fn fetch_stream<'e, T: DecodeRow + Send + 'e, E: sqlx::PgExecutor<'e>>(
+    executor: E,
+    sql: String,
+    params: Vec<Value>,
+) -> Result<impl Stream<Item = Result<T>> + Send + Unpin + 'e> {
+    let query = bind_all(sqlx::query(sqlx::AssertSqlSafe(sql)), params)?;
+    Ok(futures_util::StreamExt::map(query.fetch(executor), |row| {
+        T::decode_at(&row?, &mut 0).map_err(Error::from)
+    }))
+}
+
 async fn execute_only<'e, E: sqlx::PgExecutor<'e>>(
     executor: E,
     sql: &str,
@@ -180,7 +198,7 @@ async fn execute_only<'e, E: sqlx::PgExecutor<'e>>(
 
 /// What a row-producing query renders to, and what its rows decode to: a
 /// `SELECT`, a `RETURNING` clause, an erased `DynSelect`, a `UNION` chain.
-/// `LoadExt` is the pair of methods over it, and the split is load-bearing
+/// `LoadExt` is the methods over it, and the split is load-bearing
 /// — with the validity bound on the impl instead, an invalid selection
 /// makes `.load(..)` not exist, and the scope error the builder wanted to
 /// report is replaced by a method-resolution failure that never mentions
@@ -199,8 +217,9 @@ pub trait RowQuery<Idx> {
     fn rendered(&self) -> (String, Vec<Value>);
 }
 
-/// `load` for the rows, `load_one` for the first of them, and
-/// `ExecuteExt::execute` where there are none to decode. One trait for
+/// `load` for the rows, `load_one` for the first of them, `stream` for
+/// them one at a time, and `ExecuteExt::execute` where there are none to
+/// decode. One trait for
 /// every row-producing builder keeps the terminal vocabulary tied to what a
 /// statement yields rather than to which builder happens to be in hand.
 ///
@@ -232,6 +251,36 @@ pub trait LoadExt {
     {
         let (sql, params) = self.rendered();
         async move { fetch_optional::<<Self as RowQuery<Idx>>::Output, E>(executor, &sql, params).await }
+    }
+
+    /// The rows one at a time, for a result too large to hold: an export
+    /// that writes as it reads rather than collecting first. Yields the
+    /// same values `.load(..)` would, decoded as each row arrives.
+    ///
+    /// Not a cursor: the server still produces the whole result, and the
+    /// connection is held until the stream is dropped or exhausted. What
+    /// this bounds is the client's memory, which is what a `Vec` of every
+    /// row costs.
+    ///
+    /// Returns a `Result` around the stream rather than as its first item,
+    /// because what can fail before a row arrives — an unresolved
+    /// placeholder, a value whose feature is on in `qbrs` and off here —
+    /// is a misuse of this crate rather than a row that didn't decode.
+    /// Everything the database has to say arrives as an item.
+    ///
+    /// `Send` and `Unpin` are promised, so the stream can be spawned and
+    /// polled without pinning it first — a generic caller cannot ask for
+    /// either otherwise.
+    fn stream<'e, Idx, E: sqlx::PgExecutor<'e>>(
+        &self,
+        executor: E,
+    ) -> Result<impl Stream<Item = Result<<Self as RowQuery<Idx>>::Output>> + Send + Unpin + 'e>
+    where
+        Self: RowQuery<Idx>,
+        <Self as RowQuery<Idx>>::Output: Send + 'e,
+    {
+        let (sql, params) = self.rendered();
+        fetch_stream::<<Self as RowQuery<Idx>>::Output, E>(executor, sql, params)
     }
 }
 
@@ -531,6 +580,24 @@ pub trait PreparedExt {
             fetch_optional::<<Self as PreparedQuery<Params>>::Output, E>(executor, &sql, values)
                 .await
         }
+    }
+
+    /// The rows one at a time, as `LoadExt::stream` gives them — with the
+    /// `Params` that arrive at the call, which is what a reusable export
+    /// query wants.
+    fn stream<'e, Params, E: sqlx::PgExecutor<'e>>(
+        &self,
+        executor: E,
+        params: Params,
+    ) -> Result<
+        impl Stream<Item = Result<<Self as PreparedQuery<Params>>::Output>> + Send + Unpin + 'e,
+    >
+    where
+        Self: PreparedQuery<Params>,
+        <Self as PreparedQuery<Params>>::Output: Send + 'e,
+    {
+        let (sql, values) = self.resolved(params)?;
+        fetch_stream::<<Self as PreparedQuery<Params>>::Output, E>(executor, sql, values)
     }
 }
 
