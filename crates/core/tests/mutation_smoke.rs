@@ -5,7 +5,9 @@ use qbrs_core::delete::delete;
 use qbrs_core::dialect::Postgres;
 use qbrs_core::expr::Integer;
 use qbrs_core::expr::{ExprMethods, Value};
-use qbrs_core::insert::{Defaultable, InsertRow, InsertValue, excluded, insert, partial_index};
+use qbrs_core::insert::{
+    ConflictUpdate, Defaultable, InsertRow, InsertValue, excluded, insert, partial_index,
+};
 use qbrs_core::scope::Table as TableTrait;
 use qbrs_core::statement::Statement;
 use qbrs_core::update::{Assignments, NothingToSet, UpdateRow, update};
@@ -326,7 +328,7 @@ fn an_upsert_assigns_the_row_the_insert_proposed() {
         .values(UsersInsert::builder().email("a@example.com").build())
         .on_conflict_do_update(
             users::email,
-            Assignments::set_to(users::display_name, excluded(users::display_name)),
+            ConflictUpdate::set_to(users::display_name, excluded(users::display_name)),
         )
         .to_sql(Postgres);
     assert_eq!(
@@ -346,7 +348,7 @@ fn the_proposed_row_composes_with_the_conflicting_one() {
         .values(UsersInsert::builder().email("a@example.com").build())
         .on_conflict_do_update(
             users::email,
-            Assignments::set_to(
+            ConflictUpdate::set_to(
                 users::id,
                 qbrs_core::sql!(Integer, "(? + ?)", users::id, excluded(users::id)),
             ),

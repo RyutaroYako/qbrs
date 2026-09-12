@@ -89,7 +89,7 @@ pub mod prelude {
     pub use qbrs_core::expr::{Date, Timestamptz};
     pub use qbrs_core::expr::{Declared, Expr, IntoExpr, Keyed, Labeled};
     pub use qbrs_core::insert::{
-        ConflictColumns, ConflictScope, ConflictTarget, Defaultable, Excluded, Insert, InsertRow,
+        ConflictColumns, ConflictTarget, ConflictUpdate, Defaultable, Insert, InsertRow,
         InsertSeed, InsertSelect, Insertable, IntoColumnValue, Missing, NothingToInsert,
         PartialIndex, WrittenColumns, excluded, insert, partial_index,
     };

@@ -15,9 +15,9 @@
 use std::marker::PhantomData;
 
 use crate::dialect::{Dialect, SupportsOnConflict};
-use crate::expr::{Column, ColumnKey, Expr, ExprKind, Value};
+use crate::expr::{AssignsTo, Column, ColumnKey, Expr, ExprKind, IntoExpr, Value, Writable};
 use crate::render::{QuerySink, Sink, render_ident};
-use crate::scope::{BaseTable, Cons, Nil, NotNull, Table, TableSlot};
+use crate::scope::{BaseTable, Cons, Nil, NotNull, Superset, Table, TableSlot};
 use crate::statement::{Statement, WrittenTable};
 use crate::update::Assignments;
 
@@ -346,14 +346,24 @@ impl<T: Table> ConflictTarget<T> for PartialIndex<T> {
     }
 }
 
+/// How the pseudo-table is spelled, in the one place a statement renders it
+/// and the one place the scope names it.
+pub(crate) const EXCLUDED: &str = "excluded";
+
 /// The row an `INSERT` proposed, as `ON CONFLICT DO UPDATE` sees it: a
-/// pseudo-table holding the target's own columns, spelled `excluded`.
-/// Deliberately not a [`BaseTable`], so it is not a table a query can
-/// select from — [`excluded`] is the only way to name a column of it.
+/// pseudo-table holding the target's own columns. Deliberately not a
+/// [`BaseTable`], so it is not a table a query can select from — [`excluded`]
+/// is the only way to name a column of it.
+///
+/// **Known limitation**: a schema table actually called `excluded` shadows
+/// nothing and is shadowed by this one, so an assignment naming that table
+/// in a `DO UPDATE` reads the proposed row. This is the general case of the
+/// one [`scope`](crate::scope) documents — two tables sharing a name are
+/// one table to the renderer.
 pub struct Excluded<T>(PhantomData<fn() -> T>);
 
 impl<T: Table> Table for Excluded<T> {
-    const NAME: &'static str = "excluded";
+    const NAME: &'static str = EXCLUDED;
 }
 
 /// What a `DO UPDATE` assignment may name: the conflicting row and the
@@ -364,36 +374,92 @@ pub type ConflictScope<T> = Cons<TableSlot<Excluded<T>, NotNull>, WrittenTable<T
 
 /// `excluded.column` — the value the column would have taken had the row
 /// inserted, which is what `SET total = total + EXCLUDED.total` and the
-/// plain `SET v = EXCLUDED.v` of every upsert are written with. Reads as
-/// an ordinary expression over the target's columns, so it composes with
-/// them: only the scope it is discharged against says where it may appear,
-/// and [`InsertSeed::on_conflict_do_update`]'s `SET` list is the one place
-/// that has it.
+/// plain `SET v = EXCLUDED.v` of every upsert are written with. Reads as an
+/// ordinary expression over the target's columns, so it composes with them
+/// through everything that takes one; what confines it is the scope it is
+/// discharged against, and [`ConflictUpdate`] is the only list with it.
 pub fn excluded<C: ColumnKey>(_column: Column<C>) -> Expr<Cons<Excluded<C::Table>, Nil>, C::Sql> {
     Expr::from_kind(ExprKind::Excluded {
         name: <C as crate::row::Named>::NAME,
     })
 }
 
-enum ConflictAction<T: Table> {
-    DoNothing,
-    /// The same `SET` list `UPDATE` takes — an `*Update` value, or
-    /// `Assignments` of expressions — over one table more: [`excluded`]
-    /// names the proposed row.
-    ///
-    /// **Known limitation**: no `DO UPDATE SET .. WHERE ..`. That `WHERE`
-    /// decides whether the update fires at all, which is a different
-    /// clause from the one [`partial_index`] carries — that one only picks
-    /// which index the conflict is inferred against.
-    DoUpdate(Assignments<T, ConflictScope<T>>),
+/// The `SET` list of an `ON CONFLICT DO UPDATE`: everything an `UPDATE`
+/// assigns, plus [`excluded`]. An [`Assignments`] converts into one, so a
+/// request-shaped patch reaches an upsert as it always did; the reverse
+/// doesn't exist, which is what keeps a list naming the proposed row out of
+/// a statement that has none.
+pub struct ConflictUpdate<T> {
+    sets: Vec<(&'static str, ExprKind)>,
+    _marker: PhantomData<fn() -> T>,
 }
 
-struct ConflictClause<T: Table> {
+impl<T> From<Assignments<T>> for ConflictUpdate<T> {
+    fn from(sets: Assignments<T>) -> Self {
+        ConflictUpdate {
+            sets: sets.into_sets(),
+            _marker: PhantomData,
+        }
+    }
+}
+
+impl<T: Table> ConflictUpdate<T> {
+    /// `column = <expression>`, over the conflicting row and the proposed
+    /// one — [`Assignments::set_to`] with the wider scope.
+    pub fn set_to<C, V, Idxs>(_column: Column<C>, value: V) -> Self
+    where
+        C: ColumnKey<Table = T> + Writable,
+        V: IntoExpr,
+        V::Sql: AssignsTo<C::Sql>,
+        ConflictScope<T>: Superset<V::Req, Idxs>,
+    {
+        ConflictUpdate {
+            sets: vec![(<C as crate::row::Named>::NAME, value.into_expr().kind)],
+            _marker: PhantomData,
+        }
+    }
+
+    /// One more of them.
+    pub fn and_set_to<C, V, Idxs>(mut self, _column: Column<C>, value: V) -> Self
+    where
+        C: ColumnKey<Table = T> + Writable,
+        V: IntoExpr,
+        V::Sql: AssignsTo<C::Sql>,
+        ConflictScope<T>: Superset<V::Req, Idxs>,
+    {
+        crate::update::push_set(
+            &mut self.sets,
+            <C as crate::row::Named>::NAME,
+            value.into_expr().kind,
+        );
+        self
+    }
+}
+
+impl<T> ConflictUpdate<T> {
+    fn render_into<D: Dialect>(&self, sink: &mut dyn Sink) {
+        for (i, (col, value)) in self.sets.iter().enumerate() {
+            if i > 0 {
+                sink.text(", ");
+            }
+            render_ident::<D>(sink, col);
+            sink.text(" = ");
+            crate::render::render_expr::<D>(value, sink);
+        }
+    }
+}
+
+enum ConflictAction<T> {
+    DoNothing,
+    DoUpdate(ConflictUpdate<T>),
+}
+
+struct ConflictClause<T> {
     target: Target,
     action: ConflictAction<T>,
 }
 
-fn render_conflict_clause<D: Dialect, T: Table>(clause: &ConflictClause<T>, sink: &mut dyn Sink) {
+fn render_conflict_clause<D: Dialect, T>(clause: &ConflictClause<T>, sink: &mut dyn Sink) {
     sink.text(" ON CONFLICT (");
     for (i, c) in clause.target.columns.iter().enumerate() {
         if i > 0 {
@@ -666,21 +732,26 @@ impl<D: Dialect, R: InsertRow> Insert<D, R> {
         self
     }
 
-    /// `ON CONFLICT (..) DO UPDATE SET ..`, taking the `Assignments` an
-    /// `UPDATE` sets plus [`excluded`], which names the row the `INSERT`
-    /// proposed. Pass [`partial_index`] where the index to infer is a
-    /// partial one.
+    /// `ON CONFLICT (..) DO UPDATE SET ..`. Takes the [`Assignments`] an
+    /// `UPDATE` sets, or a [`ConflictUpdate`] where an assignment names the
+    /// row the `INSERT` proposed. Pass [`partial_index`] where the index to
+    /// infer is a partial one.
+    ///
+    /// **Known limitation**: no `DO UPDATE SET .. WHERE ..`. That `WHERE`
+    /// decides whether the update fires at all, which is a different clause
+    /// from the one [`partial_index`] carries — that one only picks which
+    /// index the conflict is inferred against.
     pub fn on_conflict_do_update(
         mut self,
         target: impl ConflictTarget<R::Table>,
-        set: Assignments<R::Table, ConflictScope<R::Table>>,
+        set: impl Into<ConflictUpdate<R::Table>>,
     ) -> Self
     where
         D: SupportsOnConflict,
     {
         self.on_conflict = Some(ConflictClause {
             target: target.into_target(),
-            action: ConflictAction::DoUpdate(set),
+            action: ConflictAction::DoUpdate(set.into()),
         });
         self
     }

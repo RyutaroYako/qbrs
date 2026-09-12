@@ -147,7 +147,8 @@ pub(crate) fn render_expr<D: Dialect>(expr: &ExprKind, sink: &mut dyn Sink) {
             render_ident::<D>(sink, name);
         }
         ExprKind::Excluded { name } => {
-            sink.text("excluded.");
+            sink.text(crate::insert::EXCLUDED);
+            sink.ch('.');
             render_ident::<D>(sink, name);
         }
         ExprKind::Value(v) => sink.bind(v),

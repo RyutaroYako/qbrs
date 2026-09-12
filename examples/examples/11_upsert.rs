@@ -130,7 +130,7 @@ async fn main() {
         .values(OrdersInsert::builder().user_id(id).total(75).build())
         .on_conflict_do_update(
             partial_index(orders::user_id, orders::shipped.eq(false)),
-            Assignments::set_to(
+            ConflictUpdate::set_to(
                 orders::total,
                 qbrs::sql!(
                     qbrs::expr::BigInt,

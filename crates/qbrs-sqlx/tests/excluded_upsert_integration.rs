@@ -58,7 +58,7 @@ async fn an_upsert_reads_the_row_the_insert_proposed() {
             )
             .on_conflict_do_update(
                 visit_counts::path,
-                qbrs::update::Assignments::set_to(
+                ConflictUpdate::set_to(
                     visit_counts::hits,
                     qbrs::sql!(
                         qbrs::expr::BigInt,
@@ -71,7 +71,22 @@ async fn an_upsert_reads_the_row_the_insert_proposed() {
             )
     };
 
-    assert_eq!(upsert(3).execute(&pool).await.expect("first insert"), 1);
+    // The row starts with a label the caller supplied, so what the update
+    // branch leaves behind says which of the two rows `excluded.label` read.
+    assert_eq!(
+        qbrs::insert::insert(visit_counts::Table)
+            .values(
+                VisitCountsInsert::builder()
+                    .path("/index")
+                    .hits(3)
+                    .label("from the caller")
+                    .build(),
+            )
+            .execute(&pool)
+            .await
+            .expect("first insert"),
+        1
+    );
     assert_eq!(upsert(4).execute(&pool).await.expect("the upsert"), 1);
     assert_eq!(upsert(5).execute(&pool).await.expect("once more"), 1);
 
