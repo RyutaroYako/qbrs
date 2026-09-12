@@ -139,7 +139,7 @@ and a `FeatureNotEnabled` where one is bound.
 
 `SELECT`/`INSERT`/`UPDATE`/`DELETE` (`INSERT .. SELECT` included), every JOIN kind, `GROUP BY`/`HAVING`,
 aggregates (`count`/`count_of`/`sum`/`min`/`max`/`avg`/`string_agg`),
-`DISTINCT`, upsert (`ON CONFLICT`, partial unique indexes and `excluded(..)` included), `UNION`/`INTERSECT`/`EXCEPT`,
+`DISTINCT`, upsert (`ON CONFLICT`, partial unique indexes, `excluded(..)` and a conditional `DO UPDATE` included), `UNION`/`INTERSECT`/`EXCEPT`,
 ranking window functions, non-recursive CTEs, correlated `EXISTS`,
 a `SELECT` with no `FROM` (`now()`, `pg_try_advisory_lock($1)`),
 Postgres array columns (`Vec<T>` as `TEXT[]`/`INTEGER[]`/`BIGINT[]`/`UUID[]`),
@@ -179,9 +179,7 @@ operators (`@>`, `&&`, `= ANY(..)`, `array_append`) and the array element
 types beyond the four (`BOOLEAN[]`, `DOUBLE PRECISION[]`, `TIMESTAMPTZ[]`,
 `NUMERIC[]`, and any array whose elements can be NULL), the JSON operators
 (`->`, `->>`, `@>`, `?`) and a `json` column's missing `=`/`ORDER BY` (the
-marker is `jsonb`'s), a `WHERE` on the `DO UPDATE` action itself (the one
-`partial_index(..)` carries picks which index the conflict is inferred
-against, which is a different clause), `ON CONFLICT` or a
+marker is `jsonb`'s), `ON CONFLICT` or a
 column subset on an `INSERT .. SELECT` (it fills every column the target
 lets a statement write, and its source is a `Select` rather than a
 `UNION` or a `DynSelect`), and relations/eager-loading. `sql!{}` doesn't reach the last two: it builds an

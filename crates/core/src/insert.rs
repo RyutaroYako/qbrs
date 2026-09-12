@@ -18,6 +18,7 @@ use crate::dialect::{Dialect, SupportsOnConflict};
 use crate::expr::{AssignsTo, Column, ColumnKey, Expr, ExprKind, IntoExpr, Value, Writable};
 use crate::render::{QuerySink, Sink, render_ident};
 use crate::scope::{BaseTable, Cons, Nil, NotNull, Superset, Table, TableSlot};
+use crate::select::{Condition, Predicate};
 use crate::statement::{Statement, WrittenTable};
 use crate::update::Assignments;
 
@@ -384,26 +385,33 @@ pub fn excluded<C: ColumnKey>(_column: Column<C>) -> Expr<Cons<Excluded<C::Table
     })
 }
 
-/// The `SET` list of an `ON CONFLICT DO UPDATE`: everything an `UPDATE`
-/// assigns, plus [`excluded`]. An [`Assignments`] converts into one, so a
-/// request-shaped patch reaches an upsert as it always did; the reverse
-/// doesn't exist, which is what keeps a list naming the proposed row out of
-/// a statement that has none.
-pub struct ConflictUpdate<T> {
+/// The `DO UPDATE` half of an upsert: everything an `UPDATE` assigns, plus
+/// [`excluded`], plus the `WHERE` that decides whether the update fires at
+/// all. An [`Assignments`] converts into one, so a request-shaped patch
+/// reaches an upsert as it always did; the reverse doesn't exist, which is
+/// what keeps a list naming the proposed row out of a statement that has
+/// none.
+///
+/// It carries `D` for the reason [`Predicate`](crate::select::Predicate)
+/// does: its `WHERE` is a condition like any other, and a condition pinned
+/// to one dialect must not reach a statement of another.
+pub struct ConflictUpdate<D, T> {
     sets: Vec<(&'static str, ExprKind)>,
-    _marker: PhantomData<fn() -> T>,
+    wheres: Vec<ExprKind>,
+    _marker: PhantomData<fn() -> (D, T)>,
 }
 
-impl<T> From<Assignments<T>> for ConflictUpdate<T> {
+impl<D, T> From<Assignments<T>> for ConflictUpdate<D, T> {
     fn from(sets: Assignments<T>) -> Self {
         ConflictUpdate {
             sets: sets.into_sets(),
+            wheres: Vec::new(),
             _marker: PhantomData,
         }
     }
 }
 
-impl<T: Table> ConflictUpdate<T> {
+impl<D, T: Table> ConflictUpdate<D, T> {
     /// `column = <expression>`, over the conflicting row and the proposed
     /// one — [`Assignments::set_to`] with the wider scope.
     pub fn set_to<C, V, Idxs>(_column: Column<C>, value: V) -> Self
@@ -415,6 +423,7 @@ impl<T: Table> ConflictUpdate<T> {
     {
         ConflictUpdate {
             sets: vec![(<C as crate::row::Named>::NAME, value.into_expr().kind)],
+            wheres: Vec::new(),
             _marker: PhantomData,
         }
     }
@@ -436,30 +445,58 @@ impl<T: Table> ConflictUpdate<T> {
     }
 }
 
-impl<T> ConflictUpdate<T> {
-    fn render_into<D: Dialect>(&self, sink: &mut dyn Sink) {
+impl<D, T: Table> ConflictUpdate<D, T> {
+    /// `DO UPDATE SET .. WHERE <condition>` — which conflicting rows the
+    /// update actually touches, over the conflicting row and the proposed
+    /// one. A row the condition rejects is left as it is *and is not
+    /// counted*, which is what makes `rows_affected()` the answer to
+    /// "did this write anything" rather than always 1.
+    ///
+    /// A different clause from the one [`partial_index`] carries: that one
+    /// only picks which index the conflict is inferred against.
+    pub fn filter<C: Condition<D, ConflictScope<T>, Idxs>, Idxs>(mut self, cond: C) -> Self {
+        self.wheres.push(cond.into_predicate().into_kind());
+        self
+    }
+
+    /// AND-folds a runtime-length collection of discharged conditions, the
+    /// same way [`Update::filter_all`](crate::update::Update::filter_all)
+    /// does.
+    pub fn filter_all(
+        mut self,
+        conds: impl IntoIterator<Item = Predicate<D, ConflictScope<T>>>,
+    ) -> Self {
+        self.wheres
+            .extend(conds.into_iter().map(Predicate::into_kind));
+        self
+    }
+}
+
+impl<D, T> ConflictUpdate<D, T> {
+    fn render_into<Dl: Dialect>(&self, sink: &mut dyn Sink) {
         for (i, (col, value)) in self.sets.iter().enumerate() {
             if i > 0 {
                 sink.text(", ");
             }
-            render_ident::<D>(sink, col);
+            render_ident::<Dl>(sink, col);
             sink.text(" = ");
-            crate::render::render_expr::<D>(value, sink);
+            crate::render::render_expr::<Dl>(value, sink);
         }
+        crate::render::render_and_list::<Dl>(sink, " WHERE ", &self.wheres);
     }
 }
 
-enum ConflictAction<T> {
+enum ConflictAction<D, T> {
     DoNothing,
-    DoUpdate(ConflictUpdate<T>),
+    DoUpdate(ConflictUpdate<D, T>),
 }
 
-struct ConflictClause<T> {
+struct ConflictClause<D, T> {
     target: Target,
-    action: ConflictAction<T>,
+    action: ConflictAction<D, T>,
 }
 
-fn render_conflict_clause<D: Dialect, T>(clause: &ConflictClause<T>, sink: &mut dyn Sink) {
+fn render_conflict_clause<D: Dialect, T>(clause: &ConflictClause<D, T>, sink: &mut dyn Sink) {
     sink.text(" ON CONFLICT (");
     for (i, c) in clause.target.columns.iter().enumerate() {
         if i > 0 {
@@ -640,7 +677,7 @@ impl std::error::Error for NothingToInsert {}
 
 fn render_values_clause<D: Dialect, R: InsertRow>(
     rows: &[Vec<InsertValue>],
-    on_conflict: &Option<ConflictClause<R::Table>>,
+    on_conflict: &Option<ConflictClause<D, R::Table>>,
 ) -> QuerySink<D> {
     let mut sink = QuerySink::<D>::new();
     sink.text("INSERT INTO ");
@@ -698,7 +735,7 @@ fn render_values_clause<D: Dialect, R: InsertRow>(
 
 pub struct Insert<D, R: InsertRow> {
     rows: Vec<Vec<InsertValue>>,
-    on_conflict: Option<ConflictClause<R::Table>>,
+    on_conflict: Option<ConflictClause<D, R::Table>>,
     _marker: PhantomData<fn() -> (D, R)>,
 }
 
@@ -735,16 +772,12 @@ impl<D: Dialect, R: InsertRow> Insert<D, R> {
     /// `ON CONFLICT (..) DO UPDATE SET ..`. Takes the [`Assignments`] an
     /// `UPDATE` sets, or a [`ConflictUpdate`] where an assignment names the
     /// row the `INSERT` proposed. Pass [`partial_index`] where the index to
-    /// infer is a partial one.
-    ///
-    /// **Known limitation**: no `DO UPDATE SET .. WHERE ..`. That `WHERE`
-    /// decides whether the update fires at all, which is a different clause
-    /// from the one [`partial_index`] carries — that one only picks which
-    /// index the conflict is inferred against.
+    /// infer is a partial one. A [`ConflictUpdate`] is also where the
+    /// `WHERE` that decides whether the update fires at all lives.
     pub fn on_conflict_do_update(
         mut self,
         target: impl ConflictTarget<R::Table>,
-        set: impl Into<ConflictUpdate<R::Table>>,
+        set: impl Into<ConflictUpdate<D, R::Table>>,
     ) -> Self
     where
         D: SupportsOnConflict,

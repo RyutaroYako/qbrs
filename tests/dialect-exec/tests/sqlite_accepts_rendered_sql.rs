@@ -157,7 +157,8 @@ async fn sqlite_executes_every_rendered_statement_shape() {
             )
             .on_conflict_do_update(
                 users::email,
-                ConflictUpdate::set_to(users::display_name, excluded(users::display_name)),
+                ConflictUpdate::set_to(users::display_name, excluded(users::display_name))
+                    .filter(users::display_name.is_null()),
             )
             .to_sql(Sqlite),
     )
