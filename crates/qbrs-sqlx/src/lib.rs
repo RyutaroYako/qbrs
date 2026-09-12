@@ -240,6 +240,7 @@ impl<S, Sel> LoadExt for Returning<S, Sel> {}
 impl<D, Output> LoadExt for DynSelect<D, Output> {}
 impl<D, Output> LoadExt for SetOp<D, Output> {}
 impl<D, R: qbrs_core::insert::InsertRow> LoadExt for Insert<D, R> {}
+impl<D, T: qbrs_core::scope::Table> LoadExt for qbrs_core::insert::InsertSelect<D, T> {}
 impl<D, T: qbrs_core::scope::Table> LoadExt for Update<D, T> {}
 impl<D, T: qbrs_core::scope::Table> LoadExt for Delete<D, T> {}
 
@@ -287,6 +288,7 @@ impl<S, Sel> CountExt for Returning<S, Sel> {}
 impl<D, Output> CountExt for DynSelect<D, Output> {}
 impl<D, Output> CountExt for SetOp<D, Output> {}
 impl<D, R: qbrs_core::insert::InsertRow> CountExt for Insert<D, R> {}
+impl<D, T: qbrs_core::scope::Table> CountExt for qbrs_core::insert::InsertSelect<D, T> {}
 impl<D, T: qbrs_core::scope::Table> CountExt for Update<D, T> {}
 impl<D, T: qbrs_core::scope::Table> CountExt for Delete<D, T> {}
 
@@ -359,6 +361,7 @@ impl<S, Sel> ExecuteExt for Returning<S, Sel> {}
 impl<D, Output> ExecuteExt for DynSelect<D, Output> {}
 impl<D, Output> ExecuteExt for SetOp<D, Output> {}
 impl<D, R: qbrs_core::insert::InsertRow> ExecuteExt for Insert<D, R> {}
+impl<D, T: qbrs_core::scope::Table> ExecuteExt for qbrs_core::insert::InsertSelect<D, T> {}
 impl<D, T: qbrs_core::scope::Table> ExecuteExt for Update<D, T> {}
 impl<D, T: qbrs_core::scope::Table> ExecuteExt for Delete<D, T> {}
 

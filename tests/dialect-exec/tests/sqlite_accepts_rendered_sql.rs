@@ -653,6 +653,20 @@ async fn sqlite_executes_every_rendered_statement_shape() {
     .await;
     assert_eq!(mixed.len(), 1);
 
+    // `INSERT INTO t (..) SELECT ..`, where the source query's bind has to
+    // be numbered by the statement it lands in rather than by the query.
+    run(
+        &pool,
+        insert(orders::Table)
+            .select(
+                &select(orders::All)
+                    .from::<Sqlite, _>(orders::Table)
+                    .filter(orders::total.gt(1_000_000i64)),
+            )
+            .to_sql(Sqlite),
+    )
+    .await;
+
     let in_list = run(
         &pool,
         select((users::email,))

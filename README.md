@@ -137,7 +137,7 @@ compile error.
 
 ## What's in it
 
-`SELECT`/`INSERT`/`UPDATE`/`DELETE`, every JOIN kind, `GROUP BY`/`HAVING`,
+`SELECT`/`INSERT`/`UPDATE`/`DELETE` (`INSERT .. SELECT` included), every JOIN kind, `GROUP BY`/`HAVING`,
 aggregates (`count`/`count_of`/`sum`/`min`/`max`/`avg`/`string_agg`),
 `DISTINCT`, upsert (`ON CONFLICT`, partial unique indexes included), `UNION`/`INTERSECT`/`EXCEPT`,
 ranking window functions, non-recursive CTEs, correlated `EXISTS`,
@@ -174,8 +174,9 @@ referencing another CTE, row locking (`FOR UPDATE`/`SKIP LOCKED`), a scalar
 subquery in an expression position (`col = (SELECT max(x) ..)`), the array
 operators (`@>`, `&&`, `= ANY(..)`, `array_append`) and the array element
 types beyond the four (`BOOLEAN[]`, `DOUBLE PRECISION[]`, `TIMESTAMPTZ[]`,
-`NUMERIC[]`, and any array whose elements can be NULL), and
-relations/eager-loading. `sql!{}` doesn't reach the last two: it builds an
+`NUMERIC[]`, and any array whose elements can be NULL), `ON CONFLICT` or a
+column subset on an `INSERT .. SELECT` (it fills every column of its
+target), and relations/eager-loading. `sql!{}` doesn't reach the last two: it builds an
 expression, not a statement suffix, and a `Select` isn't a slot value.
 `IN (SELECT ..)`/`NOT IN (SELECT ..)` is covered by `Select::contains`/
 `.not_contains`, which — like `EXISTS` — is dialect-pinned rather than a

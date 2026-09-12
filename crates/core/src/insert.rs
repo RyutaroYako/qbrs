@@ -420,6 +420,38 @@ impl<D, T: Table> InsertSeed<D, T> {
         }
     }
 
+    /// `INSERT INTO t (..) SELECT ..` — the rows a query produces, checked
+    /// against the target's own row by `row::SameShape`, the same one
+    /// comparison a `UNION` branch and a CTE body go through. Every column
+    /// of the target is filled, in the target's order, which is the shape
+    /// an archival copy has.
+    pub fn select<Scope, Sel, SelIdx, TgtIdx>(
+        self,
+        query: &crate::select::Select<D, Scope, Sel>,
+    ) -> InsertSelect<D, T>
+    where
+        D: Dialect,
+        T: crate::select::AllColumns,
+        T::Columns: crate::select::ColumnList<crate::statement::WrittenTable<T>, TgtIdx>,
+        Sel: crate::select::Selection<Scope, SelIdx>,
+        Sel::Output: crate::row::SameShape<
+                crate::row::Row<
+                    <T::Columns as crate::select::ColumnList<
+                        crate::statement::WrittenTable<T>,
+                        TgtIdx,
+                    >>::Fields<crate::row::RowNil>,
+                >,
+            >,
+    {
+        let mut header = Vec::new();
+        <T::Columns as crate::select::ColumnList<crate::statement::WrittenTable<T>, TgtIdx>>::push_names(&mut header);
+        InsertSelect {
+            header,
+            body: query.fragment(),
+            _marker: PhantomData,
+        }
+    }
+
     /// Every row of a collection at once — the shape a bulk import has,
     /// where the rows are already in a `Vec` and the first one isn't
     /// special. `INSERT` with no rows has no SQL form, so an empty
@@ -437,6 +469,48 @@ impl<D, T: Table> InsertSeed<D, T> {
             on_conflict: None,
             _marker: PhantomData,
         })
+    }
+}
+
+/// `INSERT INTO t (..) SELECT ..` — rows a query produces rather than rows
+/// a caller holds. From [`InsertSeed::select`].
+///
+/// The header is the target's own column list, so the two sides line up by
+/// the target's order rather than by whatever order its `CREATE TABLE`
+/// happened to use. The body is a [`render::Fragment`], rendered before the
+/// statement knows how many parameters precede it, for the reason a CTE
+/// body is one.
+///
+/// **Known limitation**: no `ON CONFLICT` on this shape, and no column
+/// subset — the query fills every column the target has, which is what the
+/// archival copy this exists for wants. A target whose key is `GENERATED
+/// ALWAYS` refuses a copied one; declare it a plain column, as an archive
+/// table normally does.
+pub struct InsertSelect<D, T> {
+    header: Vec<&'static str>,
+    body: crate::render::Fragment,
+    _marker: PhantomData<fn() -> (D, T)>,
+}
+
+impl<D: Dialect, T: Table> crate::statement::private::Sealed for InsertSelect<D, T> {}
+
+impl<D: Dialect, T: Table> Statement for InsertSelect<D, T> {
+    type Dialect = D;
+    type Table = T;
+    fn render(&self) -> QuerySink<D> {
+        let mut sink = QuerySink::<D>::new();
+        sink.text("INSERT INTO ");
+        render_ident::<D>(&mut sink, T::NAME);
+        sink.text(" (");
+        for (i, name) in self.header.iter().enumerate() {
+            if i > 0 {
+                sink.text(", ");
+            }
+            render_ident::<D>(&mut sink, name);
+        }
+        sink.text(") ");
+        self.body.splice_into(&mut sink);
+        sink
     }
 }
 

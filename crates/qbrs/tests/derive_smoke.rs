@@ -163,6 +163,24 @@ fn an_omitted_nullable_array_binds_a_typed_null() {
     );
 }
 
+/// `INSERT INTO t (..) SELECT ..` names the target's columns rather than
+/// relying on the two sides sharing a declaration order, and the source
+/// query's binds are numbered by the statement they land in.
+#[test]
+fn insert_select_names_the_target_columns_and_renumbers_the_source() {
+    let source = select(feeds::All)
+        .from(feeds::Table)
+        .filter(feeds::id.gt(10i64));
+    let (sql, params) = qbrs::insert::insert(feeds::Table)
+        .select(&source)
+        .to_sql(Postgres);
+    assert_eq!(
+        sql,
+        r#"INSERT INTO "feeds" ("id", "topics", "weights", "seen", "raw", "notify") SELECT "feeds"."id", "feeds"."topics", "feeds"."weights", "feeds"."seen", "feeds"."raw", "feeds"."notify" FROM "feeds" WHERE ("feeds"."id" > $1)"#
+    );
+    assert_eq!(params, vec![qbrs::expr::Value::I64(10)]);
+}
+
 #[test]
 fn schema_module_and_select_builder_work_together() {
     let (sql, params) = select((users::id, users::display_name, orders::total))
