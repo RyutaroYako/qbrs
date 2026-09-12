@@ -6,9 +6,9 @@
 //! write, and pins a function to a concrete `Transaction` so the same
 //! executor can be used twice.
 //!
-//! Postgres's own rule about such a statement is the thing only Postgres can
-//! confirm: every part of it sees the same snapshot, so a row the CTE writes
-//! reads, elsewhere in the statement, as it was before.
+//! Two of its rules are Postgres's to confirm rather than the type system's:
+//! every part of the statement sees one snapshot, and a data-modifying
+//! `WITH` is legal only at the top level.
 
 mod common;
 
@@ -143,6 +143,37 @@ async fn a_write_runs_as_a_cte_body_and_the_query_reads_what_the_row_doesnt_hold
         .expect("read the written table from the same statement")
         .expect("one row");
     assert_eq!(before, "summer");
+
+    // Postgres takes a data-modifying `WITH` at the top level only, so the
+    // query binding one has to be the statement. Nothing in the types says
+    // so — this pins which error a nested one is, and that it is the
+    // server's rather than a wrong answer.
+    let nested = qbrs::update::update(campaigns::Table)
+        .set_to(campaigns::name, "winter")
+        .returning((campaigns::id, campaigns::name, campaigns::realm_id));
+    let inner = select((updated::id,)).from(qbrs::cte::with(updated::Table, &nested));
+    let refused = select(realms::id)
+        .from(realms::Table)
+        .filter(inner.exists())
+        .load(&pool)
+        .await
+        .expect_err("a write CTE below the top level");
+    let qbrs_sqlx::Error::Sqlx(sqlx::Error::Database(db)) = refused else {
+        panic!("expected a database error, got {refused:?}");
+    };
+    assert_eq!(db.code().as_deref(), Some("0A000"));
+
+    // And it really was refused: the row still holds what the snapshot
+    // query above wrote — which that query's own outer `SELECT` could not
+    // see, and a later statement can.
+    let untouched: String = select(campaigns::name)
+        .from(campaigns::Table)
+        .filter(campaigns::id.eq(campaign_id))
+        .load_one(&pool)
+        .await
+        .expect("read the campaign back")
+        .expect("one row");
+    assert_eq!(untouched, "autumn");
 
     common::shutdown(pool, guard).await;
 }

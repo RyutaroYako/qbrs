@@ -3,9 +3,11 @@
 //! on `SupportsDataModifyingCte` — which is what turns "write the row, then
 //! read a value the row doesn't hold" into one round-trip instead of two
 //! statements pinned to the same transaction.
-//! Known limitation: every part of such a statement sees one snapshot, so
+//! Known limitations: every part of such a statement sees one snapshot, so
 //! the outer query reads the CTE's own returned rows rather than the table
-//! it wrote — the last query shows what that means.
+//! it wrote — the second-to-last query shows what that means; and the query
+//! binding a write body has to *be* the statement, which the compiler does
+//! not check — the last query is the one Postgres refuses.
 //! Run: `cargo run -p qbrs-examples --example 29_data_modifying_cte`
 
 use qbrs::prelude::*;
@@ -76,4 +78,18 @@ async fn main() {
         .expect("read the written table from inside the same statement");
     println!("the same statement still sees the old totals: {as_it_was:?}");
     assert!(!as_it_was.contains(&1));
+
+    // A write body has to be the top-level statement's. Nesting the query
+    // that binds one — here as an `EXISTS` subquery — type-checks and is
+    // refused by the server, which is the limitation the module documents.
+    let nested = update(orders::Table)
+        .set_to(orders::total, 2i64)
+        .returning((orders::id, orders::user_id, orders::total));
+    let inner = select((shipped::id,)).from(cte::with(shipped::Table, &nested));
+    let refused = select(users::id)
+        .from(users::Table)
+        .filter(inner.exists())
+        .load(&pool)
+        .await;
+    println!("a write CTE below the top level: {}", refused.unwrap_err());
 }

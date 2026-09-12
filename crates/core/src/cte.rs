@@ -16,16 +16,27 @@
 //! A body can be a write statement with a `RETURNING`, where the dialect
 //! has data-modifying CTEs — which is Postgres alone. That is what turns
 //! "write a row, then read a value the row doesn't hold" into one
-//! round-trip instead of two statements in a transaction.
+//! round-trip instead of two statements in a transaction. Every part of
+//! such a statement sees one snapshot, so the outer query reads the rows
+//! the body returned and not the table it wrote.
 //!
 //! **Known limitations**: non-recursive, single-level CTEs only.
 //! `WITH RECURSIVE` and a CTE body referencing another CTE both need a CTE
 //! to be nameable *inside* another query being built.
+//!
+//! A write body must be the whole statement's, and that one is unchecked:
+//! Postgres takes a data-modifying `WITH` at the top level only, so a query
+//! binding one and then used as an `EXISTS`/`IN` subquery or a set-operation
+//! branch is refused by the server (`0A000`) rather than by the compiler.
+//! Saying it in the types would mean tracking, on every `Select`, whether
+//! its scope was reached through such a binding — which is what `Scope`
+//! deliberately does not carry, since a scope is the tables in it and
+//! nothing about how they got there.
 
 use std::marker::PhantomData;
 
 use crate::dialect::{Dialect, SupportsDataModifyingCte};
-use crate::render::{Fragment, FragmentSink};
+use crate::render::{Fragment, FragmentSink, Sink};
 use crate::row::{Row, SameShape};
 use crate::scope::Table;
 use crate::select::{Select, Selection};
@@ -95,7 +106,7 @@ pub trait CteBody<D, Idx>: cte_body::Sealed<D, Idx> {
     type Output;
 
     #[doc(hidden)]
-    fn fragment(&self) -> Fragment;
+    fn render_body(&self, sink: &mut dyn Sink);
 }
 
 mod cte_body {
@@ -112,8 +123,8 @@ impl<D: Dialect, Scope, Sel: Selection<Scope, Idx>, Idx> cte_body::Sealed<D, Idx
 impl<D: Dialect, Scope, Sel: Selection<Scope, Idx>, Idx> CteBody<D, Idx> for Select<D, Scope, Sel> {
     type Output = Sel::Output;
 
-    fn fragment(&self) -> Fragment {
-        Select::fragment::<Idx>(self)
+    fn render_body(&self, sink: &mut dyn Sink) {
+        Select::render_body_into::<Idx>(self, sink);
     }
 }
 
@@ -125,11 +136,6 @@ where
 {
 }
 
-/// A write statement's rows, read by the query it is bound into. Postgres
-/// runs it once, whether or not the outer query reads from it, and every
-/// part of the statement sees the same snapshot — so a table the CTE writes
-/// still reads as it was, and two CTEs writing one row leave an order
-/// nothing here decides.
 impl<D, S, Sel, Idx> CteBody<D, Idx> for Returning<S, Sel>
 where
     D: SupportsDataModifyingCte,
@@ -138,10 +144,8 @@ where
 {
     type Output = Sel::Output;
 
-    fn fragment(&self) -> Fragment {
-        let mut sink = FragmentSink::new();
-        Returning::render_into(self, &mut sink);
-        sink.finish()
+    fn render_body(&self, sink: &mut dyn Sink) {
+        Returning::render_into(self, sink);
     }
 }
 
@@ -153,8 +157,10 @@ where
     Body: CteBody<D, Idx>,
     Body::Output: SameShape<Row<Marker::Row>>,
 {
+    let mut sink = FragmentSink::new();
+    body.render_body(&mut sink);
     Cte {
-        body: body.fragment(),
+        body: sink.finish(),
         _marker: PhantomData,
     }
 }

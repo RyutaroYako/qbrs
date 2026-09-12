@@ -174,7 +174,10 @@ Three things that aren't obvious from a signature:
 
 Deferred rather than half-supported, and documented in the relevant module:
 `WITH RECURSIVE`, aggregates as window functions (`sum(x) OVER (..)`), a CTE
-referencing another CTE, row locking (`FOR UPDATE`/`SKIP LOCKED`), a scalar
+referencing another CTE, a data-modifying CTE anywhere but the top level
+(Postgres refuses one inside an `EXISTS`/`IN` subquery or a set-operation
+branch, and that is the server's error rather than the compiler's), row
+locking (`FOR UPDATE`/`SKIP LOCKED`), a scalar
 subquery in an expression position (`col = (SELECT max(x) ..)`), the array
 operators (`@>`, `&&`, `array_append` — `= ANY(..)` is `.eq_any(..)`) and the array element
 types beyond the four (`BOOLEAN[]`, `DOUBLE PRECISION[]`, `TIMESTAMPTZ[]`,
@@ -283,7 +286,7 @@ Design constraints worth knowing before adopting:
 | --------------------------------------------------------------------------- | :------: | :-----: | :-----: |
 | Query building & SQL rendering                                              |    ✅    |   ✅    |   ✅    |
 | Rendered SQL executed in CI                                                 |    ✅    | not yet |   ✅    |
-| Dialect capability gating (`RETURNING`, `ON CONFLICT`, `RIGHT`/`FULL JOIN`) |    ✅    |   ✅    |   ✅    |
+| Dialect capability gating (`RETURNING`, `ON CONFLICT`, `RIGHT`/`FULL JOIN`, data-modifying CTE) |    ✅    |   ✅    |   ✅    |
 | Execution (via `qbrs-sqlx`)                                                 |    ✅    | not yet | not yet |
 | Transactions (via `qbrs-sqlx`)                                              |    ✅    | not yet | not yet |
 | Streaming (`.stream(..)`, via `qbrs-sqlx`)                                  |    ✅    | not yet | not yet |

@@ -11,14 +11,21 @@ use crate::expr::{BinOp, CastTarget, ExprKind, SortDir, Value};
 /// than written as text, which is what lets the same renderer produce either
 /// a finished statement or a `Fragment` whose parameters aren't numbered
 /// yet — with no character standing in for one, and so nothing to escape.
-/// Where a rendered statement's text and binds go. `#[doc(hidden)] pub`
-/// because [`Statement::render_into`](crate::statement::Statement::render_into)
-/// names it, and that trait is sealed — nothing outside implements either.
+///
+/// `#[doc(hidden)] pub` because
+/// [`Statement::render_into`](crate::statement::Statement::render_into)
+/// names it, and sealed so that door stays a door: a foreign sink handed
+/// one could write a bind into the text, which is the one thing this trait
+/// exists to prevent.
 #[doc(hidden)]
-pub trait Sink {
+pub trait Sink: sink::Sealed {
     fn text(&mut self, s: &str);
     fn ch(&mut self, c: char);
     fn bind(&mut self, value: &Value);
+}
+
+mod sink {
+    pub trait Sealed {}
 }
 
 /// The parameters a statement has already bound, so a value bound again is
@@ -97,6 +104,8 @@ impl<D: Dialect> QuerySink<D> {
     }
 }
 
+impl<D> sink::Sealed for QuerySink<D> {}
+
 impl<D: Dialect> Sink for QuerySink<D> {
     fn text(&mut self, s: &str) {
         self.sql.push_str(s);
@@ -130,6 +139,8 @@ impl FragmentSink {
         self.0
     }
 }
+
+impl sink::Sealed for FragmentSink {}
 
 impl Sink for FragmentSink {
     fn text(&mut self, s: &str) {
@@ -352,13 +363,8 @@ pub(crate) fn render_select_list<D: Dialect>(items: &[SelectItem], sink: &mut dy
 /// character: nothing has to be escaped, re-splicing an already-spliced
 /// fragment can't confuse the two, and there is no way to hold a parameter
 /// with no text on either side of it.
-///
-/// `#[doc(hidden)] pub` because [`cte::CteBody`](crate::cte::CteBody) names
-/// it, and that trait is sealed — its fields stay private, so the only way
-/// to make one is still to render a query.
 #[derive(Debug, Clone)]
-#[doc(hidden)]
-pub struct Fragment {
+pub(crate) struct Fragment {
     head: String,
     rest: Vec<(Value, String)>,
 }
