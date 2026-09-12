@@ -16,12 +16,17 @@ pub trait Statement: private::Sealed {
     type Dialect: Dialect;
     type Table: Table;
 
+    /// Renders into whatever sink the statement is going into — a
+    /// `QuerySink` when it is the statement, a `FragmentSink` when it is a
+    /// CTE body whose placeholders the host query will number.
     #[doc(hidden)]
-    fn render(&self) -> QuerySink<Self::Dialect>;
+    fn render_into(&self, sink: &mut dyn Sink);
 
     /// The dialect is an argument for the reason `Select::to_sql`'s is.
     fn to_sql(&self, _dialect: Self::Dialect) -> (String, Vec<Value>) {
-        self.render().finish()
+        let mut sink = QuerySink::<Self::Dialect>::new();
+        self.render_into(&mut sink);
+        sink.finish()
     }
 
     /// `RETURNING`, on whichever of the three this is — the clause is the
@@ -62,9 +67,14 @@ pub struct Returning<S, Sel> {
 
 impl<S: Statement, Sel> Returning<S, Sel> {
     pub fn to_sql(&self, _dialect: S::Dialect) -> (String, Vec<Value>) {
-        let mut sink = self.statement.render();
-        sink.text(" RETURNING ");
-        render_select_list::<S::Dialect>(&self.returning, &mut sink);
+        let mut sink = QuerySink::<S::Dialect>::new();
+        self.render_into(&mut sink);
         sink.finish()
+    }
+
+    pub(crate) fn render_into(&self, sink: &mut dyn Sink) {
+        self.statement.render_into(sink);
+        sink.text(" RETURNING ");
+        render_select_list::<S::Dialect>(&self.returning, sink);
     }
 }

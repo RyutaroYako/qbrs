@@ -154,6 +154,17 @@ pub trait SupportsOnConflict: Dialect {}
 impl SupportsOnConflict for Postgres {}
 impl SupportsOnConflict for Sqlite {}
 
+/// A data-modifying statement as a CTE body — `WITH x AS (UPDATE ..
+/// RETURNING ..) SELECT ..` — which is Postgres's alone. SQLite and MySQL
+/// both take a `SELECT` there and nothing else.
+#[diagnostic::on_unimplemented(
+    message = "`{Self}` has no data-modifying CTE",
+    label = "only Postgres takes an `INSERT`/`UPDATE`/`DELETE` as a `WITH` body; the others take a `SELECT`",
+    note = "the write and the read it feeds are two statements there, in one transaction"
+)]
+pub trait SupportsDataModifyingCte: Dialect {}
+impl SupportsDataModifyingCte for Postgres {}
+
 /// `RIGHT JOIN` support. Every dialect this crate speaks has it (SQLite
 /// since 3.39, the minimum this crate targets), so this gate excludes
 /// nothing today — it is here so that `SupportsFullOuterJoin`, which MySQL

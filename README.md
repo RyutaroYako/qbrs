@@ -140,7 +140,8 @@ and a `FeatureNotEnabled` where one is bound.
 `SELECT`/`INSERT`/`UPDATE`/`DELETE` (`INSERT .. SELECT` included), every JOIN kind, `GROUP BY`/`HAVING`,
 aggregates (`count`/`count_of`/`sum`/`min`/`max`/`avg`/`string_agg`),
 `DISTINCT`, upsert (`ON CONFLICT`, partial unique indexes, `excluded(..)` and a conditional `DO UPDATE` included), `UNION`/`INTERSECT`/`EXCEPT`,
-ranking window functions, non-recursive CTEs, correlated `EXISTS`,
+ranking window functions, non-recursive CTEs (Postgres data-modifying ones
+included), correlated `EXISTS`,
 a `SELECT` with no `FROM` (`now()`, `pg_try_advisory_lock($1)`),
 Postgres array columns (`Vec<T>` as `TEXT[]`/`INTEGER[]`/`BIGINT[]`/`UUID[]`, with `= ANY(..)`),
 `JSON`/`JSONB` columns (`serde_json::Value`),

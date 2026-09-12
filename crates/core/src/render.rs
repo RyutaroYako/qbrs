@@ -11,7 +11,11 @@ use crate::expr::{BinOp, CastTarget, ExprKind, SortDir, Value};
 /// than written as text, which is what lets the same renderer produce either
 /// a finished statement or a `Fragment` whose parameters aren't numbered
 /// yet — with no character standing in for one, and so nothing to escape.
-pub(crate) trait Sink {
+/// Where a rendered statement's text and binds go. `#[doc(hidden)] pub`
+/// because [`Statement::render_into`](crate::statement::Statement::render_into)
+/// names it, and that trait is sealed — nothing outside implements either.
+#[doc(hidden)]
+pub trait Sink {
     fn text(&mut self, s: &str);
     fn ch(&mut self, c: char);
     fn bind(&mut self, value: &Value);
@@ -348,8 +352,13 @@ pub(crate) fn render_select_list<D: Dialect>(items: &[SelectItem], sink: &mut dy
 /// character: nothing has to be escaped, re-splicing an already-spliced
 /// fragment can't confuse the two, and there is no way to hold a parameter
 /// with no text on either side of it.
+///
+/// `#[doc(hidden)] pub` because [`cte::CteBody`](crate::cte::CteBody) names
+/// it, and that trait is sealed — its fields stay private, so the only way
+/// to make one is still to render a query.
 #[derive(Debug, Clone)]
-pub(crate) struct Fragment {
+#[doc(hidden)]
+pub struct Fragment {
     head: String,
     rest: Vec<(Value, String)>,
 }

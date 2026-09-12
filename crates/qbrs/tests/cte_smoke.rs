@@ -142,6 +142,64 @@ fn a_cte_of_the_same_table_stands_in_for_a_self_join() {
     );
 }
 
+with! {
+    struct raised { id: Integer, total: BigInt }
+}
+
+/// The shape the write-then-read round-trip collapses into: the `UPDATE`
+/// runs as the CTE body and the outer `SELECT` reads its rows, joined to
+/// whatever the written row itself doesn't hold.
+#[test]
+fn a_write_statement_binds_as_a_cte_body_and_the_query_reads_its_rows() {
+    let bump = qbrs::update::update(orders::Table)
+        .set_to(orders::total, 2000i64)
+        .filter(orders::id.eq(1))
+        .returning((orders::id, orders::total));
+
+    let (sql, params) = select((raised::id, raised::total, orders::total))
+        .from(qbrs::cte::with(raised::Table, &bump))
+        .inner_join(orders::Table, orders::id.eq(raised::id))
+        .to_sql(Postgres);
+    assert_eq!(
+        sql,
+        "WITH \"raised\" (\"id\", \"total\") AS (UPDATE \"orders\" SET \"total\" = $1 WHERE (\"orders\".\"id\" = $2) \
+         RETURNING \"orders\".\"id\", \"orders\".\"total\") \
+         SELECT \"raised\".\"id\", \"raised\".\"total\", \"orders\".\"total\" FROM \"raised\" \
+         INNER JOIN \"orders\" ON (\"orders\".\"id\" = \"raised\".\"id\")"
+    );
+    assert_eq!(
+        params,
+        vec![qbrs::expr::Value::I64(2000), qbrs::expr::Value::I32(1)]
+    );
+}
+
+/// A CTE body's placeholders are numbered by the statement it lands in, so
+/// a write body's binds count from where the host query has got to — the
+/// same rule a `SELECT` body follows, and the reason a body is a `Fragment`.
+#[test]
+fn a_write_body_is_numbered_by_the_statement_it_lands_in() {
+    let bump = qbrs::insert::insert(orders::Table)
+        .values(OrdersInsert::builder().total(500i64).build())
+        .returning((orders::id, orders::total));
+
+    let (sql, params) = select((raised::id,))
+        .from(qbrs::cte::with(raised::Table, &bump))
+        .filter(raised::total.gt(100i64))
+        .to_sql(Postgres);
+    assert!(
+        sql.starts_with(
+            "WITH \"raised\" (\"id\", \"total\") AS (INSERT INTO \"orders\" (\"total\") VALUES ($1) \
+             RETURNING \"orders\".\"id\", \"orders\".\"total\") "
+        ),
+        "{sql}"
+    );
+    assert!(sql.ends_with("WHERE (\"raised\".\"total\" > $2)"), "{sql}");
+    assert_eq!(
+        params,
+        vec![qbrs::expr::Value::I64(500), qbrs::expr::Value::I64(100)]
+    );
+}
+
 #[test]
 fn a_cte_names_its_row_the_way_a_table_does() {
     // `with!` generates `AllRow` for the same reason `#[derive(Table)]`

@@ -4,7 +4,7 @@ use std::marker::PhantomData;
 
 use crate::dialect::Dialect;
 use crate::expr::{AssignsTo, Column, ColumnKey, ExprKind, IntoExpr, Value, Writable};
-use crate::render::{QuerySink, Sink, render_and_list, render_expr, render_ident};
+use crate::render::{Sink, render_and_list, render_expr, render_ident};
 use crate::scope::{BaseTable, Superset, Table};
 use crate::select::{Condition, Predicate};
 use crate::statement::{Statement, WrittenTable};
@@ -221,18 +221,15 @@ impl<D, T: Table> UpdateSeed<D, T> {
 }
 
 fn render_set_clause<D: Dialect, T: Table>(
+    sink: &mut dyn Sink,
     sets: &Assignments<T>,
     wheres: &[ExprKind],
-) -> QuerySink<D> {
-    let mut sink = QuerySink::<D>::new();
+) {
     sink.text("UPDATE ");
-    render_ident::<D>(&mut sink, T::NAME);
+    render_ident::<D>(sink, T::NAME);
     sink.text(" SET ");
-    sets.render_into::<D>(&mut sink);
-
-    render_and_list::<D>(&mut sink, " WHERE ", wheres);
-
-    sink
+    sets.render_into::<D>(sink);
+    render_and_list::<D>(sink, " WHERE ", wheres);
 }
 
 pub struct Update<D, T: Table> {
@@ -302,7 +299,7 @@ impl<D: Dialect, T: Table> crate::statement::private::Sealed for Update<D, T> {}
 impl<D: Dialect, T: Table> Statement for Update<D, T> {
     type Dialect = D;
     type Table = T;
-    fn render(&self) -> QuerySink<D> {
-        render_set_clause::<D, T>(&self.sets, &self.wheres)
+    fn render_into(&self, sink: &mut dyn Sink) {
+        render_set_clause::<D, T>(sink, &self.sets, &self.wheres);
     }
 }
