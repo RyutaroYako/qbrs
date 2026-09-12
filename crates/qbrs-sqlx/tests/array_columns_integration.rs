@@ -174,5 +174,57 @@ async fn array_columns_bind_and_decode_as_the_vec_the_schema_names() {
         assert_eq!(denied, vec![vec![uuid::Uuid::nil()], vec![]]);
     }
 
+    // The shape the issue was stuck on: is this value referenced inside
+    // any row's array column — a scalar against an array, which `is_in`
+    // (a scalar against a written-out list) cannot ask.
+    let referencing: i64 = select(qbrs::expr::count())
+        .from(accounts::Table)
+        .filter("sso".to_string().eq_any(accounts::login_methods))
+        .load_one(&pool)
+        .await
+        .expect("count the rows referencing it")
+        .expect("one row");
+    assert_eq!(referencing, 1);
+
+    // `!` is "none of them", which is `<> ALL(..)` and not `<> ANY(..)` —
+    // the row whose array holds only `sso` is the one it excludes.
+    let others: i64 = select(qbrs::expr::count())
+        .from(accounts::Table)
+        .filter(!"sso".to_string().eq_any(accounts::login_methods))
+        .load_one(&pool)
+        .await
+        .expect("count the rest")
+        .expect("one row");
+    assert_eq!(others, 1);
+
+    // A nullable array column: the row that holds the value matches, and
+    // the row whose array is NULL answers NULL rather than false — so it
+    // is in neither count, and the two do not add up to the table.
+    let notified: i64 = select(qbrs::expr::count())
+        .from(accounts::Table)
+        .filter("ops@example.com".to_string().eq_any(accounts::notify))
+        .load_one(&pool)
+        .await
+        .expect("count over the nullable array")
+        .expect("one row");
+    let not_notified: i64 = select(qbrs::expr::count())
+        .from(accounts::Table)
+        .filter(!"ops@example.com".to_string().eq_any(accounts::notify))
+        .load_one(&pool)
+        .await
+        .expect("count its complement")
+        .expect("one row");
+    assert_eq!((notified, not_notified), (1, 0));
+
+    // The array can be a bound value rather than a column, which is how a
+    // request's own list of ids arrives — one parameter, not one per id.
+    let by_id: Vec<i64> = select(accounts::id)
+        .from(accounts::Table)
+        .filter(accounts::id.eq_any(vec![id, id + 1000]))
+        .load(&pool)
+        .await
+        .expect("membership in a bound array");
+    assert_eq!(by_id, vec![id]);
+
     common::shutdown(pool, guard).await;
 }

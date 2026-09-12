@@ -143,6 +143,47 @@ fn an_array_column_binds_as_one_parameter_and_vec_u8_stays_bytes() {
     );
 }
 
+/// `x = ANY(arr)` asks the question `IN` asks of a written-out list, of an
+/// array the database unnests — so the array is a column, which is what the
+/// list form cannot be. `!` is "none of them", and a nullable array column
+/// answers it too.
+#[test]
+fn a_value_is_tested_against_an_array_column_with_eq_any() {
+    let (sql, params) = select((feeds::id,))
+        .from(feeds::Table)
+        .filter("rust".to_string().eq_any(feeds::topics))
+        .filter(!1i32.eq_any(feeds::weights))
+        .filter("nightly".to_string().eq_any(feeds::notify))
+        .to_sql(Postgres);
+    assert_eq!(
+        sql,
+        r#"SELECT "feeds"."id" FROM "feeds" WHERE ($1 = ANY("feeds"."topics")) AND (NOT ($2 = ANY("feeds"."weights"))) AND ($3 = ANY("feeds"."notify"))"#
+    );
+    assert_eq!(
+        params,
+        vec![
+            qbrs::expr::Value::Text("rust".to_string()),
+            qbrs::expr::Value::I32(1),
+            qbrs::expr::Value::Text("nightly".to_string()),
+        ]
+    );
+}
+
+/// The array can be a bound value too, which is the shape a request's own
+/// list of ids arrives as — one parameter rather than one per element.
+#[test]
+fn eq_any_takes_a_bound_array_as_well_as_a_column() {
+    let (sql, params) = select((feeds::id,))
+        .from(feeds::Table)
+        .filter(feeds::id.eq_any(vec![1i64, 2, 3]))
+        .to_sql(Postgres);
+    assert_eq!(
+        sql,
+        r#"SELECT "feeds"."id" FROM "feeds" WHERE ("feeds"."id" = ANY($1))"#
+    );
+    assert_eq!(params, vec![qbrs::expr::Value::BigIntArray(vec![1, 2, 3])]);
+}
+
 /// An omitted nullable array is a NULL of the array's own type, not an
 /// untyped one — the same reason every other `NullX` variant exists.
 #[test]

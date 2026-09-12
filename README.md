@@ -142,7 +142,7 @@ aggregates (`count`/`count_of`/`sum`/`min`/`max`/`avg`/`string_agg`),
 `DISTINCT`, upsert (`ON CONFLICT`, partial unique indexes, `excluded(..)` and a conditional `DO UPDATE` included), `UNION`/`INTERSECT`/`EXCEPT`,
 ranking window functions, non-recursive CTEs, correlated `EXISTS`,
 a `SELECT` with no `FROM` (`now()`, `pg_try_advisory_lock($1)`),
-Postgres array columns (`Vec<T>` as `TEXT[]`/`INTEGER[]`/`BIGINT[]`/`UUID[]`),
+Postgres array columns (`Vec<T>` as `TEXT[]`/`INTEGER[]`/`BIGINT[]`/`UUID[]`, with `= ANY(..)`),
 `JSON`/`JSONB` columns (`serde_json::Value`),
 `IN (SELECT ..)`/`NOT IN (SELECT ..)`, transactions, streaming
 (`.stream(..)`), the `sql!{}` escape hatch, and typed prepared statements
@@ -175,7 +175,7 @@ Deferred rather than half-supported, and documented in the relevant module:
 `WITH RECURSIVE`, aggregates as window functions (`sum(x) OVER (..)`), a CTE
 referencing another CTE, row locking (`FOR UPDATE`/`SKIP LOCKED`), a scalar
 subquery in an expression position (`col = (SELECT max(x) ..)`), the array
-operators (`@>`, `&&`, `= ANY(..)`, `array_append`) and the array element
+operators (`@>`, `&&`, `array_append` — `= ANY(..)` is `.eq_any(..)`) and the array element
 types beyond the four (`BOOLEAN[]`, `DOUBLE PRECISION[]`, `TIMESTAMPTZ[]`,
 `NUMERIC[]`, and any array whose elements can be NULL), the JSON operators
 (`->`, `->>`, `@>`, `?`) and a `json` column's missing `=`/`ORDER BY` (the
@@ -257,12 +257,14 @@ Design constraints worth knowing before adopting:
   since a `?` there is a slot, so they are reached as `jsonb_exists(..)`,
   `jsonb_exists_any(..)` and `jsonb_exists_all(..)`.
 - **An array column is a value, not a set.** `Vec<T>` binds and decodes as
-  a Postgres array, and `=` compares two of them whole. The array
-  *operators* — `@>`, `&&`, `= ANY(..)`, `array_append` — are not built;
-  they go through `sql!{}`, where the column and the value are still slots.
+  a Postgres array, and `=` compares two of them whole. `.eq_any(..)` asks
+  the one question about an element — `x = ANY(arr)`, which is what `is_in`
+  asks of a written-out list, of an array the database unnests. The array
+  *operators* — `@>`, `&&`, `array_append` — are not built; they go through
+  `sql!{}`, where the column and the value are still slots.
   MySQL and SQLite have no array type at all, and since an `Expr` carries no
   dialect there is nothing to gate on: an array reaches those two as a bind
-  their driver refuses.
+  their driver refuses, and `= ANY(..)` as a statement they won't parse.
 - **Every `?` in a `sql!{}` text is a slot**, with no escape for a literal one
   — MySQL and SQLite spell their bind parameters the same way. Its text must
   be a constant (a literal, a `const`, `concat!`, `include_str!`), so

@@ -238,6 +238,13 @@ pub(crate) fn render_expr<D: Dialect>(expr: &ExprKind, sink: &mut dyn Sink) {
             }
             sink.text("))");
         }
+        ExprKind::EqAny { expr, array } => {
+            sink.ch('(');
+            render_expr::<D>(expr, sink);
+            sink.text(" = ANY(");
+            render_expr::<D>(array, sink);
+            sink.text("))");
+        }
         ExprKind::Exists {
             body,
             selection,
