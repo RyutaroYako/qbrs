@@ -588,4 +588,20 @@ async fn sqlite_executes_every_rendered_statement_shape() {
     )
     .await;
     assert!(in_list.is_empty());
+
+    // One bind-carrying fragment in three clauses. Under Sqlite each `?` is
+    // its own parameter, so the statement carries the bind three times and
+    // it is SQLite, not a string assertion, that says the three still line
+    // up with the values handed to it.
+    let bucket = sql!(BigInt, "((? / ?) * ?)", orders::total, 1000i64, 1000i64);
+    let buckets = run(
+        &pool,
+        select((bucket.clone(), count()))
+            .from(orders::Table)
+            .group_by(bucket.clone())
+            .order_by(bucket.asc())
+            .to_sql(Sqlite),
+    )
+    .await;
+    assert!(!buckets.is_empty());
 }

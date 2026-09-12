@@ -9,6 +9,14 @@
 //! query's scope like any other expression. Only the text between the slots
 //! is unchecked.
 //!
+//! One fragment reused across clauses of one statement — selected, grouped
+//! by, ordered by — renders as one expression, which is what Postgres's
+//! syntactic `GROUP BY` matching asks for. Under Postgres its binds are
+//! named again rather than bound again, since `$N` names a parameter; under
+//! MySQL and SQLite `?` *is* the next parameter, so the occurrences read
+//! alike and each rebinds, and the statement carries one parameter per
+//! occurrence.
+//!
 //! `sql!` binds that text to a `const` first, so text assembled at runtime
 //! cannot reach SQL through this macro. The primitive it expands to,
 //! `expr::raw_expr`, takes a bare `&'static str` and has no such guard —

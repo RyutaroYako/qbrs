@@ -34,7 +34,12 @@ fn a_nullable_defaulted_column_says_its_three_states_apart() {
     // Omitted: the schema's default. `None`: the same, since that is what a
     // request field without a value means. `_null()`: an explicit NULL.
     let omitted = qbrs::insert::insert(users::Table)
-        .values(UsersInsert::builder().email("a@example.com").build())
+        .values(
+            UsersInsert::builder()
+                .email("a@example.com")
+                .display_name("Ada")
+                .build(),
+        )
         .to_sql(Postgres)
         .0;
     assert!(
@@ -47,6 +52,7 @@ fn a_nullable_defaulted_column_says_its_three_states_apart() {
         .values(
             UsersInsert::builder()
                 .email("a@example.com")
+                .display_name("Ada")
                 .nickname(absent)
                 .build(),
         )
@@ -61,6 +67,7 @@ fn a_nullable_defaulted_column_says_its_three_states_apart() {
         .values(
             UsersInsert::builder()
                 .email("a@example.com")
+                .display_name("Ada")
                 .nickname_null()
                 .build(),
         )
@@ -70,6 +77,33 @@ fn a_nullable_defaulted_column_says_its_three_states_apart() {
         "{explicit}"
     );
     assert_eq!(params[2], qbrs::expr::Value::NullText);
+}
+
+/// Two columns explicitly set to NULL are one value, and Postgres names a
+/// parameter rather than rebinding it — so the row's third cell is the
+/// second cell's parameter. Which is why the three-state test above gives
+/// `display_name` a value: otherwise its NULL and `nickname`'s would be
+/// the same `$2`, and the states it is checking would be indistinguishable
+/// in the rendered SQL.
+#[test]
+fn two_columns_set_to_the_same_null_share_one_parameter() {
+    let (sql, params) = qbrs::insert::insert(users::Table)
+        .values(
+            UsersInsert::builder()
+                .email("a@example.com")
+                .display_name(None::<String>)
+                .nickname_null()
+                .build(),
+        )
+        .to_sql(Postgres);
+    assert!(sql.ends_with("VALUES ($1, $2, $2, DEFAULT)"), "{sql}");
+    assert_eq!(
+        params,
+        vec![
+            qbrs::expr::Value::Text("a@example.com".into()),
+            qbrs::expr::Value::NullText
+        ]
+    );
 }
 
 #[test]

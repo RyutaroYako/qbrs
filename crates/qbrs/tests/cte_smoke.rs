@@ -62,9 +62,34 @@ fn multiple_independent_ctes_render_comma_separated() {
     assert_eq!(
         sql,
         "WITH \"big_orders\" (\"id\", \"total\") AS (SELECT \"orders\".\"id\", \"orders\".\"total\" FROM \"orders\" WHERE (\"orders\".\"total\" > $1)), \
-         \"small_orders\" (\"id\", \"total\") AS (SELECT \"orders\".\"id\", \"orders\".\"total\" FROM \"orders\" WHERE (\"orders\".\"total\" <= $2)) \
+         \"small_orders\" (\"id\", \"total\") AS (SELECT \"orders\".\"id\", \"orders\".\"total\" FROM \"orders\" WHERE (\"orders\".\"total\" <= $1)) \
          SELECT \"big_orders\".\"id\", \"small_orders\".\"id\" FROM \"big_orders\" INNER JOIN \"small_orders\" ON (\"small_orders\".\"id\" = \"big_orders\".\"id\")"
     );
+}
+
+/// A CTE body is rendered to a `Fragment` before the host query numbers
+/// anything, so its binds reach the statement through `splice_into`. Two
+/// bodies binding the same value therefore have to meet in the host's
+/// parameter list, not in either fragment.
+#[test]
+fn two_cte_bodies_binding_the_same_value_share_one_parameter() {
+    let big = select((orders::id, orders::total))
+        .from(orders::Table)
+        .filter(orders::total.gt(1000i64));
+    let small = select((orders::id, orders::total))
+        .from(orders::Table)
+        .filter(orders::total.lte(1000i64));
+
+    let (sql, params) = select((big_orders::id, small_orders::id))
+        .from(qbrs::cte::with(big_orders::Table, &big))
+        .inner_join(
+            qbrs::cte::with(small_orders::Table, &small),
+            small_orders::id.eq(big_orders::id),
+        )
+        .to_sql(Postgres);
+    assert_eq!(sql.matches("$1").count(), 2);
+    assert!(!sql.contains("$2"), "{sql}");
+    assert_eq!(params, vec![qbrs::expr::Value::I64(1000)]);
 }
 
 #[test]

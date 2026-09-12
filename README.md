@@ -231,7 +231,13 @@ Design constraints worth knowing before adopting:
 - **Every `?` in a `sql!{}` text is a slot**, with no escape for a literal one
   — MySQL and SQLite spell their bind parameters the same way. Its text must
   be a constant (a literal, a `const`, `concat!`, `include_str!`), so
-  runtime-assembled text can never become SQL shape.
+  runtime-assembled text can never become SQL shape. One fragment reused
+  across clauses of a statement — selected, grouped by, ordered by — renders
+  as one expression, which is what Postgres's syntactic `GROUP BY` matching
+  asks for; where its placeholders are numbered a repeated value is named
+  again rather than bound again, so the rendered text depends on which of a
+  statement's values are equal, as it already depends on how many rows an
+  `INSERT` carries.
 
 ## Status
 

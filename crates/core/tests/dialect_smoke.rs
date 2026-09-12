@@ -153,6 +153,31 @@ fn sqlite_uses_double_quote_and_positional_placeholders() {
 }
 
 #[test]
+fn a_repeated_value_still_binds_once_per_position_where_placeholders_are_positional() {
+    let (sql, params) = select((users::id,))
+        .from(users::Table)
+        .filter(users::email.eq("a@example.com"))
+        .filter(users::email.eq("a@example.com"))
+        .to_sql(MySql);
+    assert_eq!(
+        sql,
+        "SELECT `users`.`id` FROM `users` WHERE (`users`.`email` = ?) AND (`users`.`email` = ?)"
+    );
+    assert_eq!(params.len(), 2);
+
+    let (sql, params) = select((users::id,))
+        .from(users::Table)
+        .filter(users::email.eq("a@example.com"))
+        .filter(users::email.eq("a@example.com"))
+        .to_sql(Sqlite);
+    assert_eq!(
+        sql,
+        "SELECT \"users\".\"id\" FROM \"users\" WHERE (\"users\".\"email\" = ?) AND (\"users\".\"email\" = ?)"
+    );
+    assert_eq!(params.len(), 2);
+}
+
+#[test]
 fn sqlite_supports_returning_mysql_does_not() {
     // SQLite 3.35+ has RETURNING, same as Postgres.
     let (sql, _) = qbrs_core::delete::delete(users::Table)

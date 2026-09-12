@@ -43,6 +43,17 @@ pub trait Dialect: 'static + Copy + Default + private::Sealed {
     /// spells "no limit" differently.
     const OFFSET_WITHOUT_LIMIT: Option<&'static str> = None;
 
+    /// Whether one bound parameter can be named from several places in a
+    /// statement. It follows from how the dialect spells a placeholder:
+    /// Postgres's `$N` names a parameter, so repeating `$1` is repeating one
+    /// value, while `?` *is* the next parameter, so a second one consumes a
+    /// second value. Naming one again keeps a statement's parameters down to
+    /// the values it actually holds, at the cost of a rendered text that
+    /// depends on which of them are equal: a driver caching prepared
+    /// statements by SQL text sees a bulk `INSERT` as one statement per
+    /// repetition pattern, as it already sees one per row count.
+    const PLACEHOLDERS_ARE_NUMBERED: bool = false;
+
     /// Writes the placeholder for the `n`th bound parameter (1-indexed).
     /// Postgres numbers them (`$1`, `$2`, ...); MySQL/SQLite are purely
     /// positional (`?` every time, matched by order of appearance).
@@ -57,6 +68,7 @@ pub struct Postgres;
 impl private::Sealed for Postgres {}
 impl Dialect for Postgres {
     const IDENTIFIER_QUOTE: char = '"';
+    const PLACEHOLDERS_ARE_NUMBERED: bool = true;
     fn write_placeholder(n: usize, out: &mut String) {
         use std::fmt::Write as _;
         let _ = write!(out, "${n}");
