@@ -106,6 +106,10 @@ fn bind_value<'q>(
         Value::UuidArray(x) => query.bind(x),
         #[cfg(feature = "uuid")]
         Value::NullUuidArray => query.bind(None::<Vec<uuid::Uuid>>),
+        #[cfg(feature = "json")]
+        Value::Json(x) => query.bind(x),
+        #[cfg(feature = "json")]
+        Value::NullJson => query.bind(None::<serde_json::Value>),
         #[cfg(feature = "chrono")]
         Value::Timestamptz(x) => query.bind(x),
         #[cfg(feature = "chrono")]
@@ -488,6 +492,8 @@ decode_row_leaf!(Vec<i32>);
 decode_row_leaf!(Vec<i64>);
 #[cfg(feature = "uuid")]
 decode_row_leaf!(Vec<uuid::Uuid>);
+#[cfg(feature = "json")]
+decode_row_leaf!(serde_json::Value);
 #[cfg(feature = "chrono")]
 decode_row_leaf!(chrono::DateTime<chrono::Utc>);
 #[cfg(feature = "chrono")]

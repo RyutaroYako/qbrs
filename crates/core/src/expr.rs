@@ -202,6 +202,12 @@ pub enum Value {
     UuidArray(Vec<uuid::Uuid>),
     #[cfg(feature = "uuid")]
     NullUuidArray,
+    /// A JSON document, opaque to this crate: it binds and decodes, and the
+    /// operators that look inside one go through `sql!{}`.
+    #[cfg(feature = "json")]
+    Json(serde_json::Value),
+    #[cfg(feature = "json")]
+    NullJson,
     /// A named placeholder in a `prepare!{}`-built query, not yet resolved
     /// to a concrete value. It rides the existing `Vec<Value>` parameter
     /// pipeline: rendering doesn't care what's *inside* a `Value`, only that
@@ -227,6 +233,8 @@ impl Value {
             Value::BigIntArray(_) | Value::NullBigIntArray => "BigIntArray",
             #[cfg(feature = "uuid")]
             Value::UuidArray(_) | Value::NullUuidArray => "UuidArray",
+            #[cfg(feature = "json")]
+            Value::Json(_) | Value::NullJson => "Json",
             Value::Placeholder(_) => "placeholder",
             #[cfg(feature = "chrono")]
             Value::Timestamptz(_) | Value::NullTimestamptz => "Timestamptz",
@@ -278,6 +286,10 @@ impl Value {
             Value::BigIntArray(v) => v.hash(hasher),
             #[cfg(feature = "uuid")]
             Value::UuidArray(v) => v.hash(hasher),
+            // `serde_json::Value` has no `Hash`; its rendering is stable
+            // and is what `binds_same_as` compares anyway.
+            #[cfg(feature = "json")]
+            Value::Json(v) => v.to_string().hash(hasher),
             #[cfg(feature = "chrono")]
             Value::Timestamptz(v) => v.hash(hasher),
             #[cfg(feature = "chrono")]
@@ -297,6 +309,8 @@ impl Value {
             | Value::NullBigIntArray => {}
             #[cfg(feature = "uuid")]
             Value::NullUuidArray => {}
+            #[cfg(feature = "json")]
+            Value::NullJson => {}
             #[cfg(feature = "chrono")]
             Value::NullTimestamptz | Value::NullDate => {}
             #[cfg(feature = "uuid")]
@@ -335,6 +349,8 @@ value_from!(Vec<i32>, IntegerArray);
 value_from!(Vec<i64>, BigIntArray);
 #[cfg(feature = "uuid")]
 value_from!(Vec<uuid::Uuid>, UuidArray);
+#[cfg(feature = "json")]
+value_from!(serde_json::Value, Json);
 
 impl From<&str> for Value {
     fn from(v: &str) -> Self {
@@ -1081,6 +1097,14 @@ sql_leaf_type!(IntegerArray, Vec<i32>, NullIntegerArray);
 sql_leaf_type!(BigIntArray, Vec<i64>, NullBigIntArray);
 #[cfg(feature = "uuid")]
 sql_leaf_type!(UuidArray, Vec<uuid::Uuid>, NullUuidArray);
+
+// A JSON document. Opaque: it goes in and comes back, and `->`, `->>`,
+// `@>` and the rest of the operators that look inside one are deferred to
+// `sql!{}` rather than half-built. Postgres's `json` and `jsonb` are one
+// type here, since which of the two a column is is the schema's business
+// and not the value's.
+#[cfg(feature = "json")]
+sql_leaf_type!(Json, serde_json::Value, NullJson);
 
 // Types a database has and Rust doesn't: each decodes to the crate its
 // feature names, so a schema that has no `timestamptz` column pays for none

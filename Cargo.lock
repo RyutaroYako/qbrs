@@ -1105,6 +1105,7 @@ version = "0.2.0"
 dependencies = [
  "qbrs-core",
  "qbrs-macros",
+ "serde_json",
 ]
 
 [[package]]
@@ -1113,6 +1114,7 @@ version = "0.2.0"
 dependencies = [
  "chrono",
  "rust_decimal",
+ "serde_json",
  "uuid",
 ]
 
@@ -1123,6 +1125,7 @@ dependencies = [
  "pglite-rs",
  "qbrs",
  "qbrs-sqlx",
+ "serde_json",
  "sqlx",
  "tempfile",
  "tokio",
@@ -1147,6 +1150,7 @@ dependencies = [
  "qbrs",
  "qbrs-core",
  "rust_decimal",
+ "serde_json",
  "sqlx",
  "tempfile",
  "thiserror",

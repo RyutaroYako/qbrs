@@ -66,3 +66,4 @@ DATABASE_URL=postgres://postgres:postgres@localhost:5432/qbrs_test \
 | [`25_insert_select`](examples/25_insert_select.rs) | `INSERT INTO t (..) SELECT ..` — an archival copy, the target's columns checked against the query by `SameShape` |
 | [`26_no_from`](examples/26_no_from.rs) | `SELECT` with no `FROM` — an advisory lock and a computed row, where naming a column has nowhere to resolve |
 | [`27_stream`](examples/27_stream.rs) | `.stream(..)` — the rows one at a time for an export too large to collect, holding one batch rather than the whole result |
+| [`28_json`](examples/28_json.rs) | a `JSON`/`JSONB` column as `serde_json::Value` — carried whole, with `sql!{}` for the operators that look inside one |

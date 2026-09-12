@@ -193,6 +193,36 @@ fn insert_select_names_the_writable_columns_and_numbers_returning_after_the_body
     );
 }
 
+#[cfg(feature = "json")]
+#[derive(Table)]
+#[table(name = "documents")]
+#[allow(dead_code)]
+struct Documents {
+    #[column(primary_key, generated)]
+    id: i64,
+    body: serde_json::Value,
+    draft: Option<serde_json::Value>,
+}
+
+/// A JSON document is one bind parameter, opaque to the renderer, and an
+/// omitted nullable one is a NULL of that type rather than an untyped one.
+#[cfg(feature = "json")]
+#[test]
+fn a_json_column_binds_as_one_opaque_parameter() {
+    let body = serde_json::json!({ "kind": "suppression" });
+    let (sql, params) = qbrs::insert::insert(documents::Table)
+        .values(DocumentsInsert::builder().body(body.clone()).build())
+        .to_sql(Postgres);
+    assert_eq!(
+        sql,
+        r#"INSERT INTO "documents" ("body", "draft") VALUES ($1, $2)"#
+    );
+    assert_eq!(
+        params,
+        vec![qbrs::expr::Value::Json(body), qbrs::expr::Value::NullJson]
+    );
+}
+
 #[test]
 fn schema_module_and_select_builder_work_together() {
     let (sql, params) = select((users::id, users::display_name, orders::total))

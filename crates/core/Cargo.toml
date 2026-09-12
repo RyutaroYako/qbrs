@@ -17,11 +17,13 @@ description = "Core type-level machinery for the qbrs query builder (scope track
 chrono = ["dep:chrono"]
 uuid = ["dep:uuid"]
 decimal = ["dep:rust_decimal"]
+json = ["dep:serde_json"]
 
 [dependencies]
 chrono = { version = "0.4", default-features = false, features = ["std"], optional = true }
 uuid = { version = "1", default-features = false, optional = true }
 rust_decimal = { version = "1", default-features = false, optional = true }
+serde_json = { version = "1", default-features = false, features = ["std"], optional = true }
 
 [package.metadata.docs.rs]
 all-features = true

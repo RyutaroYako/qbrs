@@ -217,13 +217,16 @@ fn sql_type_for(ty: &Type) -> syn::Result<TokenStream2> {
             "NaiveDate" => quote! { ::qbrs::expr::Date },
             "Uuid" => quote! { ::qbrs::expr::Uuid },
             "Decimal" => quote! { ::qbrs::expr::Numeric },
+            // `serde_json::Value`, however the schema spells it.
+            "Value" | "JsonValue" => quote! { ::qbrs::expr::Json },
             other => {
                 return Err(syn::Error::new_spanned(
                     ty,
                     format!(
                         "unsupported column type `{other}` — supported: i32, i64, f64, String, bool, Vec<u8>, \
-                         Vec<String>, Vec<i32>, Vec<i64>, Vec<Uuid>, DateTime<Utc>, NaiveDate, Uuid, Decimal \
-                         (the last four, and Vec<Uuid>, behind a `qbrs` feature), or Option<..> of one of those"
+                         Vec<String>, Vec<i32>, Vec<i64>, Vec<Uuid>, DateTime<Utc>, NaiveDate, Uuid, Decimal, \
+                         serde_json::Value (the last five, and Vec<Uuid>, behind a `qbrs` feature), or \
+                         Option<..> of one of those"
                     ),
                 ));
             }

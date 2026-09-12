@@ -130,7 +130,7 @@ sqlx = { version = "0.9", features = ["runtime-tokio", "postgres"] }  # for `PgP
 
 `qbrs-sqlx`'s methods take any `sqlx::PgExecutor`, so the `sqlx` version has
 to be the one it is built against (0.9). Column types that need a crate to
-decode to are features — `chrono`, `uuid`, `decimal` — and each has to be enabled on
+decode to are features — `chrono`, `uuid`, `decimal`, `json` — and each has to be enabled on
 **both** `qbrs` and `qbrs-sqlx`, which are separate `cfg`s over one `Value`:
 enabling only one surfaces as a `FeatureNotEnabled` at bind time, not as a
 compile error.
@@ -143,6 +143,7 @@ aggregates (`count`/`count_of`/`sum`/`min`/`max`/`avg`/`string_agg`),
 ranking window functions, non-recursive CTEs, correlated `EXISTS`,
 a `SELECT` with no `FROM` (`now()`, `pg_try_advisory_lock($1)`),
 Postgres array columns (`Vec<T>` as `TEXT[]`/`INTEGER[]`/`BIGINT[]`/`UUID[]`),
+`JSON`/`JSONB` columns (`serde_json::Value`),
 `IN (SELECT ..)`/`NOT IN (SELECT ..)`, transactions, streaming
 (`.stream(..)`), the `sql!{}` escape hatch, and typed prepared statements
 (`prepare!{}`).
@@ -244,6 +245,13 @@ Design constraints worth knowing before adopting:
   one. List every name that scope needs in the one invocation.
 - **The derives expand to `::qbrs::` paths**, so depend on the `qbrs` facade
   rather than on `qbrs-core` + `qbrs-macros` directly.
+- **A JSON column is a document, not a structure.** `serde_json::Value`
+  binds and decodes whole, and one marker covers both of Postgres's JSON
+  types — which of the two a column is belongs to its `CREATE TABLE`. The
+  operators that look inside one (`->`, `->>`, `@>`) are not built and go
+  through `sql!{}`; Postgres's `?` existence operator is the one that
+  cannot, since a `?` there is a slot, so it is reached as
+  `jsonb_exists(..)`.
 - **An array column is a value, not a set.** `Vec<T>` binds and decodes as
   a Postgres array, and `=` compares two of them whole. The array
   *operators* — `@>`, `&&`, `= ANY(..)`, `array_append` — are not built;
