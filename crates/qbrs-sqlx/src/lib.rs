@@ -190,7 +190,7 @@ async fn execute_only<'e, E: sqlx::PgExecutor<'e>>(
 /// `scope::Superset` explains. Callers never see it; it's inferred.
 #[diagnostic::on_unimplemented(
     message = "`{Self}` isn't a query this crate can run",
-    label = "a `Select`, a `RETURNING`, a `DynSelect` or a set operation, in the `Postgres` dialect, whose values are all types `DecodeRow` covers"
+    label = "a `Select`, a `RETURNING`, a `DynSelect`, a set operation, or a `SELECT` with no `FROM`, in the `Postgres` dialect, whose values are all types `DecodeRow` covers"
 )]
 pub trait RowQuery<Idx> {
     type Output: DecodeRow;
@@ -236,6 +236,7 @@ pub trait LoadExt {
 }
 
 impl<D, Scope, Sel, Outer> LoadExt for Select<D, Scope, Sel, Outer> {}
+impl<Sel> LoadExt for qbrs_core::select::SelectSeed<Sel> {}
 impl<S, Sel> LoadExt for Returning<S, Sel> {}
 impl<D, Output> LoadExt for DynSelect<D, Output> {}
 impl<D, Output> LoadExt for SetOp<D, Output> {}
@@ -256,13 +257,27 @@ where
     }
 }
 
+/// A `SELECT` with no `FROM`: the seed is the whole statement, so it is
+/// what carries the terminal.
+impl<Sel, Idx> RowQuery<Idx> for qbrs_core::select::SelectSeed<Sel>
+where
+    Sel: Selection<qbrs_core::scope::Nil, Idx>,
+    Sel::Output: DecodeRow,
+{
+    type Output = Sel::Output;
+
+    fn rendered(&self) -> (String, Vec<Value>) {
+        self.to_sql::<Postgres, Idx>(Postgres)
+    }
+}
+
 /// `SELECT count(*)` over a query's `FROM`/`JOIN`/`WHERE`/`GROUP BY`, with
 /// its `ORDER BY`/`LIMIT`/`OFFSET` dropped — a total counts the rows that
 /// match, not the page being shown. Returns a number rather than an
 /// `Option`, since a count query always produces exactly one row.
 #[diagnostic::on_unimplemented(
     message = "`{Self}` isn't a query this crate can count",
-    label = "a `Select`, a `DynSelect` or a set operation in the `Postgres` dialect is; a writing statement reports rows affected through `.execute(..)` instead"
+    label = "a `Select`, a `DynSelect` or a set operation in the `Postgres` dialect is; a writing statement reports rows affected through `.execute(..)` instead, and a `SELECT` with no `FROM` returns one row — a query missing its `.from(..)` is what this usually means"
 )]
 pub trait CountQuery<Idx> {
     #[doc(hidden)]
@@ -284,6 +299,7 @@ pub trait CountExt {
 }
 
 impl<D, Scope, Sel, Outer> CountExt for Select<D, Scope, Sel, Outer> {}
+impl<Sel> CountExt for qbrs_core::select::SelectSeed<Sel> {}
 impl<S, Sel> CountExt for Returning<S, Sel> {}
 impl<D, Output> CountExt for DynSelect<D, Output> {}
 impl<D, Output> CountExt for SetOp<D, Output> {}
@@ -357,6 +373,7 @@ pub trait ExecuteExt {
 }
 
 impl<D, Scope, Sel, Outer> ExecuteExt for Select<D, Scope, Sel, Outer> {}
+impl<Sel> ExecuteExt for qbrs_core::select::SelectSeed<Sel> {}
 impl<S, Sel> ExecuteExt for Returning<S, Sel> {}
 impl<D, Output> ExecuteExt for DynSelect<D, Output> {}
 impl<D, Output> ExecuteExt for SetOp<D, Output> {}

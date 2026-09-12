@@ -1,0 +1,22 @@
+// Deliberately-broken example: a column selected with no `FROM` at all.
+// Used to eyeball the #[diagnostic::on_unimplemented] message on `Find`,
+// which is the route a bare `Column<C>` takes. Not meant to compile — copy
+// into tests/compile-bench/examples/ and run with:
+//   cargo build -p compile-bench --example column_without_from
+use qbrs::dialect::Postgres;
+use qbrs::prelude::*;
+
+#[derive(Table)]
+#[table(name = "users")]
+#[allow(dead_code)]
+struct Users {
+    #[column(primary_key, generated)]
+    id: i64,
+    email: String,
+}
+
+fn main() {
+    // error[E0277]: `users::Table` is not available in this query's scope
+    //   the trait `Find<users::Table, _>` is not implemented for `Nil`
+    let _ = select((users::id,)).to_sql(Postgres);
+}
