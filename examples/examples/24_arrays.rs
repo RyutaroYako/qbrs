@@ -136,9 +136,9 @@ async fn main() {
     println!("lists with sre@example.com as a recipient: {listing:?}");
     assert_eq!(listing, vec!["ops".to_string()]);
 
-    // Comparing two whole *arrays* is still an operator, and those aren't
-    // built — the escape hatch takes the column and the value as slots, so
-    // both are still checked and bound.
+    // Asking whether an array *contains* another is an operator, and those
+    // aren't built — the escape hatch takes the column and the value as
+    // slots, so both are still checked and bound.
     let containing: Vec<String> = select(mailing_lists::name)
         .from(mailing_lists::Table)
         .filter(qbrs::sql!(

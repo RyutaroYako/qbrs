@@ -197,23 +197,34 @@ async fn array_columns_bind_and_decode_as_the_vec_the_schema_names() {
         .expect("one row");
     assert_eq!(others, 1);
 
-    // A nullable array column answers it as SQL says a NULL does: not as
-    // false, so the row is neither in the count nor in its complement.
+    // A nullable array column: the row that holds the value matches, and
+    // the row whose array is NULL answers NULL rather than false — so it
+    // is in neither count, and the two do not add up to the table.
     let notified: i64 = select(qbrs::expr::count())
         .from(accounts::Table)
-        .filter("ops".to_string().eq_any(accounts::notify))
+        .filter("ops@example.com".to_string().eq_any(accounts::notify))
         .load_one(&pool)
         .await
         .expect("count over the nullable array")
         .expect("one row");
     let not_notified: i64 = select(qbrs::expr::count())
         .from(accounts::Table)
-        .filter(!"ops".to_string().eq_any(accounts::notify))
+        .filter(!"ops@example.com".to_string().eq_any(accounts::notify))
         .load_one(&pool)
         .await
         .expect("count its complement")
         .expect("one row");
-    assert_eq!(notified + not_notified, 1);
+    assert_eq!((notified, not_notified), (1, 0));
+
+    // The array can be a bound value rather than a column, which is how a
+    // request's own list of ids arrives — one parameter, not one per id.
+    let by_id: Vec<i64> = select(accounts::id)
+        .from(accounts::Table)
+        .filter(accounts::id.eq_any(vec![id, id + 1000]))
+        .load(&pool)
+        .await
+        .expect("membership in a bound array");
+    assert_eq!(by_id, vec![id]);
 
     common::shutdown(pool, guard).await;
 }

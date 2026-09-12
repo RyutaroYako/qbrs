@@ -592,6 +592,11 @@ comparable_across!(
 /// compares against. Needs no seal for the reason [`Comparable`] needs
 /// none: every position is a [`SqlType`], and that is sealed, so an outside
 /// crate has no type to put in one.
+///
+/// Exact on the element's width where [`Comparable`] widens, though the
+/// database would take either: with `Integer` and `BigInt` both matching a
+/// `BIGINT[]`, an unannotated `vec![1, 2]` has no one array type left to
+/// infer, and that is the shape a call site actually writes.
 #[diagnostic::on_unimplemented(
     message = "`{Self}` isn't an array of `{Element}`",
     label = "the right side of `= ANY(..)` is an array whose elements are the left side's type",

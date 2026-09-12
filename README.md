@@ -264,7 +264,7 @@ Design constraints worth knowing before adopting:
   `sql!{}`, where the column and the value are still slots.
   MySQL and SQLite have no array type at all, and since an `Expr` carries no
   dialect there is nothing to gate on: an array reaches those two as a bind
-  their driver refuses.
+  their driver refuses, and `= ANY(..)` as a statement they won't parse.
 - **Every `?` in a `sql!{}` text is a slot**, with no escape for a literal one
   — MySQL and SQLite spell their bind parameters the same way. Its text must
   be a constant (a literal, a `const`, `concat!`, `include_str!`), so
