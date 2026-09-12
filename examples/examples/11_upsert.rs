@@ -2,7 +2,9 @@
 //! compile time to dialects with `SupportsOnConflict` (Postgres, SQLite —
 //! not MySQL, whose `ON DUPLICATE KEY UPDATE` is a different shape and a
 //! separate future API). `ConflictTarget` proves the target column(s)
-//! actually belong to the table being inserted into.
+//! actually belong to the table being inserted into, and `partial_index(..)`
+//! repeats an index's own predicate so a *partial* unique index can be the
+//! one inferred.
 //! Known limitation: no typed way yet to reference `EXCLUDED.column`.
 //! Run: `cargo run -p qbrs-examples --example 11_upsert`
 
@@ -82,4 +84,37 @@ async fn main() {
         .expect("returning row");
     println!("after DO UPDATE, display_name is now: {updated:?}");
     assert_eq!(updated, Some("Grace Brewster Hopper".to_string()));
+
+    // A conflict target of bare columns is inferred against an index over
+    // exactly those columns and no predicate, so a *partial* unique index
+    // is unreachable without repeating its predicate. The soft-delete
+    // shape — a natural key unique only among the rows still current — is
+    // what usually needs this.
+    sqlx::query("CREATE UNIQUE INDEX users_active_email ON users (email) WHERE active")
+        .execute(&pool)
+        .await
+        .expect("create the partial unique index");
+
+    let reactivated: Option<String> = insert(users::Table)
+        .values(
+            UsersInsert::builder()
+                .email("grace@example.com")
+                .display_name("Grace Hopper")
+                .build(),
+        )
+        .on_conflict_do_update(
+            partial_index(users::email, users::active.eq(true)),
+            Assignments::from_row(UsersUpdate {
+                display_name: Some(Some("Grace M. Hopper".into())),
+                ..Default::default()
+            })
+            .expect("display_name is set"),
+        )
+        .returning(users::display_name)
+        .load_one(&pool)
+        .await
+        .expect("upsert against a partial unique index")
+        .expect("returning row");
+    println!("after the partial-index upsert: {reactivated:?}");
+    assert_eq!(reactivated, Some("Grace M. Hopper".to_string()));
 }

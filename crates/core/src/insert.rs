@@ -10,10 +10,11 @@
 use std::marker::PhantomData;
 
 use crate::dialect::{Dialect, SupportsOnConflict};
-use crate::expr::{Column, ColumnKey, Value};
+use crate::expr::{Column, ColumnKey, ExprKind, Value};
 use crate::render::{QuerySink, Sink, render_ident};
 use crate::scope::{BaseTable, Table};
-use crate::statement::Statement;
+use crate::select::Condition;
+use crate::statement::{Statement, WrittenTable};
 use crate::update::Assignments;
 
 /// What a column's setter accepts, keyed by what that column's field
@@ -198,9 +199,17 @@ impl<C: crate::row::Named, Tail: InsertValues> InsertValues
     message = "`{Self}` isn't an `ON CONFLICT` target for `{T}`",
     label = "a column of that table, or a tuple of up to three of them"
 )]
-pub trait ConflictTarget<T: Table>: conflict_target::Sealed {
+pub trait ConflictTarget<D, T: Table>: conflict_target::Sealed {
     #[doc(hidden)]
-    fn column_names(&self) -> Vec<&'static str>;
+    fn into_target(self) -> Target;
+}
+
+/// The rendered half of a conflict target: the columns Postgres infers an
+/// index from, and the `index_predicate` that picks a *partial* one.
+#[doc(hidden)]
+pub struct Target {
+    columns: Vec<&'static str>,
+    index_predicate: Option<ExprKind>,
 }
 
 mod conflict_target {
@@ -227,18 +236,24 @@ mod conflict_target {
     }
 }
 
-impl<C: ColumnKey> ConflictTarget<C::Table> for Column<C> {
-    fn column_names(&self) -> Vec<&'static str> {
-        vec![C::NAME]
+impl<D, C: ColumnKey> ConflictTarget<D, C::Table> for Column<C> {
+    fn into_target(self) -> Target {
+        Target {
+            columns: vec![C::NAME],
+            index_predicate: None,
+        }
     }
 }
 
 macro_rules! conflict_target_tuple {
     ($($name:ident),+) => {
         #[allow(non_snake_case)]
-        impl<T: Table, $($name: ColumnKey<Table = T>,)+> ConflictTarget<T> for ($(Column<$name>,)+) {
-            fn column_names(&self) -> Vec<&'static str> {
-                vec![$(<$name as crate::row::Named>::NAME),+]
+        impl<D, T: Table, $($name: ColumnKey<Table = T>,)+> ConflictTarget<D, T> for ($(Column<$name>,)+) {
+            fn into_target(self) -> Target {
+                Target {
+                    columns: vec![$(<$name as crate::row::Named>::NAME),+],
+                    index_predicate: None,
+                }
             }
         }
     };
@@ -248,6 +263,55 @@ macro_rules! conflict_target_tuple {
 conflict_target_tuple!(A);
 conflict_target_tuple!(A, B);
 conflict_target_tuple!(A, B, C);
+
+/// `ON CONFLICT (a, b) WHERE deleted_at IS NULL` — the conflict target of a
+/// **partial** unique index.
+///
+/// Naming columns alone infers an index over exactly those columns and no
+/// predicate, so a partial index is unreachable without repeating its own
+/// predicate here; `ON CONFLICT` then matches that index rather than
+/// failing to find one. This is Postgres's `index_predicate` and SQLite's
+/// spelling of it, and it is only ever that: it does not filter which rows
+/// the conflict applies to.
+///
+/// ```ignore
+/// insert(members::Table)
+///     .values(row)
+///     .on_conflict_do_update(
+///         partial_index((members::team, members::handle), members::left_at.is_null()),
+///         assignments,
+///     )
+/// ```
+pub fn partial_index<D, T, Tgt, C, Idxs>(target: Tgt, index_predicate: C) -> PartialIndex<D, T>
+where
+    T: Table,
+    Tgt: ConflictTarget<D, T>,
+    C: Condition<D, WrittenTable<T>, Idxs>,
+{
+    let mut target = target.into_target();
+    target.index_predicate = Some(index_predicate.into_predicate().into_kind());
+    PartialIndex {
+        target,
+        _marker: PhantomData,
+    }
+}
+
+/// A conflict target narrowed to a partial unique index, from
+/// [`partial_index`]. Carries `D` for the reason `Predicate` does:
+/// discharging a condition gives up the tables it named, never the dialect
+/// it was built for.
+pub struct PartialIndex<D, T> {
+    target: Target,
+    _marker: PhantomData<fn() -> (D, T)>,
+}
+
+impl<D, T> conflict_target::Sealed for PartialIndex<D, T> {}
+
+impl<D, T: Table> ConflictTarget<D, T> for PartialIndex<D, T> {
+    fn into_target(self) -> Target {
+        self.target
+    }
+}
 
 enum ConflictAction<T> {
     DoNothing,
@@ -263,19 +327,23 @@ enum ConflictAction<T> {
 }
 
 struct ConflictClause<T> {
-    target: Vec<&'static str>,
+    target: Target,
     action: ConflictAction<T>,
 }
 
 fn render_conflict_clause<D: Dialect, T>(clause: &ConflictClause<T>, sink: &mut dyn Sink) {
     sink.text(" ON CONFLICT (");
-    for (i, c) in clause.target.iter().enumerate() {
+    for (i, c) in clause.target.columns.iter().enumerate() {
         if i > 0 {
             sink.text(", ");
         }
         render_ident::<D>(sink, c);
     }
     sink.ch(')');
+    if let Some(predicate) = &clause.target.index_predicate {
+        sink.text(" WHERE ");
+        crate::render::render_expr::<D>(predicate, sink);
+    }
     match &clause.action {
         ConflictAction::DoNothing => sink.text(" DO NOTHING"),
         ConflictAction::DoUpdate(sets) => {
@@ -430,12 +498,12 @@ impl<D, R: InsertRow + Insertable> Insert<D, R> {
 
 impl<D: Dialect, R: InsertRow> Insert<D, R> {
     /// `ON CONFLICT (..) DO NOTHING`.
-    pub fn on_conflict_do_nothing(mut self, target: impl ConflictTarget<R::Table>) -> Self
+    pub fn on_conflict_do_nothing(mut self, target: impl ConflictTarget<D, R::Table>) -> Self
     where
         D: SupportsOnConflict,
     {
         self.on_conflict = Some(ConflictClause {
-            target: target.column_names(),
+            target: target.into_target(),
             action: ConflictAction::DoNothing,
         });
         self
@@ -445,14 +513,14 @@ impl<D: Dialect, R: InsertRow> Insert<D, R> {
     /// an `UPDATE` sets.
     pub fn on_conflict_do_update(
         mut self,
-        target: impl ConflictTarget<R::Table>,
+        target: impl ConflictTarget<D, R::Table>,
         set: Assignments<R::Table>,
     ) -> Self
     where
         D: SupportsOnConflict,
     {
         self.on_conflict = Some(ConflictClause {
-            target: target.column_names(),
+            target: target.into_target(),
             action: ConflictAction::DoUpdate(set),
         });
         self
