@@ -228,9 +228,9 @@ pub trait RowQuery<Idx> {
 ///
 /// Implemented for every builder, satisfiable by the ones that produce
 /// rows: what a builder can't do is then reported by `RowQuery`, which says
-/// so, rather than by the method not existing. rustc answers a missing
-/// method with a list of unsatisfied bounds or, worse, by suggesting
-/// `Iterator`. Not a blanket impl, since `load`/`count`/`execute` are names
+/// so, rather than by the method not existing, which rustc answers with a
+/// list of unsatisfied bounds or, worse, by suggesting `Iterator`. Not a
+/// blanket impl, since `load`/`count`/`execute` are names
 /// other traits in a caller's scope have too. A builder added here needs
 /// its three empty impls, or its terminal goes back to reporting nothing.
 pub trait LoadExt {
@@ -272,8 +272,8 @@ pub trait LoadExt {
     /// Everything the database has to say arrives as an item.
     ///
     /// `Send` and `Unpin` are promised, so the stream can be spawned and
-    /// polled without pinning it first. A generic caller cannot ask for
-    /// either otherwise.
+    /// polled without pinning it first, which a generic caller has no way to
+    /// ask for otherwise.
     fn stream<'e, Idx, E: sqlx::PgExecutor<'e>>(
         &self,
         executor: E,
@@ -329,7 +329,7 @@ where
 /// `Option`, since a count query always produces exactly one row.
 #[diagnostic::on_unimplemented(
     message = "`{Self}` isn't a query this crate can count",
-    label = "a `Select`, a `DynSelect` or a set operation in the `Postgres` dialect is; a writing statement reports rows affected through `.execute(..)` instead, and a `SELECT` with no `FROM` returns one row. A query missing its `.from(..)` is what this usually means"
+    label = "a `Select`, a `DynSelect` or a set operation in the `Postgres` dialect is; a writing statement reports rows affected through `.execute(..)` instead. A `SELECT` with no `FROM` returns one row, so this error usually means a `.from(..)` was left off"
 )]
 pub trait CountQuery<Idx> {
     #[doc(hidden)]

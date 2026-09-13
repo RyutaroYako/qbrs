@@ -25,7 +25,7 @@ async fn main() {
     };
 
     // Each key is checked against the query's scope as it is built, then
-    // carries that proof instead of its own table list. That is what lets
+    // carries that proof instead of its own table list, which is what lets
     // `users` and `orders` keys sit in one `Vec`.
     let keys: Vec<_> = params
         .sort

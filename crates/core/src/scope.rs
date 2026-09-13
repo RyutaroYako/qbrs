@@ -99,7 +99,7 @@ impl<I: Position> Position for There<I> {
 /// `row::Field<K, _>` take the caller's own marker as a bare parameter, so
 /// the orphan rule licenses a schema crate to write
 /// `impl Find<orders::Table, Here> for <a scope without orders>`. Such an
-/// impl takes with it the compile error this crate exists to produce.
+/// impl silences the compile error this crate exists to produce.
 ///
 /// A private *type* in an associated position is not enough, and was the
 /// mistake this replaces: `type Proof: Sealed` can be satisfied from

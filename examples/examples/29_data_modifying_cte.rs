@@ -7,9 +7,9 @@
 //! is what a `RETURNING` naming a joined column would not have given.
 //! Known limitations: every part of such a statement sees one snapshot, so
 //! the outer query reads the CTE's own returned rows rather than the table
-//! it wrote, and the second-to-last query shows what that means; the query
-//! binding a write body has to *be* the statement, which the compiler does
-//! not check, and the last query is the one Postgres refuses.
+//! it wrote. The second-to-last query shows what that means. The query
+//! binding a write body also has to *be* the statement, which the compiler
+//! does not check, and the last query is the one Postgres refuses.
 //! Run: `cargo run -p qbrs-examples --example 29_data_modifying_cte`
 
 use qbrs::prelude::*;
@@ -61,8 +61,8 @@ async fn main() {
     // The reason this replaces a `RETURNING` that names a joined column
     // rather than merely standing in for one: the join belongs to the outer
     // query, so it can be a `LEFT JOIN`. A user with no orders is written
-    // and still comes back. That is the row a second query handled by not
-    // running.
+    // and still comes back. A second query would have handled that row by
+    // not running.
     let deactivate = update(users::Table)
         .set_to(users::active, false)
         .returning((users::id, users::email));

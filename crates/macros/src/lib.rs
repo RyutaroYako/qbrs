@@ -345,9 +345,9 @@ fn gen_schema_mod(
         .map(|c| c.field_name.clone())
         .collect();
     let written_list = cons_list(&written_names);
-    // The row `select(<table>::All)` decodes to with the table joined
-    // not-null. A stored `Prepared`/`DynSelect` field would otherwise have
-    // to spell that type by hand.
+    // `AllRow` is the row `select(<table>::All)` decodes to with the table
+    // joined not-null, so a stored `Prepared`/`DynSelect` field can name
+    // that type instead of spelling it by hand.
     // Spelled through the column's own `Sql` type rather than by copying
     // the field's tokens: this lands inside the generated module, where a
     // parent's `use chrono::DateTime` is not in scope, so `DateTime<Utc>`

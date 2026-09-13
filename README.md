@@ -23,14 +23,14 @@
 ---
 
 qbrs checks column and join references at compile time without giving up
-dynamic query composition. Most builders make you pick one. See [Why
-qbrs?](#why-qbrs) for how.
+dynamic query composition. Most builders make you pick one of the two. See
+[Why qbrs?](#why-qbrs) for how.
 
 > [!WARNING]
-> **Not production ready.** This is a pre-1.0 crate. The API will break
-> between 0.x minors, only Postgres has an execution layer, and nothing here
-> has been run against a real workload yet. Worth trying and filing issues
-> against; not worth putting under something that matters.
+> **Not production ready.** qbrs is pre-1.0: the API will break between 0.x
+> minors, only Postgres has an execution layer, and nothing here has been run
+> against a real workload yet. Worth trying and filing issues against; not
+> worth putting under something that matters.
 
 > **Not an ORM.** qbrs builds and renders SQL with compile-time-checked
 > column/join references; it doesn't do change-tracking, identity maps, or
@@ -117,8 +117,8 @@ you've added is a runtime question: a plain `Vec`, so `.filter()` can be
 called conditionally or in a loop without changing the query's type. Most
 builders conflate the two and need an escape hatch (`.$dynamic()`,
 `.into_boxed()`) the moment a query gets built conditionally. qbrs needs one
-too, but it stays deliberately narrow. See [Known
-limitations](#known-limitations).
+too, but it stays deliberately narrow. See
+[Known limitations](#known-limitations).
 
 ## Install
 
@@ -173,8 +173,8 @@ Three things that aren't obvious from a signature:
 
 ## Known limitations
 
-Deferred rather than half-supported, each documented in the module it belongs
-to:
+Deferred rather than half-supported, each documented in the module it
+belongs to:
 
 - `WITH RECURSIVE`.
 - Aggregates as window functions (`sum(x) OVER (..)`).
@@ -199,9 +199,9 @@ to:
   an expression, not a statement suffix, and a `Select` is not a slot value.
 - Relations and eager-loading.
 
-`IN (SELECT ..)`/`NOT IN (SELECT ..)` is not on that list. `Select::contains`/
-`.not_contains` cover it, dialect-pinned rather than a plain expression, the
-way `EXISTS` is.
+`IN (SELECT ..)`/`NOT IN (SELECT ..)` is not a limitation:
+`Select::contains`/`.not_contains` cover it. Like `EXISTS`, it is
+dialect-pinned rather than a plain expression.
 
 Design constraints worth knowing before adopting:
 
@@ -249,8 +249,8 @@ Design constraints worth knowing before adopting:
   check the sort key is in the selection, through the same `row::Field`
   lookup `Row::get` uses. That is exactly what `SELECT DISTINCT` requires,
   since Postgres rejects a sort key that isn't selected. Pair `.distinct()`
-  with one of these instead of plain `.order_by(..)`, and the query cannot
-  render SQL the database would reject. One thing they still don't catch:
+  with one of these rather than plain `.order_by(..)`, and the sort key is
+  checked before the database sees it. One thing they still don't catch:
   `.reselect(..)` after one of them keeps the `ORDER BY` it added, so swap
   the selection before sorting by it.
 - **A computed expression's nullability isn't derived** the way a column's is.

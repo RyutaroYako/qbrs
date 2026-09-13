@@ -9,8 +9,8 @@ use qbrs_examples::*;
 use qbrs_sqlx::prelude::*;
 
 /// Erasure keeps the row, so the return type has to name it. A row's type is
-/// its key list, which is long by construction, so an alias says it
-/// once. `clippy::type_complexity` counts the nesting, hence the allow.
+/// its key list, which is long by construction, so an alias says it once.
+/// `clippy::type_complexity` counts the nesting, hence the allow.
 #[allow(clippy::type_complexity)]
 type UserRow =
     Row<RowCons<users::columns::id, i64, RowCons<users::columns::email, String, RowNil>>>;

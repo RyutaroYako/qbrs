@@ -70,7 +70,7 @@ async fn a_conditional_do_update_leaves_the_rows_it_rejects_uncounted() {
         1
     );
     // The row now has a URL, so the condition rejects it: nothing written,
-    // and (the whole point) nothing counted either.
+    // and nothing counted either, which is the whole point.
     assert_eq!(
         grant_once("https://second")
             .execute(&pool)

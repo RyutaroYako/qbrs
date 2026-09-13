@@ -1,5 +1,5 @@
-//! `.stream(..)`: the rows one at a time, for a result too large to hold,
-//! such as an export that writes as it reads rather than collecting first.
+//! `.stream(..)`: the rows one at a time, for a result too large to hold.
+//! An export can then write as it reads rather than collecting first.
 //! Not a cursor: the server still produces the whole result and the
 //! connection is held until the stream ends; what this bounds is the
 //! client's memory.

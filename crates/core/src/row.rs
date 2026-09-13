@@ -43,7 +43,7 @@ impl<K, V, Tail> RowCons<K, V, Tail> {
     /// This cell's value. With `tail` and the key's `Named::NAME`, this is
     /// everything a downstream crate needs to walk a row under whatever
     /// bounds it wants (`serde::Serialize`, `Display`, anything).
-    /// `qbrs-core` can't offer that itself, having no dependencies.
+    /// `qbrs-core` can't offer those impls itself, having no dependencies.
     pub fn value(&self) -> &V {
         &self.value
     }

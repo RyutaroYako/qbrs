@@ -1,5 +1,6 @@
-//! `INSERT INTO t (..) SELECT ..`: the archival copy, of rows a query
-//! produces rather than rows the caller holds. The header is the columns
+//! `INSERT INTO t (..) SELECT ..`: the archival copy. The rows are the ones
+//! a query produces rather than the ones the caller holds. The header is
+//! the columns
 //! the target lets a statement write, so a generated key stays the
 //! database's to fill, and `row::SameShape` checks the query against them
 //! at compile time, the same one comparison a `UNION` branch goes through.

@@ -164,7 +164,7 @@ impl<D: Dialect, Output> SetOp<D, Output> {
     }
 
     /// The set operation itself, without the ordering and paging applied to
-    /// its result, which is what a count of it must leave out.
+    /// its result. Those are what a count of it must leave out.
     fn render_branches(&self, sink: &mut QuerySink<D>) {
         let branch = |sink: &mut QuerySink<D>, sql: &Fragment| {
             // A branch has to be shut off from the operator beside it:
@@ -188,7 +188,7 @@ impl<D: Dialect, Output> SetOp<D, Output> {
         // `INTERSECT` binds tighter than `UNION`/`EXCEPT`, so flat text
         // would reassociate `a.union(&b).intersect(&c)` into
         // `A UNION (B INTERSECT C)` on Postgres. SQLite reads compound
-        // operators left to right, so flat text would also mean different
+        // operators left to right, so one flat text would mean two different
         // things in the two dialects this crate executes. Parenthesising the
         // accumulator wherever the operator changes says the fold outright,
         // without encoding any dialect's precedence table.

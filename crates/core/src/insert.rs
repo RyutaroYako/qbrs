@@ -1,9 +1,8 @@
 //! `INSERT INTO ..`, from values or from a query.
 //!
 //! A column with a schema default gets a `Defaultable<T>` field, so "omit"
-//! and "explicit value" stay distinguishable. A column that is also
-//! nullable gets `Defaultable<Option<T>>`, making that three distinct
-//! states. Omission renders as the `DEFAULT` keyword in that row's
+//! and "explicit value" stay distinguishable. One that is nullable as well
+//! gets `Defaultable<Option<T>>`, making that three distinct states. Omission renders as the `DEFAULT` keyword in that row's
 //! `VALUES (..)` tuple rather than changing the column list, so rows that
 //! omit different fields still share one statement.
 //!
@@ -68,7 +67,7 @@ pub trait Insertable: InsertableSealed {}
 /// seal here can't hold anyway, since the derive must implement this in
 /// the schema's own crate, where any nameable proof is nameable twice.
 /// `Missing<C>` doesn't implement it, which is what `build()` is bounded
-/// by. That bound sits on the method rather than on the slot's type, so an
+/// by. That bound sits on the method rather than on the impl block, so an
 /// incomplete row is a sentence naming the column rather than a missing
 /// `build`.
 #[diagnostic::on_unimplemented(
@@ -149,7 +148,7 @@ pub trait InsertRow: private::Sealed {
 
 mod insert_values {
     /// Sealed to the two shapes a chain has, so `Values` is always a real
-    /// one, for the reason `row::ColumnNames` is sealed.
+    /// one. `row::ColumnNames` is sealed for the same reason.
     pub trait Sealed {}
 }
 
@@ -296,7 +295,7 @@ conflict_target_tuple!(A, B, C);
 /// **partial** unique index.
 ///
 /// A target of bare columns is matched against an index over exactly those
-/// columns whose own predicate the target's implies, and a target with no
+/// columns whose own predicate the target's implies. A target with no
 /// predicate implies only an index with none, so a partial index is
 /// unreachable without one. Implication, not equality: a predicate saying
 /// more than the index's still picks it. This is Postgres's

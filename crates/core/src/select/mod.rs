@@ -442,9 +442,9 @@ impl<Sel> SelectSeed<Sel> {
     /// column reference has nowhere to resolve and does not compile.
     ///
     /// **Known limitations**: this shape is the statement and nothing else.
-    /// It cannot be `.prepare()`d, since a bound value goes in a `sql!{}`
-    /// slot instead. It cannot be a `UNION` branch, a CTE body, or an
-    /// `EXISTS` subquery. It cannot be `.count()`ed either: a `SELECT` with
+    /// It cannot be `.prepare()`d (a bound value goes in a `sql!{}` slot
+    /// instead). It cannot be a `UNION` branch, a CTE body, or an `EXISTS`
+    /// subquery. It cannot be `.count()`ed either: a `SELECT` with
     /// no `FROM` returns one row, so counting it answers nothing.
     ///
     /// The dialect is an argument for the reason `Select::to_sql`'s is.

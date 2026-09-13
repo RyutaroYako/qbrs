@@ -175,8 +175,8 @@ async fn array_columns_bind_and_decode_as_the_vec_the_schema_names() {
     }
 
     // The shape the issue was stuck on: is this value referenced inside
-    // any row's array column? That is a scalar against an array, which
-    // `is_in` (a scalar against a written-out list) cannot ask.
+    // any row's array column? That tests a scalar against an array, which
+    // `is_in` (a scalar against a written-out list) cannot do.
     let referencing: i64 = select(qbrs::expr::count())
         .from(accounts::Table)
         .filter("sso".to_string().eq_any(accounts::login_methods))

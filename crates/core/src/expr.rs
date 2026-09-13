@@ -12,9 +12,9 @@ use crate::scope::{Concat, Cons, MaybeNull, Nil, Table, WrapNullable};
 
 mod sql_type {
     /// Sealed because the set really is closed: `Value` is a closed enum,
-    /// so a type this crate can't render has nothing to be. An open
-    /// `SqlType` is also what lets a schema crate pair a lying
-    /// `WrapNullable<MaybeNull>` with a column type of its own.
+    /// so a type this crate can't render has nothing to be. Sealing also
+    /// stops a schema crate from pairing a lying `WrapNullable<MaybeNull>`
+    /// with a column type of its own.
     pub trait Sealed {}
 }
 
@@ -414,7 +414,7 @@ impl<Req, S: SqlType> Clone for Expr<Req, S> {
 #[diagnostic::on_unimplemented(
     message = "`{Self}` isn't a SQL expression",
     label = "a column, a literal, an aggregate, or a `sql!{{}}` fragment is; a `label!` name is not",
-    note = "an `Option` isn't one either: asking about NULL is `.is_null()`, and assigning it is `null::<Text>()`, since `= NULL` is never true in SQL"
+    note = "an `Option` isn't one either: asking about NULL is `.is_null()`, and assigning it is `null::<Text>()`; `= NULL` is never true in SQL"
 )]
 pub trait IntoExpr {
     /// The SQL type this expression has. An associated type rather than a
@@ -481,9 +481,9 @@ pub trait ColumnKey: crate::row::Spelled + Copy + 'static {
 /// A column reference, identified entirely by its `ColumnKey`. Generated
 /// per-field by `#[derive(Table)]` as a `pub const NAME: Column<..>` inside
 /// each table's module (e.g. `users::id`). A plain, `Copy` value, tied to no
-/// particular query. That is what lets it be reused across queries and
-/// passed as an ordinary function argument instead of through a scope-bound
-/// cursor closure.
+/// particular query, so it can be reused across queries and passed as an
+/// ordinary function argument instead of through a scope-bound cursor
+/// closure.
 pub struct Column<C: ColumnKey>(PhantomData<C>);
 
 impl<C: ColumnKey> Column<C> {
@@ -1024,8 +1024,8 @@ pub fn null<S: NullValue>() -> Expr<Nil, crate::scope::Nullable<S>> {
 mod raw_arg {
     /// Sealed for the reason `select::ColumnList` is: `Req` is a free
     /// parameter, and a slot's value can be delegated to a real column, so a
-    /// hand-written impl could claim `Nil` while naming a table. That is
-    /// exactly the scope check a `sql!` slot exists to keep.
+    /// hand-written impl could claim `Nil` while naming a table, defeating
+    /// the scope check a `sql!` slot exists to keep.
     pub trait Sealed {}
     impl<T: super::IntoExpr> Sealed for T {}
 }

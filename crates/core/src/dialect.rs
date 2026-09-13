@@ -85,8 +85,9 @@ pub enum StringAggSyntax {
     /// inside a literal as an escape, so a lone one would carry the closing
     /// quote away and has to be doubled. A session running
     /// `NO_BACKSLASH_ESCAPES` reads the doubled pair as two backslashes,
-    /// which is not the separator asked for. It is still no way out of the
-    /// literal, since a doubled quote escapes under either mode.
+    /// which is not the separator asked for. The doubled pair is still no
+    /// way out of the literal, since a doubled quote escapes under either
+    /// mode.
     SeparatorKeyword {
         func: &'static str,
         backslash_escapes: bool,
@@ -168,10 +169,10 @@ impl SupportsDataModifyingCte for Postgres {}
 
 /// `RIGHT JOIN` support. Every dialect this crate speaks has it (SQLite
 /// since 3.39, the minimum this crate targets), so this gate excludes
-/// nothing today. It is here for two reasons. It keeps the capability MySQL
-/// genuinely lacks, `SupportsFullOuterJoin`, one of its own rather than a
-/// pair of joins lumped together. And it makes adding a dialect without
-/// `RIGHT JOIN` a new impl rather than a change to `right_join`'s
+/// nothing today. It is here for two reasons. `SupportsFullOuterJoin`, the
+/// capability MySQL genuinely lacks, stays a capability of its own rather
+/// than a pair of joins lumped together. And adding a dialect without
+/// `RIGHT JOIN` stays a new impl rather than a change to `right_join`'s
 /// signature.
 #[diagnostic::on_unimplemented(
     message = "`{Self}` has no `RIGHT JOIN`",

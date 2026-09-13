@@ -2,7 +2,7 @@
 //! calls with different, compile-time-typed values. That closes the gap
 //! Drizzle's own `sql.placeholder()` leaves: its `.execute()` takes an
 //! untyped `Record<string, unknown>`, so a missing/misspelled key is only
-//! a runtime error, where here it's the exact struct `prepare!{}` generated.
+//! a runtime error. Here it is the exact struct `prepare!{}` generated.
 //! Run: `cargo run -p qbrs-examples --example 10_prepared`
 
 use qbrs::prelude::*;

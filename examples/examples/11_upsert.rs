@@ -89,9 +89,9 @@ async fn main() {
     assert_eq!(updated, Some("Grace Brewster Hopper".to_string()));
 
     // A conflict target of bare columns is inferred against an index over
-    // exactly those columns whose predicate the target's implies. No
-    // predicate implies nothing, so a *partial* unique index needs its own
-    // repeated. `orders` has no unique constraint on `user_id`, so the
+    // exactly those columns whose predicate the target's implies, and a
+    // target with no predicate implies nothing, so a *partial* unique index
+    // needs its own repeated. `orders` has no unique constraint on `user_id`, so the
     // partial index below is the only one there is to infer.
     sqlx::query(
         "CREATE UNIQUE INDEX orders_one_open_per_user ON orders (user_id) WHERE NOT shipped",
@@ -151,7 +151,7 @@ async fn main() {
     assert_eq!(accumulated, 325);
 
     // A `WHERE` on the `DO UPDATE` itself: the row is touched only if the
-    // condition holds, and a rejected one is not counted. That is what
+    // condition holds, and a rejected one is not counted, which is what
     // lets a one-row upsert's count answer "was this already done?". An
     // unconditional `DO UPDATE` always reports 1.
     let raise_once = |total: i64| {

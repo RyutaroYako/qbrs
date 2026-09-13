@@ -30,8 +30,8 @@ async fn main() {
     println!("buyers, deduplicated and sorted: {buyers:?}");
 
     // A single un-tupled selection has nothing to name, so
-    // `.order_by_selection` sorts by "the one selected column" with no key
-    // to pass.
+    // `.order_by_selection` sorts by "the one selected column" with no key to
+    // pass.
     let emails: Vec<String> = select(users::email)
         .from(users::Table)
         .distinct()

@@ -1,12 +1,12 @@
-//! A Drizzle-flavored, type-safe SQL query builder for Rust. Not an ORM, and
-//! not a raw-SQL macro. Column and join references are checked at compile
+//! A Drizzle-flavored, type-safe SQL query builder for Rust. Not an ORM, not
+//! a raw-SQL macro. Column and join references are checked at compile
 //! time without giving up dynamic composition, and scope resolution stays
 //! linear as the join count grows.
 //!
 //! This is the facade users depend on: [`qbrs_core`]'s builders and renderer
 //! plus the derive and macros from `qbrs-macros`. Nothing here touches a
-//! database. Executing a rendered statement against Postgres is
-//! [`qbrs-sqlx`](https://docs.rs/qbrs-sqlx).
+//! database. [`qbrs-sqlx`](https://docs.rs/qbrs-sqlx) executes a rendered
+//! statement against Postgres.
 //!
 //! ```
 //! use qbrs::prelude::*;
@@ -59,9 +59,9 @@ pub use qbrs_macros::{FromRow, Table, label, with};
 /// points, the extension traits whose methods would otherwise be
 /// unreachable, the dialect markers, the macros, and every type that turns
 /// up in a signature or a type alias a user may have to write. That last
-/// group is a `Scope` list, a `Row` list, a `Predicate`, an insert field's
-/// `Defaultable`, and the three `*Seed`s a single-dialect app wraps to stop
-/// repeating `::<Postgres, _>`.
+/// group covers a `Scope` list, a `Row` list, a `Predicate`, an insert
+/// field's `Defaultable`, and the three `*Seed`s a single-dialect app wraps
+/// to stop repeating `::<Postgres, _>`.
 /// Nothing that only ever appears as `impl Trait` in an argument position.
 pub mod prelude {
     pub use crate::{FromRow, Table, label, with};

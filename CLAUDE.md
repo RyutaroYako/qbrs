@@ -41,8 +41,8 @@ cargo test -p dialect-exec                                   # rendered SQL, run
 **No database setup is needed anywhere.** Tests and examples that need Postgres start their
 own throwaway PostgreSQL 17.5, linked into the binary via `pglite-rs` (multi-process mode, a
 real postmaster over a unix socket). Docker is not involved, and nothing is fetched while a
-test runs. The engine itself is downloaded once, the first time `pglite-rs-sys` is built,
-from GitHub Releases into `~/.cache/pglite-rs`. That directory is outside everything cargo
+test runs. The fetching happens at build time: the engine is downloaded once, the first
+time `pglite-rs-sys` is built, from GitHub Releases into `~/.cache/pglite-rs`. That directory is outside everything cargo
 tracks, while `target/` records the absolute path into it, which is why CI caches the two
 together. Set `DATABASE_URL` to run the same tests/examples against an external Postgres
 instead. Integration tests are written to be idempotent (`DROP TABLE IF EXISTS` first), so
@@ -249,8 +249,9 @@ take a `Fragment`. Don't reintroduce a bare `(String, Vec<Value>)` pair.
 `ExprKind::InSubquery` (`x IN (SELECT ..)`/`NOT IN`) is the same shape one level up: it holds
 its own `SelectBody`/selection unrendered *and* an `lhs: Box<ExprKind>` for the left side, and
 `Select::contains`/`.not_contains` return a `select::InSubquery<D, Req>`, which is a
-`Condition<D, ..>` and nothing else, for the same reason `Exists` is one. `Req` there is `Outer::Tables` folded
-with `lhs`'s own `Req` (via `scope::Concat`), since `lhs` is built independently and may
+`Condition<D, ..>` and nothing else, for the same reason `Exists` is one. `Req` there is
+`Outer::Tables` folded with `lhs`'s own `Req` (via `scope::Concat`), since `lhs` is built
+independently and may
 reference tables the subquery itself never joined. Checking `lhs` against the subquery's one
 selected column needs the column's `SqlType` marker, which `Selection::Output` has already
 resolved away to a native Rust type by the time it's visible here. That is what
@@ -292,10 +293,11 @@ privacy does not reach through projection, so `<Nil as Superset<Nil, Nil>>::Proo
 from outside. What holds is a **private supertrait carrying the trait's own parameters**,
 implemented only for the honest combinations: there is no type to project and no trait to
 implement. `row::SameNameAs`, `row::ColumnNames`, `expr::SqlType` and `scope::WrapNullable`
-are sealed the same way. `ColumnNames` because `CteShape::Row` is bounded by it, so an open
-impl let a `WITH` header be spelled by something that was not the row `SameShape` checked
-(and put a local type where `SameShape` could then be forged). `SqlType` and `WrapNullable`
-because what a join does to a column is the join's business: an open
+are sealed the same way. `ColumnNames` is sealed because `CteShape::Row` is bounded by it,
+so an open impl let a `WITH` header be spelled by something that was not the row
+`SameShape` checked (and put a local type where `SameShape` could then be forged).
+`SqlType` and `WrapNullable` are sealed because what a join does to a column is the join's
+business: an open
 `WrapNullable<MaybeNull>` let a schema declare that a `LEFT JOIN` leaves its column NOT
 NULL, which decodes a NULL into a non-`Option`.
 `row::SameNameAs` is sealed the same way in spirit (a private supertrait carrying the one
@@ -306,8 +308,8 @@ for the reason `InsertRow` is: each pairs a type-level claim with the runtime li
 supposed to match it, and a hand-written impl could select a row that decodes transposed.
 `select::SelectableSealed` is the `#[doc(hidden)] pub` half, since the derive emits
 `AllColumns`/`CteShape` in the schema's own crate. `ColumnList` and `RawArg` need no such
-door, since nothing outside this crate implements them, and both need the seal: each pairs
-a type-level claim with runtime data (`ColumnList` the row against the pushed items, `RawArg`
+door, since nothing outside this crate implements them. Both still need the seal: each
+pairs a type-level claim with runtime data (`ColumnList` the row against the pushed items, `RawArg`
 a slot's `Req` against the column it delegates to), which is precisely what splitting
 `AllColumns` was meant to remove.
 
@@ -332,8 +334,7 @@ names to its module and `use crate::schema::*;` is all a call site needs.
 It also emits `const All` (a `select::All<Table>`) and the `select::AllColumns` impl behind
 it, so `select(users::All)` never restates the column list. That impl states only
 `type Columns`, the table's columns as a type-level list, since `select::ColumnList` walks
-that
-one list for both the row's fields and the rendered items; stating the two separately is
+that one list for both the row's fields and the rendered items; stating the two separately is
 what let a hand-written impl select a row that decodes transposed. It emits `type AllRow`
 too: what that selection decodes to with the table joined not-null, so a stored
 `Prepared`/`DynSelect` names a row instead of spelling a `RowCons` chain by hand. A
@@ -345,9 +346,8 @@ carry a whole table, and it makes the 32-element limit count tables rather than 
 `label` module so a same-named local binding can never shadow it. One invocation per scope
 (a second one collides on `mod label`); declaring it inside the function that runs the
 query is the intended usage and sidesteps that. Nullability comes from `Option<T>` wrapping
-(no separate attribute); attributes are only
-`#[column(primary_key | generated | default)]`. Every column setter takes
-`insert::IntoColumnValue<Field>`, one trait for all
+(no separate attribute); attributes are only `#[column(primary_key | generated |
+default)]`. Every column setter takes `insert::IntoColumnValue<Field>`, one trait for all
 four field shapes, so two same-typed columns accept the same values however they are
 declared. A table whose every column is generated leaves an `INSERT` with no column to
 name, which SQL spells `DEFAULT VALUES` (`() VALUES ()` in MySQL) and spells for exactly
@@ -361,9 +361,9 @@ turn produced SQL malformed for any table or dropped a value: a `COLUMNS` const 
 positional values (`VALUES ($1, $2), ($3)`), then pairs reconciled against the first row's
 names (an empty first row discarded the rest), then pairs reconciled against a declared
 header (a surplus pair vanished). A chain can carry neither a surplus cell nor a missing one.
-A chain whose keys repeat a column is still a lie a hand-written impl can tell, though the
-derive can't, since Rust field names are unique, and the database rejects it. This is for
-the reason `AllColumns` carries one list: its seal is a `#[doc(hidden)]` door the derive
+A chain whose keys repeat a column is still a lie a hand-written impl can tell, and the
+database rejects it. The derive cannot tell it, since Rust field names are unique. This is
+for the reason `AllColumns` carries one list: its seal is a `#[doc(hidden)]` door the derive
 must write in the schema's crate, and two lists that have to line up could be made not to.
 `INSERT INTO t (a, b, c) VALUES ($1)` is malformed whatever the table is.
 
@@ -471,9 +471,9 @@ transactional API. Everything returns `qbrs_sqlx::Result<T>`; keep `UnresolvedPl
   quote compiler error codes.
 - **No em-dash in prose, anywhere.** Not in `README.md`, not in a doc comment, not in a
   `#[diagnostic::on_unimplemented]` string a reader meets as a compiler error. A sentence
-  reaching for one wants a period, a colon, or parentheses, and usually wants to be two
-  sentences. The en-dash is out too: a range is `2018-2026`. One idea per sentence, and a
-  sentence that enumerates six things is a list.
+  reaching for one usually wants to be two sentences; a colon or parentheses covers the
+  rest. The en-dash goes too: a version range is `0.1-0.4`.
+- **One idea per sentence.** A sentence that enumerates six things is a list.
 - **Deferred, not half-supported.** `WITH RECURSIVE`, aggregate window functions,
   CTE-referencing-CTE, row locking, a *scalar* subquery in an expression position, and
   relations/eager-loading are explicitly out of scope and documented as "Known limitations"
