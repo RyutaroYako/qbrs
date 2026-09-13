@@ -3,8 +3,8 @@
 //! Postgres infers which index a conflict target means, and a target of
 //! bare columns matches only an *unfiltered* index over them. Whether
 //! repeating the index's predicate reaches a partial one is Postgres's
-//! answer to give, not a string assertion's — and the same run says the
-//! rows the index does not cover still insert rather than conflicting.
+//! answer to give, not a string assertion's. The same run says the rows
+//! the index does not cover still insert rather than conflicting.
 
 mod common;
 
@@ -75,7 +75,7 @@ async fn a_conflict_target_reaches_a_partial_unique_index() {
 
     assert_eq!(upsert("ada").execute(&pool).await.expect("first insert"), 1);
     // The second one conflicts with the partial index and takes the update
-    // branch — which is the whole point: without the predicate Postgres
+    // branch, which is the whole point: without the predicate Postgres
     // finds no index to infer and rejects the statement outright.
     assert_eq!(upsert("ada").execute(&pool).await.expect("the upsert"), 1);
 

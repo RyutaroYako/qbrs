@@ -1,5 +1,5 @@
 # Workspace config for `cargo-release` (https://github.com/crate-ci/cargo-release).
-# Run via ./scripts/release.sh, never `cargo release` directly — the script
+# Run via ./scripts/release.sh, never `cargo release` directly. The script
 # runs the same checks CI gates on before ever touching a version number.
 #
 # `tests/compile-bench`, `tests/dialect-exec`, `tests/embedded-pg`, and
@@ -13,7 +13,7 @@ shared-version = true
 consolidate-commits = true
 
 # qbrs and qbrs-sqlx depend on qbrs-core/qbrs-macros via
-# `[workspace.dependencies]` version pins — keep those exact rather than
+# `[workspace.dependencies]` version pins. Keep those exact rather than
 # leaving a wider range once every crate has actually moved to the new
 # version.
 dependent-version = "upgrade"

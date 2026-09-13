@@ -29,9 +29,9 @@ mod private {
 pub use private::Sealed as UpdateRowSealed;
 
 /// A `SET` list that is known non-empty, which is the only kind that has a
-/// SQL form. Every `*Update` derives `Default`, and that value — what a
-/// PATCH handler holds when the request changed nothing — has no
-/// assignments at all, so the check belongs where such a value enters a
+/// SQL form. Every `*Update` derives `Default`, and that value (what a
+/// PATCH handler holds when the request changed nothing) has no assignments
+/// at all. The check therefore belongs where such a value enters a
 /// statement rather than at rendering time.
 pub struct Assignments<T> {
     sets: Vec<(&'static str, ExprKind)>,
@@ -40,7 +40,7 @@ pub struct Assignments<T> {
 
 // Hand-written for the reason `Expr`'s are: a derive would ask the phantom
 // table marker to be `Clone`/`Debug`, and a schema's marker is a bare unit
-// struct — so the derived impls would apply to no table at all.
+// struct, so the derived impls would apply to no table at all.
 impl<T> Clone for Assignments<T> {
     fn clone(&self) -> Self {
         Assignments {
@@ -59,8 +59,8 @@ impl<T> std::fmt::Debug for Assignments<T> {
 }
 
 impl<T: Table> Assignments<T> {
-    /// `column = <expression>` — the assignments a value can't say:
-    /// `updated_at = now()`, `version = version + 1`. The expression is
+    /// `column = <expression>`. This is for the assignments a value can't
+    /// say: `updated_at = now()`, `version = version + 1`. The expression is
     /// checked against the table being written to, exactly as a `WHERE`
     /// condition is.
     pub fn set_to<C, V, Idxs>(_column: Column<C>, value: V) -> Self
@@ -95,7 +95,7 @@ impl<T: Table> Assignments<T> {
 
 /// A column assigned twice is not a statement any database accepts, and
 /// layering a computed assignment over a request's is exactly when it
-/// happens — so the later one replaces the earlier. Shared with the
+/// happens, so the later one replaces the earlier. Shared with the
 /// `ON CONFLICT DO UPDATE` list, which is built the same way.
 pub(crate) fn push_set(
     sets: &mut Vec<(&'static str, ExprKind)>,
@@ -112,7 +112,7 @@ impl<T> Assignments<T> {
         self.sets
     }
 
-    /// `col = $n, col = $n` — the one renderer for a `SET` list, shared by
+    /// `col = $n, col = $n`: the one renderer for a `SET` list, shared by
     /// `UPDATE` and `ON CONFLICT DO UPDATE`.
     pub(crate) fn render_into<D: Dialect>(&self, sink: &mut dyn Sink) {
         for (i, (col, value)) in self.sets.iter().enumerate() {
@@ -125,8 +125,8 @@ impl<T> Assignments<T> {
         }
     }
 
-    /// The `SET` list a request struct describes — the one fallible step
-    /// in building a statement, since a `*Update` whose every field is
+    /// The `SET` list a request struct describes. This is the one fallible
+    /// step in building a statement, since a `*Update` whose every field is
     /// untouched describes no assignment. Mixed with computed ones as
     /// `Assignments::from_row(patch)?.and_set_to(col, expr)`.
     pub fn from_row<R: UpdateRow<Table = T>>(row: R) -> Result<Self, NothingToSet> {
@@ -168,8 +168,8 @@ pub fn update<D, T: BaseTable>(_table: T) -> UpdateSeed<D, T> {
 }
 
 impl<D, T: Table> UpdateSeed<D, T> {
-    /// A correlated subquery over the table this statement will write —
-    /// available before the `SET` list, since the scope it correlates
+    /// A correlated subquery over the table this statement will write.
+    /// It is available before the `SET` list, since the scope it correlates
     /// against is the table, not the assignments.
     pub fn correlated<S, InnerSel>(
         &self,
@@ -190,8 +190,8 @@ impl<D, T: Table> UpdateSeed<D, T> {
         crate::select::correlated_with(source, selection)
     }
 
-    /// `SET column = <expression>` as the statement's first assignment —
-    /// infallible, since one assignment is one assignment. `.set_to(..)`
+    /// `SET column = <expression>` as the statement's first assignment.
+    /// Infallible, since one assignment is one assignment. `.set_to(..)`
     /// again for more.
     pub fn set_to<C, V, Idxs>(self, column: Column<C>, value: V) -> Update<D, T>
     where
@@ -239,9 +239,9 @@ pub struct Update<D, T: Table> {
 }
 
 impl<D, T: Table> Update<D, T> {
-    /// A correlated subquery over the table this statement writes — the
-    /// same `EXISTS` a `SELECT` builds with `Select::correlated`, against
-    /// the one-table scope a write statement has.
+    /// A correlated subquery over the table this statement writes. It is
+    /// the same `EXISTS` a `SELECT` builds with `Select::correlated`,
+    /// against the one-table scope a write statement has.
     pub fn correlated<S, InnerSel>(
         &self,
         source: S,
@@ -267,7 +267,7 @@ impl<D, T: Table> Update<D, T> {
     }
 
     /// AND-folds a runtime-length collection of discharged conditions, the
-    /// same way `Select::filter_all` does — a `PATCH` narrows its rows by
+    /// same way `Select::filter_all` does. A `PATCH` narrows its rows by
     /// however many criteria the request carried.
     pub fn filter_all(
         mut self,
@@ -281,7 +281,7 @@ impl<D, T: Table> Update<D, T> {
 
 impl<D, T: Table> Update<D, T> {
     /// One more assignment, appended to whatever `.set(..)` already
-    /// assigned — see `Assignments::set_to`.
+    /// assigned. See `Assignments::set_to`.
     pub fn set_to<C, V, Idxs>(mut self, column: Column<C>, value: V) -> Self
     where
         C: ColumnKey<Table = T> + Writable,

@@ -125,7 +125,7 @@ async fn full_crud_roundtrip_against_real_postgres() {
         vec!["ada@example.com".to_string(), "dan@example.com".to_string()]
     );
 
-    // LEFT JOIN — dan has no orders, so his row's total must come back NULL,
+    // LEFT JOIN: dan has no orders, so his row's total must come back NULL,
     // proving the join actually reaches Postgres and NULL round-trips.
     let mut rows: Vec<(String, Option<i64>)> = select((users::email, orders::total))
         .from(users::Table)
@@ -234,8 +234,8 @@ async fn full_crud_roundtrip_against_real_postgres() {
         .expect("select remaining users");
     assert_eq!(remaining, vec![ada_id]);
 
-    // A total is its own rendering — the page's `ORDER BY`/`LIMIT` dropped
-    // and the rest wrapped — so Postgres runs it here rather than a string
+    // A total is its own rendering (the page's `ORDER BY`/`LIMIT` dropped
+    // and the rest wrapped), so Postgres runs it here rather than a string
     // assertion standing in for it.
     let total = select((users::id,))
         .from(users::Table)

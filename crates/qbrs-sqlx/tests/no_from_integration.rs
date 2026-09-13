@@ -1,6 +1,6 @@
 //! `SELECT <expr>` with no `FROM`, against a real Postgres: the advisory
 //! lock the issue reached raw sqlx for, plus the two other shapes a
-//! FROM-less query has — a function of no arguments, and one taking a bind.
+//! FROM-less query has: a function of no arguments, and one taking a bind.
 
 mod common;
 
@@ -13,7 +13,7 @@ async fn a_select_with_no_from_computes_its_value_and_binds_its_arguments() {
 
     // The shape the issue was stuck on: a lock keyed by a bound value,
     // with no table anywhere in the statement. A session lock belongs to
-    // the connection that took it, so both statements go to the same one —
+    // the connection that took it, so both statements go to the same one,
     // which a FROM-less query reaches the way any other does, by being
     // generic over `PgExecutor`.
     let mut conn = pool.acquire().await.expect("one connection");

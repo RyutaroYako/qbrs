@@ -1,6 +1,6 @@
 //! Transactions: every `.load()`/`.execute()` method is generic over
 //! `sqlx::PgExecutor`, so a `sqlx::PgTransaction` works everywhere a
-//! `&PgPool` does — pass `&mut *tx`, exactly like plain sqlx usage.
+//! `&PgPool` does. Pass `&mut *tx`, exactly like plain sqlx usage.
 //! Run: `cargo run -p qbrs-examples --example 15_transaction`
 
 use qbrs::prelude::*;
@@ -39,7 +39,7 @@ async fn main() {
     tx.commit().await.expect("commit transaction");
     println!("committed: user {user_id} with one order");
 
-    // Rollback: an error partway through leaves neither row behind — the
+    // Rollback: an error partway through leaves neither row behind. The
     // dropped `tx` (implicit rollback) or an explicit `.rollback()` both
     // undo everything since `.begin()`.
     let mut tx = pool.begin().await.expect("begin transaction");

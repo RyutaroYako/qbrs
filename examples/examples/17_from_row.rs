@@ -1,6 +1,6 @@
 //! `#[derive(FromRow)]`: filling a plain struct from a query result by
-//! matching field names. The struct names no column, no table, and no join —
-//! nothing that ties it to the query that fills it, so it can live in a
+//! matching field names. The struct names no column, no table, and no join:
+//! nothing ties it to the query that fills it, so it can live in a
 //! domain module and carry `#[derive(Serialize)]` for an API response.
 //! Run: `cargo run -p qbrs-examples --example 17_from_row`
 
@@ -17,7 +17,7 @@ struct UserSummary {
 }
 
 /// Every column of `users`, which `select(users::All)` fills without the
-/// call site listing them — the derive already knows what the table has.
+/// call site listing them: the derive already knows what the table has.
 #[derive(Debug, FromRow)]
 #[allow(dead_code)]
 struct WholeUser {
@@ -29,7 +29,7 @@ struct WholeUser {
 
 /// Both tables have an `id` and both are selected whole, so two fields
 /// can't be told apart by name. `from = <column>` fills them by identity
-/// instead — the same key `row.get(users::id)` uses.
+/// instead, using the same key `row.get(users::id)` uses.
 #[derive(Debug, FromRow)]
 #[allow(dead_code)]
 struct UserWithOrder {
@@ -54,7 +54,7 @@ async fn main() {
     let (pool, _db) = setup_db().await;
     seed(&pool).await;
 
-    // Selected as (id, total, email, display_name) — deliberately neither
+    // Selected as (id, total, email, display_name), deliberately neither
     // the order nor the exact set `UserSummary` declares. `users::id` is
     // simply not wanted, and the fields are matched by name.
     let summaries: Vec<UserSummary> =
@@ -79,7 +79,7 @@ async fn main() {
             .any(|s| s.email == "dan@example.com" && s.total.is_none())
     );
 
-    // A different query — no join, different selection order — fills the
+    // A different query (no join, different selection order) fills the
     // other struct with nothing said about either of them at the call site.
     let contacts: Vec<Contact> = select((users::email, users::display_name))
         .from(users::Table)
@@ -96,7 +96,7 @@ async fn main() {
     }
 
     // `users::All` is the table's own column list, so adding a column to
-    // the schema doesn't leave a query behind — and it counts as one
+    // the schema doesn't leave a query behind. It also counts as one
     // element of the selection tuple however many columns it has.
     let everyone: Vec<WholeUser> = select(users::All)
         .from(users::Table)
@@ -120,7 +120,7 @@ async fn main() {
     println!("user with order: {joined:?}");
     assert!(joined.iter().all(|j| j.order_id > 0 && j.id > 0));
 
-    // When a name doesn't line up, `take` writes the mapping by hand — one
+    // When a name doesn't line up, `take` writes the mapping by hand, one
     // field at a time, still moving rather than copying.
     let renamed: Vec<(String, i64)> = select((users::email, orders::total))
         .from(users::Table)

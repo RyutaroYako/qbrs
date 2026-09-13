@@ -68,7 +68,7 @@ async fn prepared_query_reused_across_different_params() {
         .expect("load for ada");
     assert_eq!(ada, vec![ids[0]]);
 
-    // Same `query` value, no re-render — just a different `params`.
+    // Same `query` value, no re-render, just a different `params`.
     let dan: Vec<i64> = query
         .load(
             &pool,
@@ -113,7 +113,7 @@ async fn prepared_query_reused_across_different_params() {
         .expect("load through a placeholder named twice");
     assert_eq!(ada_again, vec![ids[0]]);
 
-    // A prepared query streams with the params that arrive at the call —
+    // A prepared query streams with the params that arrive at the call,
     // which is the shape a reusable export has.
     let mut streamed = query
         .stream(

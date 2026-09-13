@@ -1,6 +1,6 @@
 //! `.order_by_selected(..)`/`.order_by_selection(..)`: `SELECT DISTINCT`
-//! requires its sort key to be in the selection — Postgres rejects one that
-//! isn't — so these check that at compile time instead of at the database.
+//! requires its sort key to be in the selection (Postgres rejects one that
+//! isn't), so these check that at compile time instead of at the database.
 //! Plain `.order_by(..)` still works for a non-`DISTINCT` query, since it
 //! may sort by any column in scope, not only a selected one.
 //! Run: `cargo run -p qbrs-examples --example 22_distinct_order_by_selected`
@@ -16,7 +16,7 @@ async fn main() {
 
     // Every user who's placed an order, deduplicated by the join.
     // `.order_by_selected` only accepts `users::email` because it's one of
-    // the two selected columns — `users::id`, in scope but not selected,
+    // the two selected columns. `users::id`, in scope but not selected,
     // would be a compile error here.
     let buyers: Vec<(String, bool)> = select((users::email, users::active))
         .from(users::Table)
@@ -29,8 +29,9 @@ async fn main() {
         .into_tuples();
     println!("buyers, deduplicated and sorted: {buyers:?}");
 
-    // A single un-tupled selection has nothing to name — `.order_by_selection`
-    // sorts by "the one selected column" with no key to pass.
+    // A single un-tupled selection has nothing to name, so
+    // `.order_by_selection` sorts by "the one selected column" with no key
+    // to pass.
     let emails: Vec<String> = select(users::email)
         .from(users::Table)
         .distinct()
@@ -41,7 +42,7 @@ async fn main() {
     println!("distinct emails, descending: {emails:?}");
 
     // The argument names a *field*, not an expression, so a computed column
-    // is sorted by its label rather than by respelling it — and the clause
+    // is sorted by its label rather than by respelling it, and the clause
     // renders the selected expression the label found.
     label!(spend);
 

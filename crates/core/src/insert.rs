@@ -1,14 +1,14 @@
 //! `INSERT INTO ..`, from values or from a query.
 //!
 //! A column with a schema default gets a `Defaultable<T>` field, so "omit"
-//! and "explicit value" stay distinguishable — and `Defaultable<Option<T>>`
-//! when it's also nullable, making that three distinct states. Omission
-//! renders as the `DEFAULT` keyword in that row's `VALUES (..)` tuple rather
-//! than changing the column list, so rows that omit different fields still
-//! share one statement.
+//! and "explicit value" stay distinguishable. A column that is also
+//! nullable gets `Defaultable<Option<T>>`, making that three distinct
+//! states. Omission renders as the `DEFAULT` keyword in that row's
+//! `VALUES (..)` tuple rather than changing the column list, so rows that
+//! omit different fields still share one statement.
 //!
 //! An `ON CONFLICT` target names columns, and the database infers an index
-//! from them — one over exactly those columns whose own predicate the
+//! from them: one over exactly those columns whose own predicate the
 //! target's implies. A *partial* unique index therefore needs its predicate
 //! repeated, which is what `partial_index(..)` is for.
 
@@ -23,7 +23,7 @@ use crate::statement::{Statement, WrittenTable};
 use crate::update::Assignments;
 
 /// What a column's setter accepts, keyed by what that column's field
-/// holds: the column's own Rust type — `&str` for text — plus the `Option`
+/// holds: the column's own Rust type (`&str` for text), plus the `Option`
 /// a request struct already carries, wherever leaving the column out means
 /// something. What `None` means is the position's own: on an insert it is
 /// NULL for a nullable column and the schema's default for a defaulted one
@@ -41,7 +41,7 @@ pub trait IntoColumnValue<V> {
 mod insertable {
     /// Sealed like the other markers a derive emits. Unlike `Filled`, whose
     /// doc explains why forging it buys nothing, forging this one turns a
-    /// bulk insert into a single `DEFAULT VALUES` — rows lost quietly — so
+    /// bulk insert into a single `DEFAULT VALUES`, losing rows quietly, so
     /// it gets the door even though a determined caller can still write it.
     pub trait Sealed {}
 }
@@ -64,12 +64,13 @@ pub trait Insertable: InsertableSealed {}
 /// Deliberately unsealed, unlike `scope::Find`: forging it buys nothing,
 /// because `*Insert`'s fields are public and a complete row with a value of
 /// the caller's choosing is directly constructible. What the type-state
-/// builder prevents is *forgetting* a column, not choosing its value — and
-/// a seal here can't hold anyway, since the derive must implement this in
+/// builder prevents is *forgetting* a column, not choosing its value. A
+/// seal here can't hold anyway, since the derive must implement this in
 /// the schema's own crate, where any nameable proof is nameable twice.
 /// `Missing<C>` doesn't implement it, which is what `build()` is bounded
-/// by — on the method rather than by the slot's type, so an incomplete row
-/// is a sentence naming the column rather than a missing `build`.
+/// by. That bound sits on the method rather than on the slot's type, so an
+/// incomplete row is a sentence naming the column rather than a missing
+/// `build`.
 #[diagnostic::on_unimplemented(
     message = "column `{C}` hasn't been given a value yet",
     label = "every column that is neither nullable nor defaulted needs one before `.build()`"
@@ -125,10 +126,10 @@ impl<T: Into<Value>> From<Defaultable<T>> for InsertValue {
 /// Implemented by the `#[derive(Table)]`-generated `*Insert` struct for each
 /// table. One list of `(column, value)` pairs rather than a name list beside
 /// a value list, for the reason `select::AllColumns` carries one list: the
-/// seal is `#[doc(hidden)] pub` — the derive has to write it in the schema's
-/// own crate — so two lists that have to line up position for position
-/// could be made not to, and `INSERT INTO t (a, b, c) VALUES ($1)` is
-/// malformed whatever the table looks like. `update::UpdateRow::sets` has
+/// seal is `#[doc(hidden)] pub`, since the derive has to write it in the
+/// schema's own crate. Two lists that have to line up position for position
+/// could therefore be made not to, and `INSERT INTO t (a, b, c) VALUES ($1)`
+/// is malformed whatever the table looks like. `update::UpdateRow::sets` has
 /// always had this shape.
 pub trait InsertRow: private::Sealed {
     type Table: Table;
@@ -137,7 +138,7 @@ pub trait InsertRow: private::Sealed {
     /// statement's header, the cells carry what goes under them. One type,
     /// because two lists reconciled at render time is the shape that made
     /// every earlier version of this trait able to produce SQL malformed
-    /// for any table, or to drop a value silently — a `COLUMNS` const
+    /// for any table, or to drop a value silently: a `COLUMNS` const
     /// beside positional values, then pairs matched against the first row's
     /// names, then pairs matched against a declared header. A chain can
     /// carry neither a surplus cell nor a missing one.
@@ -148,7 +149,7 @@ pub trait InsertRow: private::Sealed {
 
 mod insert_values {
     /// Sealed to the two shapes a chain has, so `Values` is always a real
-    /// one — the reason `row::ColumnNames` is sealed.
+    /// one, for the reason `row::ColumnNames` is sealed.
     pub trait Sealed {}
 }
 
@@ -233,7 +234,7 @@ pub struct Target {
 mod conflict_target {
     /// Sealed for the reason `InsertRow` is: a hand-written impl could name
     /// a column that isn't there, and the point of taking `Column<C>`s is
-    /// that it can't. Both seals carry the trait's own table parameter — a
+    /// that it can't. Both seals carry the trait's own table parameter. A
     /// seal on `Self` alone leaves that table a free slot the caller fills
     /// with their own type, which is all the orphan rule asks for, and
     /// `ON CONFLICT ("nickname")` against a table without one is exactly
@@ -291,12 +292,12 @@ conflict_target_tuple!(A);
 conflict_target_tuple!(A, B);
 conflict_target_tuple!(A, B, C);
 
-/// `ON CONFLICT (a, b) WHERE deleted_at IS NULL` — the conflict target of a
+/// `ON CONFLICT (a, b) WHERE deleted_at IS NULL`: the conflict target of a
 /// **partial** unique index.
 ///
 /// A target of bare columns is matched against an index over exactly those
 /// columns whose own predicate the target's implies, and a target with no
-/// predicate implies only an index with none — so a partial index is
+/// predicate implies only an index with none, so a partial index is
 /// unreachable without one. Implication, not equality: a predicate saying
 /// more than the index's still picks it. This is Postgres's
 /// `index_predicate`, and SQLite spells it the same way. It is only ever
@@ -353,13 +354,13 @@ pub(crate) const EXCLUDED: &str = "excluded";
 
 /// The row an `INSERT` proposed, as `ON CONFLICT DO UPDATE` sees it: a
 /// pseudo-table holding the target's own columns. Deliberately not a
-/// [`BaseTable`], so it is not a table a query can select from — [`excluded`]
-/// is the only way to name a column of it.
+/// [`BaseTable`], so it is not a table a query can select from.
+/// [`excluded`] is the only way to name a column of it.
 ///
 /// **Known limitation**: a schema table actually called `excluded` shadows
 /// nothing and is shadowed by this one, so an assignment naming that table
 /// in a `DO UPDATE` reads the proposed row. This is the general case of the
-/// one [`scope`](crate::scope) documents — two tables sharing a name are
+/// one [`scope`](crate::scope) documents: two tables sharing a name are
 /// one table to the renderer.
 pub struct Excluded<T>(PhantomData<fn() -> T>);
 
@@ -373,7 +374,7 @@ impl<T: Table> Table for Excluded<T> {
 /// statement that has no proposed row.
 pub type ConflictScope<T> = Cons<TableSlot<Excluded<T>, NotNull>, WrittenTable<T>>;
 
-/// `excluded.column` — the value the column would have taken had the row
+/// `excluded.column`: the value the column would have taken had the row
 /// inserted, which is what `SET total = total + EXCLUDED.total` and the
 /// plain `SET v = EXCLUDED.v` of every upsert are written with. Reads as an
 /// ordinary expression over the target's columns, so it composes with them
@@ -392,11 +393,11 @@ pub fn excluded<C: ColumnKey>(_column: Column<C>) -> Expr<Cons<Excluded<C::Table
 /// what keeps a list naming the proposed row out of a statement that has
 /// none.
 ///
-/// It carries `D` for the reason [`Predicate`](crate::select::Predicate)
-/// does: its `WHERE` is a condition like any other, and a condition pinned
-/// to one dialect must not reach a statement of another. The statement it
-/// is passed to says which dialect that is, so a value built inline needs
-/// no annotation — one bound to a `let` and never used does.
+/// It carries `D` for the reason [`Predicate`] does: its `WHERE` is a
+/// condition like any other, and a condition pinned to one dialect must not
+/// reach a statement of another. The statement it is passed to says which
+/// dialect that is, so a value built inline needs no annotation. One bound
+/// to a `let` and never used does.
 pub struct ConflictUpdate<D, T> {
     sets: Vec<(&'static str, ExprKind)>,
     wheres: Vec<ExprKind>,
@@ -415,7 +416,7 @@ impl<D, T> From<Assignments<T>> for ConflictUpdate<D, T> {
 
 impl<D, T: Table> ConflictUpdate<D, T> {
     /// `column = <expression>`, over the conflicting row and the proposed
-    /// one — [`Assignments::set_to`] with the wider scope.
+    /// one. This is [`Assignments::set_to`] with the wider scope.
     pub fn set_to<C, V, Idxs>(_column: Column<C>, value: V) -> Self
     where
         C: ColumnKey<Table = T> + Writable,
@@ -446,7 +447,7 @@ impl<D, T: Table> ConflictUpdate<D, T> {
         self
     }
 
-    /// `DO UPDATE SET .. WHERE <condition>` — which conflicting rows the
+    /// `DO UPDATE SET .. WHERE <condition>`: which conflicting rows the
     /// update actually touches, over the conflicting row and the proposed
     /// one. A row the condition rejects is left as it is *and is not
     /// counted*, so a one-row upsert's `rows_affected()` answers "did this
@@ -474,8 +475,8 @@ impl<D, T: Table> ConflictUpdate<D, T> {
         self
     }
 
-    /// A correlated subquery over the rows this action sees — the same
-    /// `EXISTS` [`Update::correlated`](crate::update::Update::correlated)
+    /// A correlated subquery over the rows this action sees. It is the
+    /// same `EXISTS` [`Update::correlated`](crate::update::Update::correlated)
     /// builds, against the conflicting row and the proposed one.
     pub fn correlated<S, InnerSel>(
         &self,
@@ -569,7 +570,7 @@ impl<D, T: Table> InsertSeed<D, T> {
         }
     }
 
-    /// `INSERT INTO t (..) SELECT ..` — the rows a query produces, checked
+    /// `INSERT INTO t (..) SELECT ..`: the rows a query produces, checked
     /// against the target's own row by `row::SameShape`, the same one
     /// comparison a `UNION` branch and a CTE body go through.
     ///
@@ -577,7 +578,7 @@ impl<D, T: Table> InsertSeed<D, T> {
     /// of them but the generated ones, which the database writes itself and
     /// refuses a value for. `SameShape` compares name and type cell by
     /// cell, so the source's columns must be spelled and typed as the
-    /// target's — SQL would widen an `INTEGER` into a `BIGINT` and take a
+    /// target's. SQL would widen an `INTEGER` into a `BIGINT` and take a
     /// NOT NULL value for a nullable column, and neither is accepted here.
     /// A source column under another name takes a `label!{}` one.
     ///
@@ -607,7 +608,7 @@ impl<D, T: Table> InsertSeed<D, T> {
         }
     }
 
-    /// Every row of a collection at once — the shape a bulk import has,
+    /// Every row of a collection at once: the shape a bulk import has,
     /// where the rows are already in a `Vec` and the first one isn't
     /// special. `INSERT` with no rows has no SQL form, so an empty
     /// collection is refused here rather than rendered.
@@ -630,7 +631,7 @@ impl<D, T: Table> InsertSeed<D, T> {
 /// The columns of a table an `INSERT` may name: all of them but the
 /// generated ones, which the database writes itself and refuses a value
 /// for. Emitted by `#[derive(Table)]` beside `select::AllColumns`, which is
-/// the other list — what a `SELECT` of the whole table reads.
+/// the other list: what a `SELECT` of the whole table reads.
 #[doc(hidden)]
 pub trait WrittenColumns {
     /// `Cons<Column<C>, ..>`, in the schema's own order.
@@ -644,7 +645,7 @@ type TargetRow<T, Idx> = <<T as WrittenColumns>::Columns as crate::select::Colum
     Idx,
 >>::Fields<crate::row::RowNil>;
 
-/// `INSERT INTO t (..) SELECT ..` — rows a query produces rather than rows
+/// `INSERT INTO t (..) SELECT ..`: rows a query produces rather than rows
 /// a caller holds. From [`InsertSeed::select`].
 ///
 /// The header is the target's own writable columns, so the two sides line
@@ -654,7 +655,7 @@ type TargetRow<T, Idx> = <<T as WrittenColumns>::Columns as crate::select::Colum
 /// the reason a CTE body is one.
 ///
 /// **Known limitation**: no `ON CONFLICT` on this shape, and no column
-/// subset — the query fills every column the target lets one write.
+/// subset. The query fills every column the target lets one write.
 pub struct InsertSelect<D, T> {
     header: Vec<&'static str>,
     body: crate::render::Fragment,
@@ -704,7 +705,7 @@ fn render_values_clause<D: Dialect, R: InsertRow>(
     render_ident::<D>(sink, <R::Table as Table>::NAME);
 
     // Header and values come from one chain, so a row has exactly one cell
-    // per column named — no reconciliation, nothing to drop.
+    // per column named: no reconciliation, nothing to drop.
     let mut header = Vec::new();
     <R::Values as InsertValues>::push_names(&mut header);
 

@@ -84,7 +84,7 @@ async fn run(
             Value::NullBytes => q.bind(None::<Vec<u8>>),
             Value::Placeholder(name) => panic!("unresolved placeholder {name}"),
             // The feature-gated column types decode through their own
-            // crates, which this SQLite battery doesn't pull in — and which
+            // crates. This SQLite battery doesn't pull those in, and they
             // aren't there at all unless those features are on.
             #[allow(unreachable_patterns)]
             other => panic!("no SQLite binding for {other:?}"),
@@ -394,7 +394,7 @@ async fn sqlite_executes_every_rendered_statement_shape() {
     assert_eq!(distinct.len(), 2);
 
     // `.order_by_selected(..)` is what a `SELECT DISTINCT` needs its sort
-    // key to satisfy — checked against the selection at compile time,
+    // key to satisfy. It is checked against the selection at compile time,
     // rather than only discovered when the database rejects it.
     let distinct_sorted = run(
         &pool,
@@ -431,9 +431,9 @@ async fn sqlite_executes_every_rendered_statement_shape() {
     let remaining = run(&pool, select(count()).from(orders::Table).to_sql(Sqlite)).await;
     assert_eq!(remaining[0].get::<i64, _>(0), 2);
 
-    // `count_sql` is its own rendering — the query wrapped in a total, with
-    // its paging dropped — so it is executed here rather than only asserted
-    // as a string.
+    // `count_sql` is its own rendering: the query wrapped in a total, with
+    // its paging dropped. It is therefore executed here rather than only
+    // asserted as a string.
     let total = run(
         &pool,
         select((orders::id,))
@@ -548,9 +548,9 @@ async fn sqlite_executes_every_rendered_statement_shape() {
 
     // A conflict target that names a partial unique index. SQLite rejects
     // a target it cannot infer an index from, so reaching this one at all
-    // is what says the predicate rendered where SQLite reads it — and the
-    // row it conflicts with is inserted here rather than borrowed from
-    // 400 lines up, so what the `RETURNING` says is about this shape.
+    // is what says the predicate rendered where SQLite reads it. The row
+    // it conflicts with is inserted here rather than borrowed from 400
+    // lines up, so what the `RETURNING` says is about this shape.
     let seeded = run(
         &pool,
         insert(users::Table)

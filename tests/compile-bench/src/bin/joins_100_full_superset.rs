@@ -1,10 +1,10 @@
 // At ~100 nested tables, Superset's recursive resolution (which walks the
 // scope list once per required table, i.e. up to depth ~200 in the worst
-// case) exceeds rustc's default trait-recursion limit of 128 — a purely
-// mechanical ceiling, not evidence of exponential blowup (see the timing
-// results this binary is used to produce). Real schemas joining 100 tables
-// in one query are not a realistic case; this is deliberately over the
-// top to stress-test the design's scaling behavior.
+// case) exceeds rustc's default trait-recursion limit of 128. That is a
+// purely mechanical ceiling, not evidence of exponential blowup (see the
+// timing results this binary is used to produce). Real schemas joining 100
+// tables in one query are not a realistic case; this is deliberately over
+// the top to stress-test the design's scaling behavior.
 #![recursion_limit = "1024"]
 
 use compile_bench::{

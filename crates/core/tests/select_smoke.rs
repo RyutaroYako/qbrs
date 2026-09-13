@@ -284,7 +284,7 @@ fn distinct_deduplicates_the_rows_a_join_repeats() {
 #[test]
 fn distinct_order_by_selected_checks_the_sort_key_against_the_selection() {
     // Postgres requires a `SELECT DISTINCT`'s sort keys to be in its
-    // selection — `.order_by_selected(..)` is checked against `users::name`
+    // selection. `.order_by_selected(..)` is checked against `users::name`
     // being one of the two selected columns, the same `row::Field` lookup
     // `Row::get` uses.
     let (sql, _params) = select((users::id, users::name))
@@ -334,7 +334,7 @@ fn order_by_selected_renders_the_selected_item_rather_than_the_key_it_was_given(
 
 // Uncomment either to confirm it is (correctly) a compile error: a column
 // outside the selection has no field to find, and an unlabelled `sql!`
-// fragment has no name to find one by — two anonymous expressions would
+// fragment has no name to find one by. Two anonymous expressions would
 // otherwise stand in for each other here the way they can't at `.get()`.
 //
 // #[test]
@@ -375,7 +375,7 @@ fn basic_select_renders_expected_sql() {
 #[test]
 fn left_join_renders_and_typechecks() {
     // The join condition and the select-list both reference `orders`
-    // *after* it's been joined — this is the case that would fail to
+    // *after* it's been joined. This is the case that would fail to
     // compile (Superset unsatisfied) if the join were forgotten.
     let q = select((users::id, orders::total))
         .from(users::Table)
@@ -415,7 +415,7 @@ fn an_on_condition_takes_whatever_a_where_condition_takes() {
 }
 
 // Uncomment to eyeball the compile error for a forgotten join (confirmed
-// working — kept out of the normal test run since it's meant to fail):
+// working, kept out of the normal test run since it's meant to fail):
 //
 // #[test]
 // fn forgetting_the_join_is_a_compile_error() {
@@ -428,7 +428,7 @@ fn an_on_condition_takes_whatever_a_where_condition_takes() {
 #[test]
 fn right_join_flips_previously_joined_tables_to_nullable() {
     // RIGHT JOIN: `users` (already in scope) must retroactively become
-    // nullable, while the newly-joined `orders` stays not-null — the
+    // nullable, while the newly-joined `orders` stays not-null. That is the
     // mirror image of LEFT JOIN. Selecting `users::name` (Text, not
     // Nullable<Text> in the schema) must still type-check and decode as
     // `Option<String>` here purely because of the join kind.
@@ -533,8 +533,8 @@ fn two_decimals_of_the_same_value_and_different_scale_bind_separately() {
 
 /// `{"x": 0.0}` and `{"x": -0.0}` are one value to `serde_json::Value`'s
 /// `==` and two documents to a column, which stores the sign it was handed.
-/// Both halves of the reuse index — the comparison and the hash it buckets
-/// by — have to read that the same way.
+/// Both halves of the reuse index (the comparison and the hash it buckets by)
+/// have to read that the same way.
 #[cfg(feature = "json")]
 #[test]
 fn two_json_documents_that_compare_equal_and_render_apart_bind_separately() {

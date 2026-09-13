@@ -1,6 +1,6 @@
 //! `DynSelect`: the one place a query's *shape* has to be decided at
 //! runtime. A single static type cannot mean "joined orders" in one branch
-//! and "didn't" in another, so `.erase()` unifies them — dropping the join
+//! and "didn't" in another, so `.erase()` unifies them, dropping the join
 //! skeleton and nothing else.
 //! Run: `cargo run -p qbrs-examples --example 09_dynamic_join`
 
@@ -9,7 +9,7 @@ use qbrs_examples::*;
 use qbrs_sqlx::prelude::*;
 
 /// Erasure keeps the row, so the return type has to name it. A row's type is
-/// its key list, which is long by construction — an alias is how you say it
+/// its key list, which is long by construction, so an alias says it
 /// once. `clippy::type_complexity` counts the nesting, hence the allow.
 #[allow(clippy::type_complexity)]
 type UserRow =
@@ -20,7 +20,7 @@ fn page(include_orders: bool, page: u32) -> DynSelect<Postgres, UserRow> {
         .from(users::Table)
         .order_by(users::id.asc());
 
-    // `order_by` has to happen before `.erase()` — a sort key is a column
+    // `order_by` has to happen before `.erase()`: a sort key is a column
     // reference, and the scope that justifies it is what erasure gives up.
     // `limit`/`offset` reference nothing, so they survive it and the
     // pagination tail isn't duplicated across the branches.
@@ -48,7 +48,7 @@ async fn main() {
     }
 
     // Both branches produce the same row, so anything that reads one reads
-    // the other — that is the whole point of erasing only the join skeleton.
+    // the other. That is the whole point of erasing only the join skeleton.
     let joined = page(true, 0).load(&pool).await.expect("joined");
     assert!(joined.iter().all(|row| *row.id() > 0));
 }

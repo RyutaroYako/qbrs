@@ -1,8 +1,8 @@
 //! `prepare!{}`: a query rendered once, reused across many `.load(.., params)`
-//! calls with different, compile-time-typed values — closing the gap
-//! Drizzle's own `sql.placeholder()` leaves (its `.execute()` takes an
+//! calls with different, compile-time-typed values. That closes the gap
+//! Drizzle's own `sql.placeholder()` leaves: its `.execute()` takes an
 //! untyped `Record<string, unknown>`, so a missing/misspelled key is only
-//! a runtime error; here it's the exact struct `prepare!{}` generated).
+//! a runtime error, where here it's the exact struct `prepare!{}` generated.
 //! Run: `cargo run -p qbrs-examples --example 10_prepared`
 
 use qbrs::prelude::*;

@@ -39,7 +39,7 @@ async fn main() {
     );
 
     // Adding a column to the selection above would leave every read below
-    // untouched — nothing here depends on a column's position. Where
+    // untouched: nothing here depends on a column's position. Where
     // destructuring is what's wanted, `into_tuples()` gives the positional
     // view back.
     let as_tuples: Vec<(i64, String, Option<String>)> = active_users.into_tuples();

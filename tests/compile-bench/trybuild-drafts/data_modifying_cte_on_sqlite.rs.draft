@@ -1,7 +1,7 @@
 // Deliberately-broken example: a write statement as a CTE body under a
 // dialect that has no data-modifying CTEs. Used to eyeball the
 // #[diagnostic::on_unimplemented] messages on `CteBody` and
-// `SupportsDataModifyingCte`. Not meant to compile — copy into
+// `SupportsDataModifyingCte`. Not meant to compile. Copy into
 // tests/compile-bench/examples/ and run with:
 //   cargo build -p compile-bench --example data_modifying_cte_on_sqlite
 use qbrs::dialect::Sqlite;

@@ -14,7 +14,7 @@ async fn main() {
     seed(&pool).await;
 
     // A single un-tupled selection, exactly like `select(users::email)`
-    // elsewhere — that's what lets `.contains(..)` read its `RowField::Sql`
+    // elsewhere. That's what lets `.contains(..)` read its `RowField::Sql`
     // and check it against `lhs` the way `.eq(..)` checks two columns.
     let big_spenders = select(orders::user_id)
         .from(orders::Table)

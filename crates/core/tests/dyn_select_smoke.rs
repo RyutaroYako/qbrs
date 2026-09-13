@@ -107,7 +107,7 @@ fn an_erased_query_still_counts_its_rows_without_its_page() {
     );
 }
 
-// The un-erased version of `build()` genuinely does not compile — kept
+// The un-erased version of `build()` genuinely does not compile. It is kept
 // here, commented, as a record of exactly what `.erase()` buys:
 //
 // fn build_without_erase(with_orders: bool) -> impl std::fmt::Debug {

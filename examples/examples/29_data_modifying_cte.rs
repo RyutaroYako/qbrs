@@ -1,15 +1,15 @@
 //! A data-modifying CTE: `WITH shipped AS (UPDATE .. RETURNING ..) SELECT ..`.
 //! Postgres alone takes a write statement as a `WITH` body, so it is gated
-//! on `SupportsDataModifyingCte` — which is what turns "write the row, then
+//! on `SupportsDataModifyingCte`. That is what turns "write the row, then
 //! read a value the row doesn't hold" into one round-trip instead of two
 //! statements pinned to the same transaction.
-//! The join belongs to the outer query, so it can be a `LEFT JOIN` — which
+//! The join belongs to the outer query, so it can be a `LEFT JOIN`, which
 //! is what a `RETURNING` naming a joined column would not have given.
 //! Known limitations: every part of such a statement sees one snapshot, so
 //! the outer query reads the CTE's own returned rows rather than the table
-//! it wrote — the second-to-last query shows what that means; and the query
+//! it wrote, and the second-to-last query shows what that means; the query
 //! binding a write body has to *be* the statement, which the compiler does
-//! not check — the last query is the one Postgres refuses.
+//! not check, and the last query is the one Postgres refuses.
 //! Run: `cargo run -p qbrs-examples --example 29_data_modifying_cte`
 
 use qbrs::prelude::*;
@@ -61,7 +61,8 @@ async fn main() {
     // The reason this replaces a `RETURNING` that names a joined column
     // rather than merely standing in for one: the join belongs to the outer
     // query, so it can be a `LEFT JOIN`. A user with no orders is written
-    // and still comes back — the row a second query handled by not running.
+    // and still comes back. That is the row a second query handled by not
+    // running.
     let deactivate = update(users::Table)
         .set_to(users::active, false)
         .returning((users::id, users::email));
@@ -89,7 +90,7 @@ async fn main() {
 
     // One snapshot for the whole statement: an outer query that joins the
     // table the body *wrote* sees it as it was before. That is why the CTE
-    // returns its own rows — they are the only view of the new values.
+    // returns its own rows: they are the only view of the new values.
     let stale = update(orders::Table)
         .set_to(orders::total, 1i64)
         .returning((orders::id, orders::user_id, orders::total));
@@ -104,7 +105,7 @@ async fn main() {
     assert!(!as_it_was.contains(&1));
 
     // A write body has to be the top-level statement's. Nesting the query
-    // that binds one — here as an `EXISTS` subquery — type-checks and is
+    // that binds one (here as an `EXISTS` subquery) type-checks and is
     // refused by the server, which is the limitation the module documents.
     let nested = update(orders::Table)
         .set_to(orders::total, 2i64)

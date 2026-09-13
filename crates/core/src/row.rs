@@ -19,7 +19,7 @@
 //! Inference covers every use that stays inside a function.
 //!
 //! **Known limitations**: a key selected twice is ambiguous at the point it
-//! is read, rather than resolving to the first — give one of them a
+//! is read, rather than resolving to the first. Give one of them a
 //! `label!{}` label. `into_tuple` is implemented up to 32 columns; `Row`
 //! itself has no such limit. A field with no name (a bare `sql!{}`
 //! fragment) can only be reached positionally until `.label(label::..)` gives it one.
@@ -42,8 +42,8 @@ pub struct RowCons<K, V, Tail> {
 impl<K, V, Tail> RowCons<K, V, Tail> {
     /// This cell's value. With `tail` and the key's `Named::NAME`, this is
     /// everything a downstream crate needs to walk a row under whatever
-    /// bounds it wants — `serde::Serialize`, `Display`, anything — which
-    /// `qbrs-core` can't offer itself, having no dependencies.
+    /// bounds it wants (`serde::Serialize`, `Display`, anything).
+    /// `qbrs-core` can't offer that itself, having no dependencies.
     pub fn value(&self) -> &V {
         &self.value
     }
@@ -62,7 +62,7 @@ impl<K, V, Tail> RowCons<K, V, Tail> {
         }
     }
 
-    /// This cell's value and the rest, by value — what a walk that consumes
+    /// This cell's value and the rest, by value: what a walk that consumes
     /// the chain needs (`insert::InsertValues`).
     #[doc(hidden)]
     pub fn into_cell(self) -> (V, Tail) {
@@ -73,9 +73,10 @@ impl<K, V, Tail> RowCons<K, V, Tail> {
 mod field {
     /// Carries the trait's own parameters and is implemented only for the
     /// honest pairs, for the reason `scope::proof` explains: a column
-    /// marker is the caller's own type, so a seal on `Self` alone — or a
-    /// private proof *type*, which projection reaches — would let a schema
-    /// crate prove its column is in a row that doesn't hold it.
+    /// marker is the caller's own type, so neither a seal on `Self` alone
+    /// nor a private proof *type* (which projection reaches) is enough.
+    /// Either would let a schema crate prove its column is in a row that
+    /// doesn't hold it.
     pub trait Sealed<K, Idx> {}
 }
 
@@ -90,7 +91,7 @@ mod field {
 #[diagnostic::on_unimplemented(
     message = "`{K}` is not in this query's selection",
     label = "a row can only be read by a key the query selected",
-    note = "add `{K}` to the query's selection list, or `.label(label::..)` the expression you meant — and in a generic helper give each column its own `Idx` parameter, since one shared index matches no row"
+    note = "add `{K}` to the query's selection list, or `.label(label::..)` the expression you meant. In a generic helper, give each column its own `Idx` parameter, since one shared index matches no row"
 )]
 pub trait Field<K, Idx>: field::Sealed<K, Idx> {
     type Value;
@@ -164,8 +165,8 @@ pub trait Named: named::Sealed {
 }
 
 pub(crate) mod named {
-    /// Sealed the way `scope::BaseTable` is: a name is written by a macro —
-    /// `#[derive(Table)]`, `with!`, `label!`, or `expr_key!` — so the
+    /// Sealed the way `scope::BaseTable` is: a name is written by a macro
+    /// (`#[derive(Table)]`, `with!`, `label!`, or `expr_key!`), so the
     /// spelling in `Named::NAME` and the one in the SQL cannot disagree.
     pub trait Sealed {}
 }
@@ -179,8 +180,8 @@ pub use named::Sealed as NamedSealed;
 /// out of reach of `.get()`, and keeps a by-name lookup from landing on one.
 pub trait Spelled: Named {}
 
-/// The key of a selected item that carries no name of its own — a bare
-/// `sql!{}` fragment.
+/// The key of a selected item that carries no name of its own (a bare
+/// `sql!{}` fragment).
 pub struct Anon;
 
 #[doc(hidden)]
@@ -193,7 +194,7 @@ impl Named for Anon {
 
 /// What a `#[derive(FromRow)]` field decodes to, declared beside its name
 /// so that a lookup searches for the *pair*. With the type checked
-/// afterwards instead — as an equality on `TakeNamed::Value` — a field whose
+/// afterwards instead, as an equality on `TakeNamed::Value`, a field whose
 /// type disagrees with the join reports a bare associated-type mismatch at
 /// `into_structs()`, naming neither the field nor the fix.
 pub trait FieldValue {
@@ -260,7 +261,7 @@ mod same_name {
     /// column marker local to whoever derived the schema and `Other` is
     /// free, so without this a schema crate could write
     /// `impl SameNameAs<a::columns::one> for b::columns::two {}` and splice
-    /// a `UNION` branch or a CTE body in transposed — the failure
+    /// a `UNION` branch or a CTE body in transposed, which is the failure
     /// `SameShape` is here to stop.
     pub trait Sealed<Other> {}
 
@@ -276,7 +277,7 @@ mod same_name {
 #[diagnostic::on_unimplemented(
     message = "`{Self}` can't stand in for `{Other}`",
     label = "these two selected items must have the same name",
-    note = "matched by name: `.label(label::..)` whichever side is spelled wrong — and an unnamed expression (`Anon`) has no name to match with at all"
+    note = "matched by name: `.label(label::..)` whichever side is spelled wrong. An unnamed expression (`Anon`) has no name to match with at all"
 )]
 pub trait SameNameAs<Other>: same_name::Sealed<Other> {}
 
@@ -291,9 +292,9 @@ where
 /// Two selections produce the same row: the same column names, in the same
 /// order, decoding to the same types. A one-column selection decodes to a
 /// bare value rather than a `Row`, and two of those match when the value
-/// types do — there is no name to disagree about. Names as well as types, because a
-/// `UNION` branch or a CTE body whose columns merely happen to be
-/// type-compatible would otherwise splice in transposed.
+/// types do: there is no name to disagree about. Names are checked as well
+/// as types, because a `UNION` branch or a CTE body whose columns merely
+/// happen to be type-compatible would otherwise splice in transposed.
 #[diagnostic::on_unimplemented(
     message = "these two selections don't produce the same row",
     label = "must select the same names, in the same order, decoding to the same types"
@@ -302,7 +303,7 @@ pub trait SameShape<Other> {}
 
 // Walked cell by cell rather than compared as tuples: the positional view
 // stops at 32 fields, and two selections agree or don't regardless of how
-// wide they are. No `do_not_recommend` on the cons impl — it is what keeps
+// wide they are. No `do_not_recommend` on the cons impl: it is what keeps
 // the `SameNameAs` obligation the one that gets reported.
 impl SameShape<RowNil> for RowNil {}
 
@@ -343,15 +344,15 @@ impl<K, Inner> RowKey for Labeled<K, Inner> {
 mod column_names {
     /// Sealed to the two shapes a row has: `CteShape::Row` is bounded by
     /// `ColumnNames`, so an open impl would let a `WITH` header be spelled
-    /// by something that is not the row `SameShape` checked — and a local
-    /// type in that position is also what makes `SameShape` itself
-    /// forgeable.
+    /// by something that is not the row `SameShape` checked. A local type
+    /// in that position is also what makes `SameShape` itself forgeable.
     pub trait Sealed {}
 }
 
-/// The names a declared row spells, in order — read off the row itself so
-/// a `WITH name (..)` header cannot disagree with the shape its body was
-/// checked against. Implemented here only, for `RowNil` and `RowCons`.
+/// The names a declared row spells, in order. They are read off the row
+/// itself, so a `WITH name (..)` header cannot disagree with the shape its
+/// body was checked against. Implemented here only, for `RowNil` and
+/// `RowCons`.
 pub trait ColumnNames: column_names::Sealed {
     /// One `push` per field, so the list is built without an allocation per
     /// level of the chain.
@@ -384,8 +385,8 @@ impl<K: Named, V, Tail: ColumnNames> ColumnNames for RowCons<K, V, Tail> {
 /// `RowKey` can *file* a field; only these can find one again, which is what
 /// keeps an unlabelled expression's `Anon` field out of reach of any other
 /// unlabelled expression. `RowKey where Key: Spelled` would say the same
-/// rule — this exists to carry the message below, which that bound reports
-/// as a bare missing `Spelled` impl on `Anon`.
+/// rule. This trait exists to carry the message below, which that bound
+/// reports as a bare missing `Spelled` impl on `Anon`.
 #[diagnostic::on_unimplemented(
     message = "`{Self}` doesn't name a field",
     label = "an unlabelled expression has no name to look up",
@@ -417,7 +418,7 @@ impl<L> Row<L> {
         &self.0
     }
 
-    /// `row.get(users::email)` — the key is the same value that appeared in
+    /// `row.get(users::email)`: the key is the same value that appeared in
     /// the selection list, so there is no name to keep in sync and no
     /// position to get wrong.
     pub fn get<K: LookupKey, Idx>(&self, _key: K) -> &<L as Field<K::Key, Idx>>::Value
@@ -444,7 +445,7 @@ impl<L> Row<L> {
     }
 
     /// Reads a field by naming its key type rather than passing the value
-    /// that selected it — what the generated accessors use, since a
+    /// that selected it. This is what the generated accessors use, since a
     /// built-in expression key is never spelled at a call site.
     #[doc(hidden)]
     pub fn peek_key<K, Idx>(&self) -> &<L as Field<K, Idx>>::Value
@@ -454,8 +455,8 @@ impl<L> Row<L> {
         self.0.peek()
     }
 
-    /// `take` by key type rather than by the value that selected it —
-    /// what a `#[from_row(from = ..)]` field uses, since identity is the
+    /// `take` by key type rather than by the value that selected it. This
+    /// is what a `#[from_row(from = ..)]` field uses, since identity is the
     /// one lookup that stays unambiguous when two columns share a name.
     #[doc(hidden)]
     pub fn take_key<K, Idx>(self) -> (<L as Field<K, Idx>>::Value, Row<<L as Field<K, Idx>>::Rest>)

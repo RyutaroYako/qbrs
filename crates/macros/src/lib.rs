@@ -192,7 +192,7 @@ fn sql_type_for(ty: &Type) -> syn::Result<TokenStream2> {
             .ok_or_else(|| {
                 syn::Error::new_spanned(
                     ty,
-                    "unsupported column type — a `Vec` is a column type as `Vec<u8>` (bytes) or \
+                    "unsupported column type: a `Vec` is a column type as `Vec<u8>` (bytes) or \
                      as `Vec<String>`/`Vec<i32>`/`Vec<i64>`/`Vec<Uuid>` (a Postgres array). An \
                      array whose elements can be NULL has no column type yet.",
                 )
@@ -201,7 +201,7 @@ fn sql_type_for(ty: &Type) -> syn::Result<TokenStream2> {
         if name == "DateTime" && !generic_argument_is(seg, "Utc") {
             return Err(syn::Error::new_spanned(
                 ty,
-                "unsupported column type — `DateTime` is a column type only as `DateTime<Utc>` \
+                "unsupported column type: `DateTime` is a column type only as `DateTime<Utc>` \
                  (timestamptz)",
             ));
         }
@@ -225,7 +225,7 @@ fn sql_type_for(ty: &Type) -> syn::Result<TokenStream2> {
                 return Err(syn::Error::new_spanned(
                     ty,
                     format!(
-                        "unsupported column type `{other}` — supported: i32, i64, f64, String, bool, Vec<u8>, \
+                        "unsupported column type `{other}`. Supported: i32, i64, f64, String, bool, Vec<u8>, \
                          Vec<String>, Vec<i32>, Vec<i64>, Vec<Uuid>, DateTime<Utc>, NaiveDate, Uuid, Decimal, \
                          serde_json::Value (spelled with its crate; the last five, and Vec<Uuid>, behind a \
                          `qbrs` feature), or Option<..> of one of those"
@@ -346,8 +346,8 @@ fn gen_schema_mod(
         .collect();
     let written_list = cons_list(&written_names);
     // The row `select(<table>::All)` decodes to with the table joined
-    // not-null — the one type a stored `Prepared`/`DynSelect` field would
-    // otherwise have to spell by hand.
+    // not-null. A stored `Prepared`/`DynSelect` field would otherwise have
+    // to spell that type by hand.
     // Spelled through the column's own `Sql` type rather than by copying
     // the field's tokens: this lands inside the generated module, where a
     // parent's `use chrono::DateTime` is not in scope, so `DateTime<Utc>`
@@ -417,9 +417,9 @@ fn gen_schema_mod(
 /// One column's `row.<name>()` accessor. The `Idx` parameter is the same
 /// inferred lookup index `row::Field` and `scope::Find` carry; it can't be
 /// hidden, since an impl generic constrained only by a `where` clause isn't
-/// accepted. A helper reading two columns needs two of them — one index
+/// accepted. A helper reading two columns needs two of them: one index
 /// records one position.
-/// The bound stays on the impl, not on the method — unlike the execution
+/// The bound stays on the impl, not on the method, unlike the execution
 /// terminals, where moving it is what makes the message render. Here an
 /// unconditional impl would put every schema's `.total()` on every `Row`,
 /// and two tables with a same-named column would make every call to it
@@ -445,7 +445,7 @@ fn accessor_trait(trait_ident: &Ident, method: &Ident, key: &TokenStream2) -> To
 
 /// `#[derive(FromRow)]`: fills the struct from a `Row` by matching each
 /// field's name against the row's keys. The struct itself stays free of
-/// column paths and query shape — the only thing it declares is what it
+/// column paths and query shape. The only thing it declares is what it
 /// wants called what, and `#[from_row(rename = "..")]` where the two names
 /// differ.
 #[proc_macro_derive(FromRow, attributes(from_row))]
@@ -641,11 +641,11 @@ fn expand_from_row(input: DeriveInput) -> syn::Result<TokenStream2> {
     })
 }
 
-/// `with! { struct recent_orders { id: Integer, total: BigInt } }` — declares
-/// a CTE's pseudo-table. Generates exactly what `#[derive(Table)]` does — a
-/// `Table` marker, per-column `ColumnKey`/`Named` markers, `Column` consts,
-/// and accessor traits — plus the `CteShape` impl `cte::with` checks a body
-/// against, so a bound CTE is a real table everywhere in the crate.
+/// `with! { struct recent_orders { id: Integer, total: BigInt } }` declares
+/// a CTE's pseudo-table. It generates exactly what `#[derive(Table)]` does
+/// (a `Table` marker, per-column `ColumnKey`/`Named` markers, `Column`
+/// consts, and accessor traits), plus the `CteShape` impl `cte::with` checks
+/// a body against, so a bound CTE is a real table everywhere in the crate.
 #[proc_macro]
 pub fn with(input: TokenStream) -> TokenStream {
     let decl = parse_macro_input!(input as CteDecl);
@@ -776,7 +776,7 @@ fn expand_with(decl: CteDecl) -> TokenStream2 {
             #[allow(non_upper_case_globals)]
             pub const All: ::qbrs::select::All<Table> = ::qbrs::select::All::new();
 
-            /// What `select(All)` decodes to — a CTE's pseudo-table names
+            /// What `select(All)` decodes to. A CTE's pseudo-table names
             /// its row the way a real one does.
             pub type AllRow = ::qbrs::row::Row<#declared_row>;
 
@@ -796,7 +796,7 @@ fn expand_with(decl: CteDecl) -> TokenStream2 {
     }
 }
 
-/// `label!(rank_in_user, rank_overall);` — declares output-column names for
+/// `label!(rank_in_user, rank_overall);` declares output-column names for
 /// computed selections, in a `label` module so a local binding of the same
 /// name can never shadow one. A scope holds one `label` module, so a scope
 /// gets one invocation listing every name it needs; an invocation inside the
@@ -847,9 +847,9 @@ pub fn label(input: TokenStream) -> TokenStream {
     .into()
 }
 
-/// An identifier's type-level spelling, one `char` per cell — the bridge
-/// that lets a `#[derive(FromRow)]` field find a column it has never been
-/// told the path of.
+/// An identifier's type-level spelling, one `char` per cell. It is the
+/// bridge that lets a `#[derive(FromRow)]` field find a column it has never
+/// been told the path of.
 fn type_level_name(name: &str) -> TokenStream2 {
     let chars = name.chars();
     quote! { ::qbrs::type_name!(#(#chars),*) }
@@ -903,8 +903,9 @@ fn gen_insert_struct(
         .collect();
     let builder_ident = format_ident!("{}Builder", insert_ident);
     // One type parameter per required column, `Missing<C>` until it is
-    // given a value and the column's own type after — so `build()` exists exactly
-    // when every required column has one, and no value is ever unwrapped.
+    // given a value and the column's own type after. `build()` therefore
+    // exists exactly when every required column has one, and no value is
+    // ever unwrapped.
     let slots: Vec<Ident> = required
         .iter()
         .map(|c| format_ident!("__Qbrs{}", to_camel_case(&sql_name(&c.field_name))))
@@ -1021,9 +1022,9 @@ fn gen_insert_struct(
                 }
             }
         } else {
-            // Nullable *and* defaulted: three states, so the third one — an
-            // explicit NULL, as opposed to letting the schema's default
-            // stand — needs a way to be said.
+            // Nullable *and* defaulted: three states, so the third one
+            // (an explicit NULL, as opposed to letting the schema's default
+            // stand) needs a way to be said.
             let null_setter = format_ident!("{}_null", name);
             quote! {
                 pub fn #name(
@@ -1228,10 +1229,10 @@ fn gen_update_struct(
         let name = &c.field_name;
         let base = &c.base_ty;
         if c.nullable {
-            // `Option<T>` means the same here as at every other setter —
-            // a value, or nothing to say — so a request field maps across
-            // without the nesting the struct literal needs. The third
-            // state has its own name, as it does on an insert.
+            // `Option<T>` means the same here as at every other setter: a
+            // value, or nothing to say. A request field therefore maps
+            // across without the nesting the struct literal needs. The
+            // third state has its own name, as it does on an insert.
             let null_setter = format_ident!("{}_null", name);
             quote! {
                 pub fn #name(
@@ -1269,8 +1270,8 @@ fn gen_update_struct(
 
         impl #update_ident {
             /// Every setter takes what the column holds or an `Option` of
-            /// it, so a request struct's fields map across one for one —
-            /// the struct literal's `Option<Option<T>>` is a nullable
+            /// it, so a request struct's fields map across one for one.
+            /// The struct literal's `Option<Option<T>>` is a nullable
             /// column's three states written out, and is easy to nest
             /// wrongly.
             pub fn builder() -> #builder_ident {

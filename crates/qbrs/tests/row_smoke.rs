@@ -2,8 +2,8 @@
 //! as, and what survives a column being added to a selection.
 
 // Naming a row type spells out its key list, which is what
-// `clippy::type_complexity` counts — the same reason `qbrs-core` allows it
-// crate-wide.
+// `clippy::type_complexity` counts. That is the same reason `qbrs-core`
+// allows it crate-wide.
 #![allow(clippy::type_complexity)]
 
 use qbrs::prelude::*;
@@ -297,8 +297,8 @@ fn take_moves_one_field_and_keeps_the_rest() {
     assert_eq!(total, Some(1000));
 }
 
-/// A row carries names, so another crate can walk it under its own bounds —
-/// `serde::Serialize`, `Display`, whatever — which is what `qbrs-core`
+/// A row carries names, so another crate can walk it under its own bounds
+/// (`serde::Serialize`, `Display`, whatever), which is what `qbrs-core`
 /// cannot offer itself, having no dependencies.
 trait ToPairs {
     fn to_pairs(&self, out: &mut Vec<(&'static str, String)>);

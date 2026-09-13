@@ -1,25 +1,25 @@
 //! The `sql!{}` escape hatch: a pressure valve for SQL constructs the typed
 //! builder doesn't cover yet.
 //!
-//! A `?` slot takes a value, which binds as a parameter, or an expression —
-//! a column, an aggregate, another fragment — which the renderer writes out
+//! A `?` slot takes a value, which binds as a parameter, or an expression
+//! (a column, an aggregate, another fragment), which the renderer writes out
 //! itself. A column slot is quoted by the same code that quotes it anywhere
 //! else and carries its table into the fragment's `Req`, so
 //! `sql!(Numeric, "sum(?)", invoices::amount)` is checked against the
 //! query's scope like any other expression. Only the text between the slots
 //! is unchecked.
 //!
-//! One fragment reused across clauses of one statement — selected, grouped
-//! by, ordered by — renders as one expression, which is what Postgres's
+//! One fragment reused across clauses of one statement (selected, grouped
+//! by, ordered by) renders as one expression, which is what Postgres's
 //! syntactic `GROUP BY` matching asks for. Under Postgres its binds are
-//! named again rather than bound again, since `$N` names a parameter; under
+//! named again rather than bound again, since `$N` names a parameter. Under
 //! MySQL and SQLite `?` *is* the next parameter, so the occurrences read
 //! alike and each rebinds, and the statement carries one parameter per
 //! occurrence.
 //!
 //! `sql!` binds that text to a `const` first, so text assembled at runtime
 //! cannot reach SQL through this macro. The primitive it expands to,
-//! `expr::raw_expr`, takes a bare `&'static str` and has no such guard —
+//! `expr::raw_expr`, takes a bare `&'static str` and has no such guard, so
 //! `String::leak` reaches it. It is `#[doc(hidden)]` because `sql!` is the
 //! door; a caller who walks around it is writing the unchecked SQL
 //! themselves. Every `?` in the text is a slot; a literal `?` belongs in a
@@ -27,9 +27,9 @@
 //! same way.
 
 /// `sql!(Bool, "lower(?) = ?", users::email, "dan")` -> a `Declared`
-/// expression over whatever tables its slots name — keyed as `row::Anon`,
-/// so it is selectable but not readable by name until `.label(..)`. Slots are filled positionally, left to
-/// right.
+/// expression over whatever tables its slots name. It is keyed as
+/// `row::Anon`, so it is selectable but not readable by name until
+/// `.label(..)`. Slots are filled positionally, left to right.
 ///
 /// Every `?` in the text is a slot: there is no escape for a literal one,
 /// because two of the three dialects write their own bind parameters as `?`

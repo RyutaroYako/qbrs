@@ -95,7 +95,7 @@ async fn a_stream_yields_the_rows_load_would_have_collected() {
     assert_eq!(collected.len(), seen);
     assert_eq!(*collected[0].get(readings_stream::label), "row-100");
 
-    // A `RETURNING` streams too — the terminal is cut by what a statement
+    // A `RETURNING` streams too: the terminal is cut by what a statement
     // produces, not by which builder produced it.
     let mut bumped = qbrs::update::update(readings_stream::Table)
         .set(
@@ -120,7 +120,7 @@ async fn a_stream_yields_the_rows_load_would_have_collected() {
     common::shutdown(pool, guard).await;
 }
 
-/// A stream holds its connection until it ends — dropped early, the
+/// A stream holds its connection until it ends. Dropped early, the
 /// connection goes back. Only a pool with one connection in it says so.
 #[tokio::test]
 async fn a_stream_dropped_early_gives_its_connection_back() {

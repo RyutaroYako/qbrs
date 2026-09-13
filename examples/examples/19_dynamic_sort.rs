@@ -25,7 +25,7 @@ async fn main() {
     };
 
     // Each key is checked against the query's scope as it is built, then
-    // carries that proof instead of its own table list — which is what lets
+    // carries that proof instead of its own table list. That is what lets
     // `users` and `orders` keys sit in one `Vec`.
     let keys: Vec<_> = params
         .sort
@@ -50,7 +50,7 @@ async fn main() {
     }
 
     // The same for `GROUP BY`, and a single key goes into the singular
-    // method unchanged — `.order_by`/`.group_by` take either form.
+    // method unchanged: `.order_by`/`.group_by` take either form.
     let mut dimensions = vec![grouping(users::email)];
     if params.group_by_user {
         dimensions.push(grouping(users::id));

@@ -1,6 +1,6 @@
 // Deliberately-broken example: a column selected with no `FROM` at all.
 // Used to eyeball the #[diagnostic::on_unimplemented] message on `Find`,
-// which is the route a bare `Column<C>` takes. Not meant to compile — copy
+// which is the route a bare `Column<C>` takes. Not meant to compile. Copy
 // into tests/compile-bench/examples/ and run with:
 //   cargo build -p compile-bench --example column_without_from
 use qbrs::dialect::Postgres;

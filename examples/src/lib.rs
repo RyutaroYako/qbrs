@@ -69,8 +69,8 @@ pub async fn setup_db() -> (sqlx::PgPool, Db) {
 }
 
 /// Seeds a small, fixed dataset used by every example: three users (one
-/// inactive, one with no orders) and a handful of orders — enough to make
-/// filters/joins/nullability actually demonstrate something.
+/// inactive, one with no orders) and a handful of orders. That is enough to
+/// make filters/joins/nullability actually demonstrate something.
 pub async fn seed(pool: &sqlx::PgPool) {
     use qbrs::prelude::*;
     use qbrs_sqlx::prelude::*;

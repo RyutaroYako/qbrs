@@ -9,7 +9,7 @@ use crate::render::{QuerySink, SelectItem};
 
 /// The one unavoidable escape hatch in this design: a single static type
 /// cannot mean "this table is joined" in one branch of an `if` and "it
-/// isn't" in another. Only the join skeleton is erased — every column
+/// isn't" in another. Only the join skeleton is erased. Every column
 /// reference was already checked against a concrete `Scope` before
 /// `.erase()`, and predicates keep the same closed `ExprKind`/`Value`
 /// representation used everywhere else, with no `Box<dyn _>` involved.
@@ -45,14 +45,14 @@ impl<D, Scope, Sel> Select<D, Scope, Sel> {
 /// iterators.
 #[diagnostic::on_unimplemented(
     message = "an erased query can't be filtered",
-    label = "add `.filter(..)` before `.erase()` — erasure gives up the scope a condition is checked against",
+    label = "add `.filter(..)` before `.erase()`: erasure gives up the scope a condition is checked against",
     note = "`.erase()` is for unifying two fully-built branches with different joins; compose the query first"
 )]
 pub trait CannotFilterAfterErase {}
 
 impl<D, Output> DynSelect<D, Output> {
-    /// Always a compile error — see `CannotFilterAfterErase`. Present so
-    /// the error is that one, rather than `Iterator::filter`'s.
+    /// Always a compile error. See `CannotFilterAfterErase`. Present so the
+    /// error is that one, rather than `Iterator::filter`'s.
     #[doc(hidden)]
     pub fn filter<T: CannotFilterAfterErase>(self, _cond: T) -> Self {
         self
@@ -60,7 +60,7 @@ impl<D, Output> DynSelect<D, Output> {
 
     /// `LIMIT`/`OFFSET` survive erasure because they reference nothing: a
     /// row count needs no proof that a table is joined. `order_by` doesn't
-    /// follow them here — a sort key is a column reference, and the scope
+    /// follow them here. A sort key is a column reference, and the scope
     /// that would justify it is exactly what `.erase()` gave up.
     pub fn limit(mut self, n: impl super::IntoRowCount) -> Self {
         self.body.limit = Some(n.into_row_count());

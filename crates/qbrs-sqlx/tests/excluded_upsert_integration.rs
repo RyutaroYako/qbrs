@@ -3,8 +3,8 @@
 //!
 //! Passing the same Rust value to both halves of an upsert stands in for
 //! the proposed row only while every inserted value is a literal the caller
-//! already holds. What it cannot say is a column the *database* filled —
-//! a default, a sequence, `now()` — or an assignment that reads the
+//! already holds. What it cannot say is a column the *database* filled
+//! (a default, a sequence, `now()`), or an assignment that reads the
 //! conflicting row and the proposed one together. Both are what this asks
 //! Postgres about.
 

@@ -1,7 +1,8 @@
 //! The query-building half of [qbrs](https://docs.rs/qbrs): scope tracking,
 //! expressions, the `SELECT`/`INSERT`/`UPDATE`/`DELETE` builders, and the SQL
-//! renderer. No I/O, no async runtime, no driver — and no dependency at all
-//! unless a schema asks for one (the `chrono`, `uuid` and `decimal` features).
+//! renderer. No I/O, no async runtime, no driver. There is no dependency at
+//! all unless a schema asks for one (the `chrono`, `uuid` and `decimal`
+//! features).
 //!
 //! Depend on `qbrs` rather than this crate directly; it re-exports everything
 //! here alongside `#[derive(Table)]`, `#[derive(FromRow)]`, `label!` and

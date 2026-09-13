@@ -173,8 +173,8 @@ fn a_write_statement_binds_as_a_cte_body_and_the_query_reads_its_rows() {
     );
 }
 
-/// A CTE body's placeholders are numbered by the statement it lands in, so
-/// a write body's binds count from where the host query has got to — the
+/// A CTE body's placeholders are numbered by the statement it lands in, so a
+/// write body's binds count from where the host query has got to. That is the
 /// same rule a `SELECT` body follows, and the reason a body is a `Fragment`.
 #[test]
 fn a_write_body_is_numbered_by_the_statement_it_lands_in() {

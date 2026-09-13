@@ -16,16 +16,17 @@ use crate::scope::{Concat, Nil};
 use crate::select::OrderKey;
 
 /// Accumulates a window's `PARTITION BY`/`ORDER BY` lists, growing `Req`
-/// via `Concat` as `Expr::and`/`or` do — so partitioning by an out-of-scope
-/// column fails the same `Superset` check any other expression would.
+/// via `Concat` as `Expr::and`/`or` do. Partitioning by an out-of-scope
+/// column therefore fails the same `Superset` check any other expression
+/// would.
 pub struct Window<Req> {
     partition_by: Vec<ExprKind>,
     order_by: Vec<(ExprKind, SortDir)>,
     _marker: PhantomData<fn() -> Req>,
 }
 
-/// Starts an empty window spec (bare `OVER ()` if never partitioned/ordered
-/// — a valid, if unusual, window over the entire result set).
+/// Starts an empty window spec. Never partitioning or ordering leaves a bare
+/// `OVER ()`, a valid if unusual window over the entire result set.
 pub fn window() -> Window<Nil> {
     Window {
         partition_by: Vec::new(),
@@ -66,10 +67,10 @@ impl<Req> Window<Req> {
 }
 
 /// A bare, argument-free window function reference (`row_number()`,
-/// `rank()`, `dense_rank()`) — not yet a usable expression, since a window
-/// function has no meaning without an `OVER (..)` clause. See this module's
-/// doc comment for why this is a separate type from `Expr` rather than
-/// `Expr` itself.
+/// `rank()`, `dense_rank()`). It is not yet a usable expression, since a
+/// window function has no meaning without an `OVER (..)` clause. See this
+/// module's doc comment for why this is a separate type from `Expr` rather
+/// than `Expr` itself.
 ///
 /// `K` is the row key `.over(..)` stamps onto the result, so a selected
 /// `row_number()` is readable as `row.row_number()` with nothing declared.
@@ -88,8 +89,8 @@ impl<K: crate::row::Spelled> crate::row::LookupKey for WindowFunc<K> {}
 
 impl<K> WindowFunc<K> {
     /// Every ranking function counts rows, so the result is `BigInt` rather
-    /// than a parameter — an aggregate over a window, which would have the
-    /// aggregate's own type, is the separate shape this module defers.
+    /// than a parameter. An aggregate over a window would have the aggregate's
+    /// own type, and is the separate shape this module defers.
     pub fn over<WindowReq>(self, window: Window<WindowReq>) -> Keyed<K, WindowReq, BigInt> {
         Keyed::from_kind(ExprKind::Window {
             func: self.sql,
@@ -149,19 +150,19 @@ crate::row::expr_key!(
     'k'
 );
 
-/// `ROW_NUMBER() OVER (..)` — a unique, sequential number per row within its
+/// `ROW_NUMBER() OVER (..)`: a unique, sequential number per row within its
 /// partition, ordered by the window's `ORDER BY`.
 pub fn row_number() -> WindowFunc<RowNumber> {
     window_func("row_number()")
 }
 
-/// `RANK() OVER (..)` — like `row_number()`, but rows tied on the `ORDER BY`
+/// `RANK() OVER (..)`: like `row_number()`, but rows tied on the `ORDER BY`
 /// key share the same rank, leaving a gap in the sequence afterward.
 pub fn rank() -> WindowFunc<Rank> {
     window_func("rank()")
 }
 
-/// `DENSE_RANK() OVER (..)` — like `rank()`, but without the gap after a
+/// `DENSE_RANK() OVER (..)`: like `rank()`, but without the gap after a
 /// tie.
 pub fn dense_rank() -> WindowFunc<DenseRank> {
     window_func("dense_rank()")

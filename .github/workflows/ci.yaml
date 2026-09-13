@@ -6,7 +6,7 @@ on:
   pull_request:
 
 concurrency:
-  # A superseded PR run should cancel — that's what this exists for. A push
+  # A superseded PR run should cancel, which is what this exists for. A push
   # to `main` never should: it's already merged, there's nothing to
   # supersede it with, and a run killed mid-build can still save a corrupt
   # cache (see the `save-if` note below). Grouping pushes by commit SHA
@@ -19,7 +19,7 @@ env:
   CARGO_TERM_COLOR: always
 
 # Nothing here writes to the repository, and a third-party action runs in the
-# job — `taiki-e/install-action` — which reaches `github.token` whether or not
+# job (`taiki-e/install-action`), which reaches `github.token` whether or not
 # it is handed one. Unlisted permissions are dropped.
 permissions:
   contents: read
@@ -76,8 +76,8 @@ jobs:
       # Restoring `target/` without the engine it points at is the one state
       # cargo cannot recover from on its own: `pglite-rs` re-runs its build
       # script when the engine goes missing (it names the runtime tar in a
-      # `rerun-if-changed`) and panics, while `pglite-rs-sys` — which is what
-      # would download it again — declares no file inputs, stays fresh, and
+      # `rerun-if-changed`) and panics, while `pglite-rs-sys`, which is what
+      # would download it again, declares no file inputs, stays fresh, and
       # replays the stale path. Dropping both build directories is what makes
       # the download happen.
       - name: Re-download the engine if the cargo cache outlived it

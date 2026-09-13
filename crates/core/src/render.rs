@@ -10,7 +10,8 @@ use crate::expr::{BinOp, CastTarget, ExprKind, SortDir, Value};
 /// Where rendered SQL goes. A bind parameter is *told* to the sink rather
 /// than written as text, which is what lets the same renderer produce either
 /// a finished statement or a `Fragment` whose parameters aren't numbered
-/// yet — with no character standing in for one, and so nothing to escape.
+/// yet. No character stands in for a parameter, so nothing has to be
+/// escaped.
 ///
 /// `#[doc(hidden)] pub` because
 /// [`Statement::render_into`](crate::statement::Statement::render_into)
@@ -69,7 +70,7 @@ impl BoundValues {
 
 /// Builds a finished statement, numbering each parameter as it arrives.
 /// Where the dialect numbers them, a value already bound is named again
-/// instead — so an expression carrying binds renders the same text
+/// instead. An expression carrying binds therefore renders the same text
 /// everywhere it recurs in one statement, which is what lets a `sql!{}`
 /// fragment be selected and grouped by.
 #[doc(hidden)]
@@ -357,12 +358,12 @@ pub(crate) fn render_select_list<D: Dialect>(items: &[SelectItem], sink: &mut dy
 }
 
 /// A piece of SQL destined to be embedded in a larger query: a subquery, a
-/// CTE body, a set-operation branch. Held as the
-/// text *between* its bind parameters — `head`, then one `(param, text)`
-/// pair per parameter — so a parameter is a position rather than a
-/// character: nothing has to be escaped, re-splicing an already-spliced
-/// fragment can't confuse the two, and there is no way to hold a parameter
-/// with no text on either side of it.
+/// CTE body, a set-operation branch. Held as the text *between* its bind
+/// parameters (`head`, then one `(param, text)` pair per parameter), so a
+/// parameter is a position rather than a character. Nothing has to be
+/// escaped, re-splicing an already-spliced fragment can't confuse text with
+/// a parameter, and there is no way to hold a parameter with no text on
+/// either side of it.
 #[derive(Debug, Clone)]
 pub(crate) struct Fragment {
     head: String,
@@ -400,8 +401,8 @@ impl Fragment {
 /// Renders an identifier with the dialect's quoting.
 /// A dotted name is qualified, not one identifier: `analytics.events` is a
 /// table in a schema, and quoting it whole asks the database for a relation
-/// with a dot in its name. Only `#[table(name = "..")]` can contain one —
-/// every other name here comes from a Rust identifier.
+/// with a dot in its name. Only `#[table(name = "..")]` can contain one.
+/// Every other name here comes from a Rust identifier.
 pub(crate) fn render_ident<D: Dialect>(sink: &mut dyn Sink, ident: &str) {
     for (i, part) in ident.split('.').enumerate() {
         if i > 0 {
@@ -452,8 +453,8 @@ fn render_bool_pair<D: Dialect>(lhs: &ExprKind, joiner: &str, rhs: &ExprKind, si
 }
 
 /// How a sort direction is spelled. Shared by a statement's `ORDER BY`, a
-/// window's, and a set operation's — which orders by ordinal position and so
-/// can't go through `render_order_by`.
+/// window's, and a set operation's. A set operation orders by ordinal
+/// position, so it can't go through `render_order_by`.
 pub(crate) fn dir_keyword(dir: SortDir) -> &'static str {
     match dir {
         SortDir::Asc => " ASC",
@@ -461,7 +462,7 @@ pub(crate) fn dir_keyword(dir: SortDir) -> &'static str {
     }
 }
 
-/// `SELECT count(*) FROM (<query>) AS qbrs_total` — how this crate counts a
+/// `SELECT count(*) FROM (<query>) AS qbrs_total`: how this crate counts a
 /// query whose rows aren't one per matching row. Written once, since the
 /// alias is part of the shape.
 pub(crate) fn render_count_wrapped<D: Dialect>(
@@ -474,8 +475,8 @@ pub(crate) fn render_count_wrapped<D: Dialect>(
     render_ident::<D>(sink, "qbrs_total");
 }
 
-/// A comma-separated expression list behind a keyword — `GROUP BY`,
-/// `PARTITION BY` — or nothing at all when there are none.
+/// A comma-separated expression list behind a keyword (`GROUP BY`,
+/// `PARTITION BY`), or nothing at all when there are none.
 pub(crate) fn render_expr_list<D: Dialect>(sink: &mut dyn Sink, keyword: &str, list: &[ExprKind]) {
     if list.is_empty() {
         return;
@@ -489,7 +490,7 @@ pub(crate) fn render_expr_list<D: Dialect>(sink: &mut dyn Sink, keyword: &str, l
     }
 }
 
-/// The same, with each key's sort direction — a statement's `ORDER BY` and a
+/// The same, with each key's sort direction: a statement's `ORDER BY` and a
 /// window's `OVER (.. ORDER BY ..)` are one clause written in two places.
 pub(crate) fn render_order_by<D: Dialect>(
     sink: &mut dyn Sink,

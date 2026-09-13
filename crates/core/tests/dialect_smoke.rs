@@ -189,7 +189,7 @@ fn sqlite_supports_returning_mysql_does_not() {
         "DELETE FROM \"users\" WHERE (\"users\".\"id\" = ?) RETURNING \"users\".\"id\""
     );
 
-    // MySQL has no RETURNING at all — `.returning(..)` must not exist on a
+    // MySQL has no RETURNING at all, so `.returning(..)` must not exist on a
     // MySql-backed Delete/Insert/Update. Uncomment to confirm the compile
     // error (kept commented since this test file otherwise compiles/runs):
     //
@@ -200,9 +200,9 @@ fn sqlite_supports_returning_mysql_does_not() {
 
 #[test]
 fn mysql_supports_right_join_but_not_full_join() {
-    // (No RIGHT JOIN example here since it needs a second table — the
-    // point is purely that `.full_join()` doesn't exist for MySql, proven
-    // by the commented-out snippet below failing to compile if uncommented.)
+    // (No RIGHT JOIN example here since it needs a second table. The point
+    // is purely that `.full_join()` doesn't exist for MySql, proven by the
+    // commented-out snippet below failing to compile if uncommented.)
     //
     // qbrs_core::select::select((users::id,))
     //     .from(users::Table)
@@ -223,7 +223,7 @@ fn sqlite_supports_on_conflict_mysql_does_not() {
     );
 
     // MySQL has no ON CONFLICT at all (its equivalent is the differently-
-    // shaped ON DUPLICATE KEY UPDATE, a separate future capability) —
+    // shaped ON DUPLICATE KEY UPDATE, a separate future capability), so
     // `.on_conflict_do_nothing(..)` must not exist on a MySql-backed
     // Insert. Uncomment to confirm the compile error:
     //

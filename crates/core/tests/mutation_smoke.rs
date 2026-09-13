@@ -340,8 +340,8 @@ fn an_upsert_assigns_the_row_the_insert_proposed() {
 }
 
 /// The proposed row is an ordinary expression over the target's columns, so
-/// the two compose — which is the assignment a counter upsert is written
-/// with, and the one passing the same Rust value to both halves can't say.
+/// the two compose. That is the assignment a counter upsert is written with,
+/// and the one passing the same Rust value to both halves can't say.
 #[test]
 fn the_proposed_row_composes_with_the_conflicting_one() {
     let (sql, _) = insert(users::Table)

@@ -1,6 +1,6 @@
 //! Synthetic schema plus escalating join-count scope chains, measuring
 //! whether the flat cons-list `Find<T, Idx>` design keeps `cargo check`
-//! linear as join count grows — diesel's join-tree is documented to blow up
+//! linear as join count grows. Diesel's join-tree is documented to blow up
 //! exponentially past ~7 joins (diesel#3223).
 //!
 //! `cols_*` binaries measure the other axis: `row::Field` walks a
@@ -128,8 +128,8 @@ where
 /// over a scope of arbitrary depth.
 pub fn assert_map_nullable<S: MapNullable>() {}
 
-/// Exercises `row::Field<K, _>` at whatever depth `L` puts `K` at — the
-/// selection-width counterpart to `assert_contains`.
+/// Exercises `row::Field<K, _>` at whatever depth `L` puts `K` at. This is
+/// the selection-width counterpart to `assert_contains`.
 pub fn assert_field<L, K, I>()
 where
     L: qbrs_core::row::Field<K, I>,

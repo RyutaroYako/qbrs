@@ -33,7 +33,7 @@ async fn main() {
     println!("inserted: id={id} email={email} display_name={display_name:?}");
 
     // Bulk insert in one statement, mixing rows that do/don't override
-    // `display_name` — each row independently uses DEFAULT/a bound value
+    // `display_name`. Each row independently uses DEFAULT/a bound value
     // for the columns it omits/sets, all sharing the same column list.
     let ids: Vec<i64> = insert(users::Table)
         .values(UsersInsert::builder().email("a@example.com").build())

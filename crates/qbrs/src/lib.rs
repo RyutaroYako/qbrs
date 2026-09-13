@@ -1,11 +1,11 @@
-//! A Drizzle-flavored, type-safe SQL query builder for Rust — not an ORM and
+//! A Drizzle-flavored, type-safe SQL query builder for Rust. Not an ORM, and
 //! not a raw-SQL macro. Column and join references are checked at compile
 //! time without giving up dynamic composition, and scope resolution stays
 //! linear as the join count grows.
 //!
 //! This is the facade users depend on: [`qbrs_core`]'s builders and renderer
 //! plus the derive and macros from `qbrs-macros`. Nothing here touches a
-//! database — executing a rendered statement against Postgres is
+//! database. Executing a rendered statement against Postgres is
 //! [`qbrs-sqlx`](https://docs.rs/qbrs-sqlx).
 //!
 //! ```
@@ -49,7 +49,7 @@
 //!
 //! Dropping the `.left_join(..)` line makes that query a compile error rather
 //! than a runtime one: `orders` is in scope for neither the selection nor the
-//! `ON` clause. The join is also what decides nullability — `orders::total`
+//! `ON` clause. The join is also what decides nullability: `orders::total`
 //! decodes as `Option<i64>` above and as `i64` after an `INNER JOIN`.
 
 pub use qbrs_core::*;
@@ -58,10 +58,10 @@ pub use qbrs_macros::{FromRow, Table, label, with};
 /// A name belongs here if user source has to spell it: the builder entry
 /// points, the extension traits whose methods would otherwise be
 /// unreachable, the dialect markers, the macros, and every type that turns
-/// up in a signature or a type alias a user may have to write — a `Scope`
-/// list, a `Row` list, a `Predicate`, an insert field's `Defaultable`, and
-/// the three `*Seed`s a single-dialect app wraps to stop repeating
-/// `::<Postgres, _>`.
+/// up in a signature or a type alias a user may have to write. That last
+/// group is a `Scope` list, a `Row` list, a `Predicate`, an insert field's
+/// `Defaultable`, and the three `*Seed`s a single-dialect app wraps to stop
+/// repeating `::<Postgres, _>`.
 /// Nothing that only ever appears as `impl Trait` in an argument position.
 pub mod prelude {
     pub use crate::{FromRow, Table, label, with};

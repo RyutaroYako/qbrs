@@ -1,8 +1,8 @@
 //! A real builder chain at 20 joins: every `.inner_join()` is a call, every
 //! `ON` predicate a checked expression, and the query is rendered. The
 //! `joins_*` binaries measure `Find`/`Superset` over a hand-built scope
-//! *type*; this one measures what a user actually pays — one
-//! monomorphization of `Select` per join, plus a `Superset` obligation each.
+//! *type*. This one measures what a user actually pays: one monomorphization
+//! of `Select` per join, plus a `Superset` obligation each.
 
 use compile_bench::*;
 use qbrs_core::dialect::Postgres;

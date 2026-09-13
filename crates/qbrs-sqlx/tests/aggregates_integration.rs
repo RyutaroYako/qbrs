@@ -75,7 +75,7 @@ async fn every_aggregate_helper_is_a_function_postgres_has() {
     .await
     .expect("the counting aggregates")
     .into_tuples();
-    // `count()` counts rows, `count_of` a column's non-NULL values — which
+    // `count()` counts rows, `count_of` a column's non-NULL values. That
     // is the different question the all-NULL `note` column answers.
     assert_eq!(
         rows,
@@ -83,7 +83,7 @@ async fn every_aggregate_helper_is_a_function_postgres_has() {
     );
 
     // A separator Postgres would read as syntax if it were written out
-    // instead of bound — and does read that way under
+    // instead of bound, and does read that way under
     // `standard_conforming_strings = off`, which a session can set. What
     // comes back says which of the two the renderer did.
     let injected: Option<String> = select(string_agg(line_items::label, r"') FROM x -- \"))
@@ -111,7 +111,7 @@ async fn every_aggregate_helper_is_a_function_postgres_has() {
     assert_eq!(parts, vec!["bolt", "nut", "washer"]);
 
     // Over a column that is NULL in every row, `string_agg` is NULL rather
-    // than the empty string — which is why it decodes to an `Option`.
+    // than the empty string, which is why it decodes to an `Option`.
     let notes: Vec<Option<String>> = select(string_agg(line_items::note, ", "))
         .from(line_items::Table)
         .load(&pool)

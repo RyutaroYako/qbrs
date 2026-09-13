@@ -1,12 +1,12 @@
 //! `UNION`/`UNION ALL`/`INTERSECT`/`EXCEPT` between two `SELECT`s that may
-//! have entirely different `Scope`s (different tables, different JOINs) —
-//! the only thing that must line up is their *output shape*: `row::SameShape`
+//! have entirely different `Scope`s (different tables, different JOINs). The
+//! only thing that must line up is their *output shape*: `row::SameShape`
 //! requires the same column names, in the same order, decoding to the same
-//! types. Names as well as types, because the combined result is read by key
-//! — a branch whose columns merely happen to be type-compatible would
-//! otherwise splice in transposed. Keys from different tables still match,
-//! since the comparison is on names, and SQL itself takes a `UNION`'s column
-//! names from the first branch.
+//! types. Names as well as types, because the combined result is read by key.
+//! A branch whose columns merely happen to be type-compatible would otherwise
+//! splice in transposed. Keys from different tables still match, since the
+//! comparison is on names, and SQL itself takes a `UNION`'s column names from
+//! the first branch.
 
 use std::marker::PhantomData;
 
@@ -36,12 +36,12 @@ impl SetOpKind {
 }
 
 /// A chain of `SELECT`s combined by set operators, all decoding to the first
-/// branch's `Output` — which is also where SQL itself takes the combined
-/// result's column names from. `ORDER BY` here is necessarily by **ordinal position**
-/// (`ORDER BY 1`, 1-indexed) rather than a typed column — the branches can
-/// have entirely different `Scope`s, so there is no single scope left to
-/// check a column reference against once they're combined; ordinal position
-/// is the only reference SQL itself allows in this position.
+/// branch's `Output`, which is also where SQL itself takes the combined
+/// result's column names from. `ORDER BY` here is necessarily by **ordinal
+/// position** (`ORDER BY 1`, 1-indexed) rather than a typed column. The
+/// branches can have entirely different `Scope`s, so once they are combined
+/// there is no single scope left to check a column reference against.
+/// Ordinal position is the only reference SQL itself allows in this position.
 pub struct SetOp<D, Output> {
     first: Fragment,
     rest: Vec<(SetOpKind, Fragment)>,
@@ -102,9 +102,9 @@ impl<D: Dialect, Output> SetOp<D, Output> {
         self.push(SetOpKind::Union, other.fragment::<IdxB>())
     }
 
-    /// Appends another branch via `UNION ALL` (no deduplication — cheaper
-    /// than `UNION` when the branches are already known disjoint, or when
-    /// duplicates are meaningful).
+    /// Appends another branch via `UNION ALL` (no deduplication, which is
+    /// cheaper than `UNION` when the branches are already known disjoint, or
+    /// when duplicates are meaningful).
     pub fn union_all<ScopeB, SelB, IdxB>(self, other: &Select<D, ScopeB, SelB>) -> Self
     where
         SelB: Selection<ScopeB, IdxB>,
@@ -164,15 +164,15 @@ impl<D: Dialect, Output> SetOp<D, Output> {
     }
 
     /// The set operation itself, without the ordering and paging applied to
-    /// its result — which is what a count of it must leave out.
+    /// its result, which is what a count of it must leave out.
     fn render_branches(&self, sink: &mut QuerySink<D>) {
         let branch = |sink: &mut QuerySink<D>, sql: &Fragment| {
             // A branch has to be shut off from the operator beside it:
             // otherwise its `ORDER BY`/`LIMIT`, or its `WITH`, reads as the
             // whole compound's and the statement doesn't parse. Where a
             // dialect has no parentheses for that (SQLite), a derived table
-            // says the same thing — and saying it unconditionally is what
-            // keeps a clause added later from slipping through.
+            // says the same thing. Saying it unconditionally is what keeps a
+            // clause added later from slipping through.
             if D::PARENTHESIZED_SET_OP_BRANCHES {
                 sink.ch('(');
                 sql.splice_into(sink);
@@ -187,9 +187,9 @@ impl<D: Dialect, Output> SetOp<D, Output> {
         // The chain is a left fold, and SQL's own precedence is not:
         // `INTERSECT` binds tighter than `UNION`/`EXCEPT`, so flat text
         // would reassociate `a.union(&b).intersect(&c)` into
-        // `A UNION (B INTERSECT C)` on Postgres — and, since SQLite reads
-        // compound operators left to right, would mean different things in
-        // the two dialects this crate executes. Parenthesising the
+        // `A UNION (B INTERSECT C)` on Postgres. SQLite reads compound
+        // operators left to right, so flat text would also mean different
+        // things in the two dialects this crate executes. Parenthesising the
         // accumulator wherever the operator changes says the fold outright,
         // without encoding any dialect's precedence table.
         let changes = self
@@ -231,7 +231,7 @@ impl<D: Dialect, Output> SetOp<D, Output> {
 }
 
 impl<D: Dialect, Scope, Sel> Select<D, Scope, Sel> {
-    /// Starts a `UNION` chain — see `SetOp`'s doc comment for why the two
+    /// Starts a `UNION` chain. See `SetOp`'s doc comment for why the two
     /// branches only need matching `Selection::Output`, not matching
     /// `Scope`.
     pub fn union<ScopeB, SelB, IdxA, IdxB>(
