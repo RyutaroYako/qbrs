@@ -56,9 +56,15 @@ cargo fmt --all -- --check
 cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
 cargo test --workspace --locked --all-features
 
+# `--no-verify`, and only here: a dry run leaves the version numbers alone,
+# so it packages each crate at the version already on crates.io — and a
+# dependent's `qbrs-core = "<current>"` then resolves to that published copy
+# instead of the sibling being packaged beside it, failing on every API added
+# since. The real run below bumps first, so the new version exists nowhere but
+# locally and the four verify against each other.
 echo
 echo "==> cargo-release dry run for '$LEVEL' (nothing is touched yet):"
-cargo release "$LEVEL"
+cargo release "$LEVEL" --no-verify
 
 echo
 read -r -p "Proceed with the release plan above — bump, tag, push, and publish to crates.io? [y/N] " reply
