@@ -210,7 +210,7 @@ checksum = "0c9ea0ac24bc397ab3c98583a3c9ba74fa56b09a4449bbe172b9b1ddb016027a"
 
 [[package]]
 name = "compile-bench"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "qbrs",
  "qbrs-core",
@@ -306,7 +306,7 @@ dependencies = [
 
 [[package]]
 name = "dialect-exec"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "qbrs",
  "qbrs-core",
@@ -364,7 +364,7 @@ dependencies = [
 
 [[package]]
 name = "embedded-pg"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "pglite-rs",
  "sqlx",
@@ -1110,7 +1110,7 @@ dependencies = [
 
 [[package]]
 name = "qbrs"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "qbrs-core",
  "qbrs-macros",
@@ -1119,7 +1119,7 @@ dependencies = [
 
 [[package]]
 name = "qbrs-core"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "chrono",
  "rust_decimal",
@@ -1129,7 +1129,7 @@ dependencies = [
 
 [[package]]
 name = "qbrs-examples"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "embedded-pg",
  "qbrs",
@@ -1141,7 +1141,7 @@ dependencies = [
 
 [[package]]
 name = "qbrs-macros"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -1150,7 +1150,7 @@ dependencies = [
 
 [[package]]
 name = "qbrs-sqlx"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "chrono",
  "embedded-pg",
