@@ -67,9 +67,9 @@ fn prepared_query_resolves_named_placeholder() {
         vec![qbrs_core::expr::Value::Text("a@example.com".to_string())]
     );
 
-    // Same `Prepared` value, reused with a different `Params` — the SQL
-    // text (and its placeholder position) doesn't change, only the bound
-    // value does.
+    // Same `Prepared` value, reused with a different `Params`. The SQL text
+    // (and its placeholder position) doesn't change, only the bound value
+    // does.
     let (sql2, params2) = query
         .resolve(ByEmail {
             email: "b@example.com".to_string(),

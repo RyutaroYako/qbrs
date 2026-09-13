@@ -1,6 +1,6 @@
 // Deliberately-broken example: references T02 without it being in scope.
 // Used to eyeball the #[diagnostic::on_unimplemented] message quality on
-// `Find`/`Superset`. Not meant to compile — run with:
+// `Find`/`Superset`. Not meant to compile. Run with:
 //   cargo build -p compile-bench --example missing_join
 use compile_bench::{assert_contains, T00, T01, T02};
 use compile_bench::scope_of;

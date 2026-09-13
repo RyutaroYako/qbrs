@@ -40,14 +40,14 @@ if [ "$BRANCH" != "main" ]; then
 fi
 
 if [ -n "$(git status --porcelain)" ]; then
-    echo "error: working tree isn't clean — commit or stash first." >&2
+    echo "error: working tree isn't clean. Commit or stash first." >&2
     exit 1
 fi
 
 echo "==> Checking main is up to date with origin/main"
 git fetch origin main --quiet
 if [ "$(git rev-parse HEAD)" != "$(git rev-parse origin/main)" ]; then
-    echo "error: local main has diverged from origin/main — pull or push first." >&2
+    echo "error: local main has diverged from origin/main. Pull or push first." >&2
     exit 1
 fi
 
@@ -57,7 +57,7 @@ cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
 cargo test --workspace --locked --all-features
 
 # `--no-verify`, and only here: a dry run leaves the version numbers alone,
-# so it packages each crate at the version already on crates.io — and a
+# so it packages each crate at the version already on crates.io, and a
 # dependent's `qbrs-core = "<current>"` then resolves to that published copy
 # instead of the sibling being packaged beside it, failing on every API added
 # since. The real run below bumps first, so the new version exists nowhere but
@@ -67,11 +67,11 @@ echo "==> cargo-release dry run for '$LEVEL' (nothing is touched yet):"
 cargo release "$LEVEL" --no-verify
 
 echo
-read -r -p "Proceed with the release plan above — bump, tag, push, and publish to crates.io? [y/N] " reply
+read -r -p "Proceed with the release plan above (bump, tag, push, publish to crates.io)? [y/N] " reply
 case "$reply" in
     y|Y|yes|YES) ;;
     *)
-        echo "Aborted — nothing was changed."
+        echo "Aborted. Nothing was changed."
         exit 1
         ;;
 esac

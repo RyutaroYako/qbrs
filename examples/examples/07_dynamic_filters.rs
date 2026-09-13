@@ -7,14 +7,14 @@ use qbrs::prelude::*;
 use qbrs_examples::*;
 use qbrs_sqlx::prelude::*;
 
-/// A search form's optional fields — in a real app these would come from
+/// A search form's optional fields. In a real app these would come from
 /// query-string params, most of them usually absent.
 struct UserSearch {
     email_contains: Option<String>,
     active_only: bool,
 }
 
-/// Generic over *any* scope that contains `users::Table` — this helper
+/// Generic over *any* scope that contains `users::Table`. This helper
 /// doesn't need to know what else might be joined into the query it's
 /// given, unlike a hand-rolled equivalent tied to one concrete join shape.
 fn apply_search<D, Scope, Sel, Idx>(
@@ -61,8 +61,8 @@ async fn main() {
     }
 
     // Building a WHERE clause from a runtime-length list of conditions:
-    // `.filter()` is called once per present condition in a plain loop —
-    // the builder's type never changes, so an arbitrary (including zero)
+    // `.filter()` is called once per present condition in a plain loop.
+    // The builder's type never changes, so an arbitrary (including zero)
     // number of iterations is fine.
     let candidate_filters = vec![Some(users::active.eq(true)), None];
     let mut query = select(users::email).from(users::Table);
@@ -72,7 +72,7 @@ async fn main() {
     let rows: Vec<String> = query.load(&pool).await.expect("looped filters");
     println!("looped-filter result: {rows:?}");
 
-    // Conditions from *different* tables can't share one `Expr` type — the
+    // Conditions from *different* tables can't share one `Expr` type: the
     // tables an expression references are part of it. `predicate(..)`
     // discharges that requirement against the query's scope, so a collection
     // of them is buildable and passable.
@@ -90,7 +90,7 @@ async fn main() {
         .expect("collected predicates");
     println!("active users with a big order: {big:?}");
 
-    // A loop ANDs. For a runtime-length OR — a search box with N terms —
+    // A loop ANDs. For a runtime-length OR (a search box with N terms),
     // `any_of` folds the collection instead; folding `.or()` by hand can't
     // type-check, since each pair widens the tables the expression claims.
     let terms = ["ada", "grace"];
@@ -120,7 +120,7 @@ async fn main() {
         .expect("either signal");
     println!("inactive or big-spending: {any_signal:?}");
 
-    // `.count()` answers "how many rows would this return" — the same
+    // `.count()` answers "how many rows would this return": the same
     // FROM/JOIN/WHERE, with any ORDER BY/LIMIT/OFFSET ignored, so a
     // paginated endpoint can report a total without cloning the query.
     let page = select(users::email)

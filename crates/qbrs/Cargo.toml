@@ -29,7 +29,7 @@ serde_json = "1"
 [package.metadata.docs.rs]
 all-features = true
 
-# The root README's Install section pins both versions — a minor/major
+# The root README's Install section pins both versions, so a minor/major
 # release needs the two lines updated too, or the example in the README
 # would ask for a version that no longer matches the one just published.
 [[package.metadata.release.pre-release-replacements]]

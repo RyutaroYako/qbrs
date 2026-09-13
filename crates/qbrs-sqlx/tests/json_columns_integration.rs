@@ -1,9 +1,9 @@
 //! `JSON`/`JSONB` columns end to end: declared as `serde_json::Value`,
 //! bound, and decoded back. Which of Postgres's two JSON types a column is
 //! is the schema's business, so only a database says one marker carries
-//! values to and from both — and only a database says what it does *not*
-//! carry, which is why the `json` column here is never compared or
-//! ordered by: `=` and `ORDER BY` are `jsonb`'s alone.
+//! values to and from both. A database is also the only thing that says what
+//! it does *not* carry, which is why the `json` column here is never
+//! compared or ordered by: `=` and `ORDER BY` are `jsonb`'s alone.
 #![cfg(feature = "json")]
 
 mod common;
@@ -18,7 +18,7 @@ use serde_json::json;
 struct Documents {
     #[column(primary_key, generated)]
     id: i64,
-    /// `jsonb` — the one the issue named.
+    /// `jsonb`, the one the issue named.
     body: serde_json::Value,
     /// `json`, the other spelling, and nullable.
     draft: Option<serde_json::Value>,
@@ -121,8 +121,8 @@ async fn a_json_column_binds_and_decodes_as_the_document_it_holds() {
         .expect("one row");
     assert_eq!(replaced, json!({ "kind": "allow" }));
 
-    // Looking *inside* a document is an operator, and those are deferred —
-    // the escape hatch takes the column and the value as slots, so both
+    // Looking *inside* a document is an operator, and those are deferred.
+    // The escape hatch takes the column and the value as slots, so both
     // are still checked and bound. Postgres's `?` existence operator is
     // the one that cannot be written there, since a `?` in a `sql!{}` text
     // is a slot; its function spelling is what `raw.rs` points at.

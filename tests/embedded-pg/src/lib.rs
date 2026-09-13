@@ -95,10 +95,10 @@ async fn template() -> PathBuf {
 
 /// Renaming onto a directory that already holds a template fails rather than
 /// replacing it, so the first run to finish wins and every other discards
-/// its own — no lock, and no moment at which the shared path holds half a
-/// template. What can hold that path without being one is a directory a run
-/// left behind when it was killed mid-`initdb`, and that is cleared only
-/// once the rename has already failed on it.
+/// its own. There is no lock, and no moment at which the shared path holds
+/// half a template. What can hold that path without being one is a directory
+/// a run left behind when it was killed mid-`initdb`, and that is cleared
+/// only once the rename has already failed on it.
 fn publish(staged: &Path, template: &Path) {
     if std::fs::rename(staged, template).is_ok() {
         return;
@@ -117,9 +117,9 @@ fn template_path() -> PathBuf {
 }
 
 /// `<target-dir>/tmp`, which cargo hands an integration test as
-/// `CARGO_TARGET_TMPDIR` and hands an example nothing at all — so the path
-/// is read off the running binary, two directories below the profile dir
-/// either way (`<target>/debug/deps/` and `<target>/debug/examples/`).
+/// `CARGO_TARGET_TMPDIR` and hands an example nothing at all. The path is
+/// therefore read off the running binary, two directories below the profile
+/// dir either way (`<target>/debug/deps/` and `<target>/debug/examples/`).
 fn target_tmp_dir() -> PathBuf {
     std::env::current_exe()
         .expect("path of the running binary")

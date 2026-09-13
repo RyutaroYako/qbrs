@@ -1,10 +1,10 @@
 //! Window functions: `row_number()`/`rank()`/`dense_rank()`
 //! `.over(window().partition_by(..).order_by(..))`. These return a
-//! `WindowFunc<K, S>`, not an `Expr` — its only method is `.over(..)`, so it
-//! can't be used as an ordinary expression without one — and the result
+//! `WindowFunc<K, S>`, not an `Expr`. Its only method is `.over(..)`, so it
+//! can't be used as an ordinary expression without one, and the result
 //! carries the function itself as its row key, so `row.row_number()` reads
 //! it back with nothing declared.
-//! Known limitation: only niladic ranking functions so far —
+//! Known limitation: only niladic ranking functions so far.
 //! `sum(col) OVER (..)` needs the real function-call design already
 //! deferred for `count()`.
 //! Run: `cargo run -p qbrs-examples --example 13_window`
@@ -18,7 +18,7 @@ async fn main() {
     let (pool, _db) = setup_db().await;
     seed(&pool).await;
 
-    // Rank each user's own orders by size, largest first — `PARTITION BY`
+    // Rank each user's own orders by size, largest first. `PARTITION BY`
     // restarts the numbering for every user, exactly like the SQL itself.
     let rows = select((
         users::email,
@@ -79,7 +79,7 @@ async fn main() {
         );
     }
 
-    // `rank()` leaves a gap after ties where `dense_rank()` doesn't — with
+    // `rank()` leaves a gap after ties where `dense_rank()` doesn't. With
     // no ties in the seed data the two agree, but they are different
     // functions and both are selectable in the same row.
     let overall = select((

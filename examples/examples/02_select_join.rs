@@ -1,7 +1,7 @@
 //! LEFT JOIN with automatically-derived NULL-ability: `orders::total`
 //! decodes as `Option<i64>` with no manual `.nullable()` annotation, purely
-//! because the join is a LEFT JOIN — this is the crate's central
-//! differentiator over diesel (which requires that annotation manually).
+//! because the join is a LEFT JOIN. This is the crate's central
+//! differentiator over diesel, which requires that annotation manually.
 //! Run: `cargo run -p qbrs-examples --example 02_select_join`
 
 use qbrs::prelude::*;
@@ -13,8 +13,8 @@ async fn main() {
     let (pool, _db) = setup_db().await;
     seed(&pool).await;
 
-    // Dan has zero orders (seed() gives him none) — his row's `total` must
-    // come back `None`, proving the join-derived Option<i64> is real, not
+    // Dan has zero orders (seed() gives him none), so his row's `total` must
+    // come back `None`. That proves the join-derived Option<i64> is real, not
     // just a type-level claim that never gets exercised at runtime.
     let rows = select((users::email, orders::total))
         .from(users::Table)
@@ -35,7 +35,7 @@ async fn main() {
 
     // INNER JOIN instead: Dan (no orders) disappears entirely rather than
     // appearing with a NULL total. Note `orders::total` here decodes as
-    // plain `i64`, not `Option<i64>` — INNER JOIN doesn't introduce
+    // plain `i64`, not `Option<i64>`. INNER JOIN doesn't introduce
     // nullability, so the row's field type isn't wrapped, and the *type
     // itself* documents that this query can never see a NULL total.
     let inner = select((users::email, orders::total))

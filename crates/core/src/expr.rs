@@ -1,8 +1,8 @@
 //! SQL types, columns, and the typed expression AST.
 //!
-//! `Expr<Req, S>` carries two purely phantom compile-time tags: `Req` (the
-//! flat cons-list of tables this expression touches — see `scope::Superset`)
-//! and `S` (its SQL type). The actual payload, `ExprKind`, is a plain closed
+//! `Expr<Req, S>` carries two purely phantom compile-time tags: `Req`, the
+//! flat cons-list of tables this expression touches (see `scope::Superset`),
+//! and `S`, its SQL type. The actual payload, `ExprKind`, is a plain closed
 //! enum with no generics at all, so the renderer is never re-monomorphized
 //! per query shape.
 
@@ -12,9 +12,9 @@ use crate::scope::{Concat, Cons, MaybeNull, Nil, Table, WrapNullable};
 
 mod sql_type {
     /// Sealed because the set really is closed: `Value` is a closed enum,
-    /// so a type this crate can't render has nothing to be — and an open
-    /// `SqlType` is what lets a schema crate pair a lying
-    /// `WrapNullable<MaybeNull>` with a column type of its own.
+    /// so a type this crate can't render has nothing to be. Sealing also
+    /// stops a schema crate from pairing a lying `WrapNullable<MaybeNull>`
+    /// with a column type of its own.
     pub trait Sealed {}
 }
 
@@ -33,7 +33,7 @@ pub(crate) enum ExprKind {
         table: &'static str,
         name: &'static str,
     },
-    /// `excluded."col"` — the row an `INSERT` proposed, as `ON CONFLICT DO
+    /// `excluded."col"`: the row an `INSERT` proposed, as `ON CONFLICT DO
     /// UPDATE` sees it.
     Excluded {
         name: &'static str,
@@ -88,9 +88,9 @@ pub(crate) enum ExprKind {
         negated: bool,
     },
     /// `sql!{}`: authored text with a hole at each `?`, each hole holding an
-    /// expression the renderer recurses into — so a column in a hole is
-    /// quoted by the same code that quotes it anywhere else, and counts
-    /// toward the fragment's `Req`.
+    /// expression the renderer recurses into. A column in a hole is
+    /// therefore quoted by the same code that quotes it anywhere else, and
+    /// counts toward the fragment's `Req`.
     Template {
         head: String,
         rest: Vec<(ExprKind, String)>,
@@ -102,7 +102,7 @@ pub(crate) enum ExprKind {
         expr: Box<ExprKind>,
         target: CastTarget,
     },
-    /// `name(arg)`, or `name(*)` where there is no argument — the
+    /// `name(arg)`, or `name(*)` where there is no argument: the
     /// aggregates. A real node rather than a raw fragment because an
     /// argument is an expression the renderer has to recurse into, and
     /// because that is what lets its column count toward the expression's
@@ -270,11 +270,11 @@ impl Value {
     }
 
     /// Whether these two values reach the database as the same parameter.
-    /// Not `==`, which calls values equal that a column then stores apart:
-    /// a `Decimal` compares by numeric value while Postgres's `numeric`
+    /// Not `==`, which calls values equal that a column then stores apart.
+    /// A `Decimal` compares by numeric value while Postgres's `numeric`
     /// keeps the scale it was handed, so `1.0` and `1.00` are equal and are
-    /// stored as written; `0.0 == -0.0` while `double precision` keeps the
-    /// sign. Sharing a parameter between two such values would bind the
+    /// stored as written. And `0.0 == -0.0` while `double precision` keeps
+    /// the sign. Sharing a parameter between two such values would bind the
     /// first one twice.
     pub(crate) fn binds_same_as(&self, other: &Value) -> bool {
         match (self, other) {
@@ -292,7 +292,7 @@ impl Value {
     /// which is finer than `PartialEq`, and a `Hash` disagreeing with
     /// `PartialEq` breaks the contract one owes its callers. The caller
     /// supplies the hasher so the bucketing is keyed by the map's own
-    /// `RandomState` — with a fixed seed, colliding text chosen by whoever
+    /// `RandomState`. With a fixed seed, colliding text chosen by whoever
     /// supplies the values would walk the bucket the index exists to avoid.
     pub(crate) fn hash_into<H: std::hash::Hasher>(&self, hasher: &mut H) {
         use std::hash::Hash as _;
@@ -381,11 +381,11 @@ impl From<&str> for Value {
 }
 
 /// A typed SQL expression. `Req` is the (possibly empty) flat list of
-/// tables this expression references — see the module docs and
-/// `scope::Superset` for how that's checked against a query's actual scope
-/// at the point the expression is used, not at the point it's built. This
-/// is what lets `orders::user_id.eq(users::id)` be a plain, portable value
-/// with no dependency on which query it'll eventually be used in.
+/// tables this expression references. See the module docs and
+/// `scope::Superset` for how that list is checked against a query's actual
+/// scope at the point the expression is used, not at the point it's built.
+/// This is what lets `orders::user_id.eq(users::id)` be a plain, portable
+/// value with no dependency on which query it'll eventually be used in.
 pub struct Expr<Req, S: SqlType> {
     pub(crate) kind: ExprKind,
     _marker: PhantomData<fn() -> (Req, S)>,
@@ -414,14 +414,14 @@ impl<Req, S: SqlType> Clone for Expr<Req, S> {
 #[diagnostic::on_unimplemented(
     message = "`{Self}` isn't a SQL expression",
     label = "a column, a literal, an aggregate, or a `sql!{{}}` fragment is; a `label!` name is not",
-    note = "an `Option` isn't one either: asking about NULL is `.is_null()`, and assigning it is `null::<Text>()` — `= NULL` is never true in SQL"
+    note = "an `Option` isn't one either: asking about NULL is `.is_null()`, since `= NULL` is never true in SQL, and assigning it is `null::<Text>()`"
 )]
 pub trait IntoExpr {
     /// The SQL type this expression has. An associated type rather than a
-    /// parameter because every implementor has exactly one — a column its
-    /// declared type, a literal its leaf type — which is what lets a
-    /// mismatch report itself as `Comparable`/`AssignsTo` rather than as
-    /// an inference failure on a type nobody wrote.
+    /// parameter because every implementor has exactly one: a column its
+    /// declared type, a literal its leaf type. That is what lets a mismatch
+    /// report itself as `Comparable`/`AssignsTo` rather than as an
+    /// inference failure on a type nobody wrote.
     type Sql: SqlType;
     type Req;
     fn into_expr(self) -> Expr<Self::Req, Self::Sql>;
@@ -437,7 +437,7 @@ impl<Req, S: SqlType> IntoExpr for Expr<Req, S> {
 
 /// What an expression can be assigned *to*. The value's type is `Self` and
 /// the column's is the parameter, which is the direction assignment runs
-/// in: a `Text` value goes into a `Nullable<Text>` column and a narrower
+/// in. A `Text` value goes into a `Nullable<Text>` column and a narrower
 /// number into a wider one, never the reverse. (`Comparable` is the
 /// symmetric, nullability-blind relation, and a comparison is symmetric.)
 #[diagnostic::on_unimplemented(
@@ -470,7 +470,7 @@ pub trait Writable: WritableSealed {}
 
 /// A column's compile-time identity. One implementor per column in the
 /// schema, generated by `#[derive(Table)]` (and by `with!{}` for a CTE's
-/// pseudo-columns), which is what lets a column be a *key* — two columns of
+/// pseudo-columns). That is what lets a column be a *key*: two columns of
 /// the same table and SQL type are still distinct types here, so a row can
 /// be indexed by column without ambiguity.
 pub trait ColumnKey: crate::row::Spelled + Copy + 'static {
@@ -480,10 +480,10 @@ pub trait ColumnKey: crate::row::Spelled + Copy + 'static {
 
 /// A column reference, identified entirely by its `ColumnKey`. Generated
 /// per-field by `#[derive(Table)]` as a `pub const NAME: Column<..>` inside
-/// each table's module (e.g. `users::id`). A plain, `Copy` value — not tied
-/// to any particular query — which is what lets it be reused across queries
-/// and passed as an ordinary function argument instead of through a
-/// scope-bound cursor closure.
+/// each table's module (e.g. `users::id`). A plain, `Copy` value, tied to no
+/// particular query, so it can be reused across queries and passed as an
+/// ordinary function argument instead of through a scope-bound cursor
+/// closure.
 pub struct Column<C: ColumnKey>(PhantomData<C>);
 
 impl<C: ColumnKey> Column<C> {
@@ -559,7 +559,7 @@ impl<K, Req, S: SqlType> IntoExpr for Keyed<K, Req, S> {
     message = "`{Self}` and `{Other}` aren't comparable",
     label = "both sides of a comparison must be the same SQL type, or two numeric ones",
     note = "nullability doesn't matter here: a `Nullable<T>` compares with a `T`",
-    note = "an unannotated `vec![1, 2]` is an `integer[]`, since that is what an integer literal defaults to — a `bytea` takes `vec![1u8, 2]`"
+    note = "an unannotated `vec![1, 2]` is an `integer[]`, since that is what an integer literal defaults to; a `bytea` takes `vec![1u8, 2]`"
 )]
 pub trait Comparable<Other: SqlType>: SqlType {}
 
@@ -594,7 +594,7 @@ comparable_across!(
 /// crate has no type to put in one.
 ///
 /// Exact on the element's width where [`Comparable`] widens, though the
-/// database would take either: with `Integer` and `BigInt` both matching a
+/// database would take either. With `Integer` and `BigInt` both matching a
 /// `BIGINT[]`, an unannotated `vec![1, 2]` has no one array type left to
 /// infer, and that is the shape a call site actually writes.
 #[diagnostic::on_unimplemented(
@@ -666,8 +666,9 @@ pub trait LabelKey: crate::row::Spelled + Copy + 'static {}
 
 /// An expression that has stated what it decodes to but has no name: the
 /// anonymous `Keyed`, and so selectable, labellable and usable in a slot on
-/// exactly the same terms as any other keyed expression — except that
-/// `Anon` is not `Spelled`, so it can't be looked up or matched by name.
+/// exactly the same terms as any other keyed expression. The one difference
+/// is that `Anon` is not `Spelled`, so it can't be looked up or matched by
+/// name.
 pub type Declared<Req, S> = Keyed<crate::row::Anon, Req, S>;
 
 impl<Req, S: SqlType> Expr<Req, S> {
@@ -714,8 +715,8 @@ pub trait LabelExt: Sized {
 }
 impl<C: ColumnKey> LabelExt for Column<C> {}
 impl<K, Req, S: SqlType> LabelExt for Keyed<K, Req, S> {}
-// A bare `Expr` isn't selectable — it has to state its decoded type first —
-// but labelling one has to *reach* that rule to report it. Without this
+// A bare `Expr` isn't selectable: it has to state its decoded type first.
+// Labelling one still has to *reach* that rule to report it. Without this
 // impl, `.label(..)` on an inferred expression is a missing method and the
 // sentence about `.decodes_as::<..>()` is never printed.
 impl<Req, S: SqlType> LabelExt for Expr<Req, S> {}
@@ -793,9 +794,9 @@ pub trait ExprMethods: IntoExpr + Sized {
     }
 
     /// `a AND b`. The boolean requirement is on the method rather than on
-    /// the receiver's type, so every spelling a condition has — a
-    /// comparison, a `sql!` fragment, a `Nullable<Bool>` column — combines
-    /// with every other, the way `.filter` accepts them all.
+    /// the receiver's type, so every spelling a condition has (a comparison,
+    /// a `sql!` fragment, a `Nullable<Bool>` column) combines with every
+    /// other, the way `.filter` accepts them all.
     fn and<Rhs: IntoExpr>(self, rhs: Rhs) -> Expr<<Self::Req as Concat<Rhs::Req>>::Output, Bool>
     where
         Self::Sql: BoolLike,
@@ -808,7 +809,7 @@ pub trait ExprMethods: IntoExpr + Sized {
         ))
     }
 
-    /// `a OR b` — see `and`.
+    /// `a OR b`. See `and`.
     fn or<Rhs: IntoExpr>(self, rhs: Rhs) -> Expr<<Self::Req as Concat<Rhs::Req>>::Output, Bool>
     where
         Self::Sql: BoolLike,
@@ -836,7 +837,7 @@ pub trait ExprMethods: IntoExpr + Sized {
     /// `x IN (a, b, ..)` over a runtime-length list of literals, each bound
     /// as its own parameter. An empty list renders `FALSE`.
     ///
-    /// **Known limitation**: the list holds values, not expressions — a
+    /// **Known limitation**: the list holds values, not expressions. A
     /// column reference on the right needs the table it belongs to folded
     /// into `Req`, which is the same design `sql!{}` covers today.
     fn is_in<I>(self, values: I) -> Expr<Self::Req, Bool>
@@ -856,13 +857,13 @@ pub trait ExprMethods: IntoExpr + Sized {
         })
     }
 
-    /// `x = ANY(<array>)` — is this value one of the elements of that array
+    /// `x = ANY(<array>)`: is this value one of the elements of that array
     /// column. The mirror of [`is_in`](Self::is_in), which asks the same
     /// question of a list the statement writes out: here the list is one
     /// value the database unnests, so the array can be a column.
     ///
     /// `!` it for "not one of them": that is `NOT (x = ANY(a))`, which SQL
-    /// also spells `x <> ALL(a)` — and not `x <> ANY(a)`, which is true as
+    /// also spells `x <> ALL(a)`. It is not `x <> ANY(a)`, which is true as
     /// soon as *some* element differs.
     fn eq_any<Rhs: IntoExpr>(
         self,
@@ -881,7 +882,7 @@ pub trait ExprMethods: IntoExpr + Sized {
 
 /// True when any of the conditions is. Takes a runtime-length collection,
 /// the way `is_in` takes a runtime-length list of values, so the `OR` a
-/// search box needs doesn't have to be folded by hand — folding one by one
+/// search box needs doesn't have to be folded by hand. Folding one by one
 /// grows `Req` and stops type-checking after the first pair. An empty
 /// collection matches nothing, which is what `is_in([])` says too.
 pub fn any_of<Req, C: IntoExpr<Req = Req>>(conds: impl IntoIterator<Item = C>) -> Expr<Req, Bool>
@@ -914,7 +915,7 @@ where
 }
 
 /// AND- or OR-folds conditions, answering `TRUE`/`FALSE` for an empty
-/// collection — "all of nothing" matches everything, "any of nothing"
+/// collection: "all of nothing" matches everything, "any of nothing"
 /// matches nothing. Shared with `select::Predicate`, which folds the same
 /// way once the scope requirement is discharged.
 pub(crate) fn fold_conditions(kinds: impl IntoIterator<Item = ExprKind>, all: bool) -> ExprKind {
@@ -974,7 +975,7 @@ impl BoolLike for crate::scope::Nullable<Bool> {}
 
 /// `!condition`, not `condition.not()`: the standard `Not` trait reads more
 /// naturally at call sites than a same-named inherent method. Implemented
-/// for all three spellings `.filter` takes, each keeping its own type —
+/// for all three spellings `.filter` takes, each keeping its own type:
 /// `NOT` of a `Nullable<Bool>` is still nullable, and a `sql!` fragment
 /// stays the same fragment.
 impl<Req, S: BoolLike> std::ops::Not for Expr<Req, S> {
@@ -1001,7 +1002,7 @@ where
     }
 }
 
-/// A base SQL type's typed NULL — see `Value::NullI32` etc. for why this
+/// A base SQL type's typed NULL. See `Value::NullI32` etc. for why this
 /// can't just be a single untyped `Value::Null`.
 pub trait NullValue: SqlType {
     const NULL_VALUE: Value;
@@ -1017,14 +1018,14 @@ pub fn null<S: NullValue>() -> Expr<Nil, crate::scope::Nullable<S>> {
 
 /// Declares a leaf (base) SQL type: the marker struct, its `SqlType` impl,
 /// its `WrapNullable<MaybeNull>` impl, and `IntoExpr` from its native Rust
-/// type. One concrete, non-generic impl per type — a blanket
+/// type. One concrete, non-generic impl per type: a blanket
 /// `impl<T: SqlType> WrapNullable<MaybeNull> for T` would conflict with
 /// `Nullable<T>`'s own impl (see `scope::WrapNullable`).
 mod raw_arg {
     /// Sealed for the reason `select::ColumnList` is: `Req` is a free
-    /// parameter, and a slot's value can be delegated to a real column — so
-    /// a hand-written impl could claim `Nil` while naming a table, which is
-    /// exactly the scope check a `sql!` slot exists to keep.
+    /// parameter, and a slot's value can be delegated to a real column, so a
+    /// hand-written impl could claim `Nil` while naming a table, defeating
+    /// the scope check a `sql!` slot exists to keep.
     pub trait Sealed {}
     impl<T: super::IntoExpr> Sealed for T {}
 }
@@ -1165,7 +1166,7 @@ sql_leaf_type!(Bytes, Vec<u8>, NullBytes);
 //
 // **Known limitations**: `BOOLEAN[]`, `DOUBLE PRECISION[]`, `TIMESTAMPTZ[]`
 // and `NUMERIC[]` have no marker, and neither does an array whose elements
-// can be NULL — a `Vec<T>` column decodes every element, so a row holding
+// can be NULL. A `Vec<T>` column decodes every element, so a row holding
 // one fails to decode rather than arriving as `None`. Both wait for a
 // schema that needs them. Arrays are Postgres's alone; an `Expr` carries no
 // dialect, so rendering one for MySQL or SQLite is a bind their driver
@@ -1181,10 +1182,10 @@ sql_leaf_type!(UuidArray, Vec<uuid::Uuid>, NullUuidArray);
 // are deferred to `sql!{}` rather than half-built.
 //
 // **Known limitations**: a `json` column binds and decodes through this
-// marker too, since the two are one wire format and one Rust type, but
-// `json` has neither an equality nor an ordering operator — `.eq(..)`,
-// `.asc()` and `GROUP BY` on one compile here and are rejected by the
-// server. Which of the two a column is is a fact about the schema that
+// marker too, since the two are one wire format and one Rust type.
+// `json`, though, has neither an equality nor an ordering operator, so
+// `.eq(..)`, `.asc()` and `GROUP BY` on one compile here and are rejected
+// by the server. Which of the two a column is is a fact about the schema that
 // nothing in a query can read, so it is `jsonb` that this marker claims.
 #[cfg(feature = "json")]
 sql_leaf_type!(Json, serde_json::Value, NullJson);
@@ -1291,7 +1292,7 @@ pub fn count() -> Keyed<Count, Nil, BigInt> {
 }
 
 /// What `min`/`max` accept: a type the databases order. Its own marker for
-/// the reason `Summable` is one — `WrapNullable<MaybeNull>`, which stood
+/// the reason `Summable` is one. `WrapNullable<MaybeNull>`, which stood
 /// here before, is implemented for every leaf type, so it gated nothing and
 /// `max(bool_column)` rendered SQL Postgres has no aggregate for.
 ///
@@ -1299,7 +1300,7 @@ pub fn count() -> Keyed<Count, Nil, BigInt> {
 /// `bytea`, and no `uuid` before PG 18.
 #[diagnostic::on_unimplemented(
     message = "`min`/`max` need an ordered expression, and `{Self}` isn't one",
-    label = "numbers, text, and dates/timestamps are ordered; booleans, bytes and UUIDs are not — `bool_or`/`bool_and` are the aggregate a flag wants, and aren't built yet"
+    label = "numbers, text, and dates/timestamps are ordered; booleans, bytes and UUIDs are not. `bool_or`/`bool_and` are the aggregate a flag wants, and aren't built yet"
 )]
 pub trait Ordered: SqlType + WrapNullable<MaybeNull> {}
 
@@ -1314,7 +1315,7 @@ impl Ordered for Timestamptz {}
 #[cfg(feature = "chrono")]
 impl Ordered for Date {}
 
-/// A nullable column orders like its base type — the NULLs sort, they don't
+/// A nullable column orders like its base type: the NULLs sort, they don't
 /// stop the aggregate from existing.
 impl<S: Ordered> Ordered for crate::scope::Nullable<S> {}
 
@@ -1367,7 +1368,7 @@ pub struct Agg<Op, C>(PhantomData<fn() -> (Op, C)>);
 // An aggregate is filed under the column it aggregates: `sum(orders::total)`
 // reads back as `total`, and matches a CTE or DTO field of that name.
 //
-// **Known limitation**: by *name*, not by key — `Agg<Sum, total>` is its own
+// **Known limitation**: by *name*, not by key. `Agg<Sum, total>` is its own
 // key type, so `row.get(sum(orders::total))` and `#[derive(FromRow)]` find
 // it and the generated `row.total()` accessor does not.
 #[doc(hidden)]
@@ -1460,14 +1461,14 @@ aggregate!(
     BigInt,
     SqlType,
     None,
-    "`count(column)` — non-NULL values, unlike `count()`'s `count(*)` rows."
+    "`count(column)`: non-NULL values, unlike `count()`'s `count(*)` rows."
 );
 
 /// What `string_agg` accepts. Postgres defines it for `text` and for
-/// `bytea` — and the `bytea` one concatenates bytes and returns `bytea`,
-/// which is a different question than the one this asks — so text is the
-/// set, as it is the set the other two dialects coerce their arguments
-/// into anyway.
+/// `bytea`. The `bytea` one concatenates bytes and returns `bytea`, which
+/// is a different question than the one this asks, so text is the set here.
+/// It is also the set the other two dialects coerce their arguments into
+/// anyway.
 #[diagnostic::on_unimplemented(
     message = "`string_agg` concatenates text, and `{Self}` isn't text",
     label = "reach for a cast, or a raw fragment, in front of a column that isn't"
@@ -1480,28 +1481,28 @@ impl Concatenable for Text {}
 /// the NULLs rather than being undefined over them.
 impl<S: Concatenable> Concatenable for crate::scope::Nullable<S> {}
 
-/// `string_agg(column, ", ")` — a group's values run together, separated.
+/// `string_agg(column, ", ")`: a group's values run together, separated.
 /// NULL over zero rows, and over a group whose every value is NULL.
 ///
 /// The separator binds like any other value under Postgres and SQLite,
 /// which take it as an ordinary argument. MySQL's grammar takes a literal
 /// after `SEPARATOR` and rejects a parameter, so there alone it is written
-/// into the SQL and escaped — which is why it is a `&'static str` at all,
-/// and why a MySQL session running `NO_BACKSLASH_ESCAPES` renders a
-/// separator containing a backslash as more backslashes than were asked
-/// for. `&'static str` is a nudge and not a guarantee, since `Box::leak`
+/// into the SQL and escaped. That is why it is a `&'static str` at all, and
+/// why a MySQL session running `NO_BACKSLASH_ESCAPES` renders a separator
+/// containing a backslash as more backslashes than were asked for.
+/// `&'static str` is a nudge and not a guarantee, since `Box::leak`
 /// reaches it; the guarantee is that the two dialects this crate executes
 /// never write it out at all.
 ///
 /// Two `string_agg`s over one column key alike, since the separator is not
-/// part of the key — give one a `label!{}` name to read both back.
+/// part of the key. Give one a `label!{}` name to read both back.
 ///
 /// **Known limitation**: no `ORDER BY` inside the call
 /// (`string_agg(x, ',' ORDER BY x)`) and no `DISTINCT`. Ordering inside an
 /// aggregate reached SQLite only in 3.44, past the 3.39 this crate targets,
-/// and MySQL spells it before the separator rather than after the
-/// argument — three spellings of a clause two of the dialects would have
-/// to be told to skip. Reach for `sql!{}` where the order matters.
+/// and MySQL spells it before the separator rather than after the argument.
+/// That is three spellings of a clause two of the dialects would have to be
+/// told to skip. Reach for `sql!{}` where the order matters.
 pub struct StringAgg;
 
 /// `string_agg(column, ", ")`. See [`StringAgg`].
@@ -1522,7 +1523,7 @@ where
 }
 
 /// One `?` slot of a `sql!{}` fragment: every expression, plus the `Option`
-/// a request field already holds — a slot is the one place a NULL arrives
+/// a request field already holds. A slot is the one place a NULL arrives
 /// as data rather than as a written `null::<..>()`. A slot that isn't one
 /// reports `IntoExpr`, since that is the bound this one is built on.
 pub trait RawArg: raw_arg::Sealed {

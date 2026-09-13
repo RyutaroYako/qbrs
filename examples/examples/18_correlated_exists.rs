@@ -1,6 +1,6 @@
 //! Correlated subqueries: `EXISTS (SELECT .. WHERE inner.col = outer.col)`.
 //! The subquery is built *from* the outer query, so its scope is the outer
-//! one plus its own table — which is what makes the outer column reference
+//! one plus its own table, which is what makes the outer column reference
 //! legal, and what tags the resulting condition with the tables it needs, so
 //! it can only be filtered back onto a query that has them.
 //! Run: `cargo run -p qbrs-examples --example 18_correlated_exists`

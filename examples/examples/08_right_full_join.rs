@@ -13,7 +13,7 @@ async fn main() {
 
     // FROM orders, RIGHT JOIN users: `orders` was in scope first (from the
     // FROM clause) as not-null, but RIGHT JOIN flips every *already*-joined
-    // table to nullable before adding the new one — so `orders::total`
+    // table to nullable before adding the new one. So `orders::total`
     // decodes as `Option<i64>` here even though it was the FROM table,
     // purely because of how it ends up on the outer side of this RIGHT JOIN.
     let mut rows: Vec<(String, Option<i64>)> = select((users::email, orders::total))
@@ -34,7 +34,7 @@ async fn main() {
 
     // FULL JOIN: both sides become nullable. To see it produce a genuinely
     // unmatched row we'd need an order with no matching user, which the
-    // schema's FK constraint rules out — so here every row still has both
+    // schema's FK constraint rules out. So here every row still has both
     // sides present, but the *type* (`Option<String>, Option<i64>`) is
     // honest about what FULL JOIN can produce in general, independent of
     // what today's data happens to contain.

@@ -20,7 +20,7 @@ struct Tickets {
 }
 
 /// The archive keeps an identity of its own. A generated column is not in
-/// the header, so the query fills the rest and the database fills this —
+/// the header, so the query fills the rest and the database fills this,
 /// which is what `GENERATED ALWAYS AS IDENTITY` insists on.
 #[derive(Table)]
 #[table(name = "archived_tickets")]

@@ -10,18 +10,18 @@ use crate::scope::{Find, Superset, Table, WrapNullable};
 /// Sealed for the reason `InsertRow` is: these traits pair a type-level
 /// claim (`Fields`/`Output`) with the runtime list of `SelectItem`s that is
 /// supposed to match it, and only the impls in this crate keep the two in
-/// step. A hand-written one could select a row that decodes transposed —
-/// the failure `row::SameShape` and column-keyed rows exist to stop.
+/// step. A hand-written one could select a row that decodes transposed,
+/// which is the failure `row::SameShape` and column-keyed rows exist to stop.
 mod private {
     /// Carries the trait's own parameters, for the reason `scope::proof`
     /// explains: `Self` can be an honest `Column<C>` while the free `Idx`
     /// is the caller's own type, so a seal on `Self` alone admits the
-    /// forgery — and a private proof *type* is reachable by projection.
+    /// forgery. A private proof *type* is no better: projection reaches it.
     pub trait Sealed<Scope, Idx> {}
 }
 
 /// `AllColumns`/`CteShape` are emitted in the schema's own crate, so their
-/// seal has to be nameable there — a separate trait, because sharing
+/// seal has to be nameable there. It is a separate trait, because sharing
 /// `private::Sealed` would hand out the one line that unseals `Selection`
 /// too, and a hand-written `Selection` is exactly what the seal is for.
 #[doc(hidden)]
@@ -50,31 +50,31 @@ impl<T: AllColumns, Scope, Idx> private::Sealed<Scope, Idx> for All<T> where
 }
 
 /// What a single un-tupled selection decodes to: a bare native value, or
-/// its `Option`. Sealed by construction — the impls come from the same
-/// `sql_leaf_type!` that declares the types — and used to give a
-/// one-column set operation an `ORDER BY` with no position to state.
+/// its `Option`. Sealed by construction, since the impls come from the same
+/// `sql_leaf_type!` that declares the types. It is what gives a one-column
+/// set operation an `ORDER BY` with no position to state.
 pub trait SingleColumn {}
 
 /// One *field* of a resulting `Row`: the key its value is filed under, and
 /// the Rust type it decodes to. A selection list is a chain of
-/// `SelectionPart`s, one of which — `All` — carries many of these at once.
+/// `SelectionPart`s, one of which (`All`) carries many of these at once.
 ///
-/// Parameterized by `Scope` so a bare column's `Value` is `Option<T>` when —
-/// and only when — that column's table is nullable in *this* query, via
+/// Parameterized by `Scope` so a bare column's `Value` is `Option<T>` when,
+/// and only when, that column's table is nullable in *this* query, via
 /// `scope::Find::Nullability` + `WrapNullable`. Nullability is therefore
 /// derived from join shape rather than asserted with a manual `.nullable()`.
 ///
 /// Scope membership is proven as a side effect of this trait type-checking
-/// at all, through the `Find`/`Superset` bounds below — so callers need no
+/// at all, through the `Find`/`Superset` bounds below, so callers need no
 /// separate check.
 #[diagnostic::on_unimplemented(
     message = "`{Self}` can't be a field of this query's rows",
     label = "a column, an aggregate, a window function, a `sql!` fragment, or a labelled one of those can be",
-    note = "an expression the builder inferred a type for — a comparison, an `is_null`, a `LIKE` — has to state what it decodes to with `.decodes_as::<..>()`, since that inference can contradict the join; a `sql!` fragment already states it"
+    note = "an expression the builder inferred a type for (a comparison, an `is_null`, a `LIKE`) has to state what it decodes to with `.decodes_as::<..>()`, since that inference can contradict the join; a `sql!` fragment already states it"
 )]
 pub trait RowField<Scope, Idx>: RowKey + private::Sealed<Scope, Idx> {
     type Value;
-    /// This field's SQL type — the marker `Value` has already resolved away
+    /// This field's SQL type: the marker `Value` has already resolved away
     /// to a native Rust type. A single-column subquery (`Select::contains`)
     /// needs this to compare its selected column against an outer
     /// expression with `expr::Comparable`, which a native `Value` can't do.
@@ -131,7 +131,7 @@ impl<K: LabelKey, Inner: RowField<Scope, Idx>, Scope, Idx> RowField<Scope, Idx>
 #[diagnostic::on_unimplemented(
     message = "`{Self}` isn't a valid selection list here",
     label = "a selection is a column, an aggregate, a window function, a `sql!` fragment, a labelled one of those, `<table>::All`, or a tuple of up to 32 of them",
-    note = "every element has to be in scope — `.from(..)`/`.join(..)` the tables it names — and an expression the builder inferred a type for has to state its decoded type with `.decodes_as::<..>()`"
+    note = "every element has to be in scope, so `.from(..)`/`.join(..)` the tables it names; an expression the builder inferred a type for also has to state its decoded type with `.decodes_as::<..>()`"
 )]
 pub trait Selection<Scope, Idx>: private::Sealed<Scope, Idx> {
     type Output;
@@ -159,7 +159,7 @@ macro_rules! scalar_selection {
 #[diagnostic::on_unimplemented(
     message = "`{Self}` can't be part of a selection list",
     label = "a column, an aggregate, a window function, a `sql!` fragment, a labelled one of those, or `<table>::All` can be",
-    note = "an expression the builder inferred a type for — a comparison, an `is_null`, a `LIKE` — has to state what it decodes to with `.decodes_as::<..>()`, since that inference can contradict the join"
+    note = "an expression the builder inferred a type for (a comparison, an `is_null`, a `LIKE`) has to state what it decodes to with `.decodes_as::<..>()`, since that inference can contradict the join"
 )]
 pub trait SelectionPart<Scope, Idx>: private::Sealed<Scope, Idx> {
     type Fields<Tail>;
@@ -196,11 +196,11 @@ selectable!(impl[C: ColumnKey] Column<C>);
 selectable!(impl[K, Req, S: SqlType] Keyed<K, Req, S>);
 selectable!(impl[K, Inner] Labeled<K, Inner>);
 
-/// Every column of one table, in declaration order — `select(users::All)`.
-/// The table's own `#[derive(Table)]` supplies the chain through
-/// `AllColumns`, so a selection list and the schema cannot drift apart, and
-/// a whole table counts as one element of a tuple however many columns it
-/// has.
+/// Every column of one table, in declaration order, as in
+/// `select(users::All)`. The table's own `#[derive(Table)]` supplies the
+/// chain through `AllColumns`, so a selection list and the schema cannot
+/// drift apart, and a whole table counts as one element of a tuple however
+/// many columns it has.
 pub struct All<T>(PhantomData<fn() -> T>);
 
 impl<T> All<T> {
@@ -228,18 +228,18 @@ pub trait AllColumns: SelectableSealed {
     /// The table's columns as a type-level list, `Cons<Column<C>, ..>`.
     /// The row and the rendered items are both computed from it here, so a
     /// hand-written impl can name a different set of columns but can never
-    /// make the two disagree — which is what a schema's own crate could do
-    /// while this trait stated the row and pushed the items separately.
+    /// make the two disagree. While this trait stated the row and pushed the
+    /// items separately, a schema's own crate could.
     type Columns;
 }
 
 /// The list `AllColumns` names, walked once for the row's fields and once
 /// for the items. Implemented for `Nil` and `Cons<Column<C>, Tail>` only,
-/// and only here — sealed, because this trait *is* the pairing `AllColumns`
-/// was split up to remove: it states the row and pushes the items
-/// separately, so a hand-written impl could transpose them. Nothing outside
-/// this crate implements it, so an ordinary private supertrait is enough;
-/// no `Proof` is needed.
+/// and only here. It is sealed because this trait *is* the pairing
+/// `AllColumns` was split up to remove: it states the row and pushes the
+/// items separately, so a hand-written impl could transpose them. Nothing
+/// outside this crate implements it, so an ordinary private supertrait is
+/// enough; no `Proof` is needed.
 mod column_list {
     pub trait Sealed {}
     impl Sealed for crate::scope::Nil {}

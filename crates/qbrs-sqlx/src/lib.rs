@@ -4,7 +4,7 @@
 //! `qbrs-core`, which stays independent of any async runtime or driver.
 
 /// Re-exported so a caller can name what `LoadExt::stream` returns and
-/// consume it — `StreamExt::next` is how a stream is read — without taking
+/// consume it (`StreamExt::next` is how a stream is read) without taking
 /// a `futures` dependency of their own.
 pub use futures_util::{Stream, StreamExt};
 use qbrs_core::delete::Delete;
@@ -34,8 +34,8 @@ pub enum Error {
     #[error(transparent)]
     UnresolvedPlaceholder(#[from] qbrs_core::select::UnresolvedPlaceholder),
 
-    /// An `*Update` describing no assignment, or an insert of no rows —
-    /// caught where the request-shaped data is read (`Assignments::from_row`,
+    /// An `*Update` describing no assignment, or an insert of no rows.
+    /// Caught where the request-shaped data is read (`Assignments::from_row`,
     /// `.values_all`), never at a statement. Here so a handler returning
     /// this crate's `Result` can `?` on that as readily as on a query.
     #[error(transparent)]
@@ -46,7 +46,7 @@ pub enum Error {
 
     /// A column type is enabled on `qbrs` but not on `qbrs-sqlx`, so the
     /// value renders and has nothing to bind it. The two crates carry the
-    /// same feature names for exactly this reason — turn it on in both.
+    /// same feature names for exactly this reason: turn it on in both.
     #[error("`{0}` values need the matching feature on `qbrs-sqlx` too")]
     FeatureNotEnabled(&'static str),
 }
@@ -60,11 +60,11 @@ pub type Result<T> = std::result::Result<T, Error>;
 /// bound a generic helper over `RowQuery` has to spell. `Result` is
 /// deliberately absent: a glob-imported alias of that name shadows
 /// `std::result::Result` in every module that follows, and a service layer
-/// has its own error type in most of them — write `qbrs_sqlx::Result<T>`
-/// where the alias is wanted. Which trait applies
-/// depends on the builder, so importing them one at a time is bookkeeping
-/// with no decision in it — and `count` in particular resolves against
-/// `Iterator::count` with a confusing message until `CountExt` is in scope.
+/// has its own error type in most of them. Write `qbrs_sqlx::Result<T>`
+/// where the alias is wanted. Which trait applies depends on the builder,
+/// so importing them one at a time is bookkeeping with no decision in it.
+/// `count` in particular resolves against `Iterator::count` with a
+/// confusing message until `CountExt` is in scope.
 pub mod prelude {
     pub use crate::Error;
     pub use crate::{
@@ -202,11 +202,10 @@ async fn execute_only<'e, E: sqlx::PgExecutor<'e>>(
 
 /// What a row-producing query renders to, and what its rows decode to: a
 /// `SELECT`, a `RETURNING` clause, an erased `DynSelect`, a `UNION` chain.
-/// `LoadExt` is the methods over it, and the split is load-bearing
-/// — with the validity bound on the impl instead, an invalid selection
-/// makes `.load(..)` not exist, and the scope error the builder wanted to
-/// report is replaced by a method-resolution failure that never mentions
-/// the table.
+/// `LoadExt` is the methods over it, and the split is load-bearing. With
+/// the validity bound on the impl instead, an invalid selection makes
+/// `.load(..)` not exist, and the scope error the builder wanted to report
+/// is replaced by a method-resolution failure that never mentions the table.
 ///
 /// `Idx` is threaded through the trait's parameter list for the reason
 /// `scope::Superset` explains. Callers never see it; it's inferred.
@@ -223,13 +222,13 @@ pub trait RowQuery<Idx> {
 
 /// `load` for the rows, `load_one` for the first of them, `stream` for
 /// them one at a time, and `ExecuteExt::execute` where there are none to
-/// decode. One trait for
-/// every row-producing builder keeps the terminal vocabulary tied to what a
-/// statement yields rather than to which builder happens to be in hand.
+/// decode. One trait for every row-producing builder keeps the terminal
+/// vocabulary tied to what a statement yields rather than to which builder
+/// happens to be in hand.
 ///
 /// Implemented for every builder, satisfiable by the ones that produce
 /// rows: what a builder can't do is then reported by `RowQuery`, which says
-/// so, rather than by the method not existing — which rustc answers with a
+/// so, rather than by the method not existing, which rustc answers with a
 /// list of unsatisfied bounds or, worse, by suggesting `Iterator`. Not a
 /// blanket impl, since `load`/`count`/`execute` are names other traits in a
 /// caller's scope have too. A builder added here needs its three empty
@@ -267,14 +266,14 @@ pub trait LoadExt {
     /// row costs.
     ///
     /// Returns a `Result` around the stream rather than as its first item,
-    /// because what can fail before a row arrives — an unresolved
-    /// placeholder, a value whose feature is on in `qbrs` and off here —
+    /// because what can fail before a row arrives (an unresolved
+    /// placeholder, a value whose feature is on in `qbrs` and off here)
     /// is a misuse of this crate rather than a row that didn't decode.
     /// Everything the database has to say arrives as an item.
     ///
     /// `Send` and `Unpin` are promised, so the stream can be spawned and
-    /// polled without pinning it first — a generic caller cannot ask for
-    /// either otherwise.
+    /// polled without pinning it first, which a generic caller has no way to
+    /// ask for otherwise.
     fn stream<'e, Idx, E: sqlx::PgExecutor<'e>>(
         &self,
         executor: E,
@@ -325,12 +324,12 @@ where
 }
 
 /// `SELECT count(*)` over a query's `FROM`/`JOIN`/`WHERE`/`GROUP BY`, with
-/// its `ORDER BY`/`LIMIT`/`OFFSET` dropped — a total counts the rows that
+/// its `ORDER BY`/`LIMIT`/`OFFSET` dropped: a total counts the rows that
 /// match, not the page being shown. Returns a number rather than an
 /// `Option`, since a count query always produces exactly one row.
 #[diagnostic::on_unimplemented(
     message = "`{Self}` isn't a query this crate can count",
-    label = "a `Select`, a `DynSelect` or a set operation in the `Postgres` dialect is; a writing statement reports rows affected through `.execute(..)` instead, and a `SELECT` with no `FROM` returns one row — a query missing its `.from(..)` is what this usually means"
+    label = "a `Select`, a `DynSelect` or a set operation in the `Postgres` dialect is; a writing statement reports rows affected through `.execute(..)` instead. A `SELECT` with no `FROM` returns one row, so this error usually means a `.from(..)` was left off"
 )]
 pub trait CountQuery<Idx> {
     #[doc(hidden)]
@@ -396,7 +395,7 @@ async fn count_rows<'e, E: sqlx::PgExecutor<'e>>(
 /// affected, whichever of the three it was.
 #[diagnostic::on_unimplemented(
     message = "`{Self}` isn't a statement this crate can execute",
-    label = "an `INSERT`, `UPDATE` or `DELETE` in the `Postgres` dialect is; a `SELECT` or a `RETURNING` yields rows, so it goes through `.load(..)` — and a prepared query through `.load(.., params)`"
+    label = "an `INSERT`, `UPDATE` or `DELETE` in the `Postgres` dialect is; a `SELECT` or a `RETURNING` yields rows, so it goes through `.load(..)`, and a prepared query through `.load(.., params)`"
 )]
 pub trait WriteStatement {
     #[doc(hidden)]
@@ -456,7 +455,7 @@ where
 #[diagnostic::on_unimplemented(
     message = "`{Self}` isn't a value this crate can decode",
     label = "every selected column has to decode to one of the featureless natives, or to a type whose feature is on here as well as on `qbrs`",
-    note = "`chrono`/`uuid`/`decimal`/`json` have to be enabled on `qbrs-sqlx` too — they are separate `cfg`s over one `Value`"
+    note = "`chrono`/`uuid`/`decimal`/`json` have to be enabled on `qbrs-sqlx` too: they are separate `cfg`s over one `Value`"
 )]
 pub trait DecodeRow: Sized {
     #[doc(hidden)]
@@ -523,7 +522,7 @@ impl<L: DecodeRow> DecodeRow for Row<L> {
 }
 
 /// An erased query and a set-op chain were both rendered before their
-/// selection type was gone, leaving nothing for `Idx` to index — hence
+/// selection type was gone, leaving nothing for `Idx` to index. Hence
 /// `RowQuery<()>`, the same trait with an empty proof.
 impl<Output: DecodeRow> RowQuery<()> for DynSelect<Postgres, Output> {
     type Output = Output;
@@ -546,7 +545,7 @@ impl<Output: DecodeRow> RowQuery<()> for SetOp<Postgres, Output> {
 /// re-rendering it.
 #[diagnostic::on_unimplemented(
     message = "`{Self}` isn't a prepared query this crate can run",
-    label = "a `.prepare()`-built query is — `Prepared<D, Params, Output>`, params before output — and its `Params` have to be the ones it declared"
+    label = "a `.prepare()`-built query is `Prepared<D, Params, Output>` (params before output), and its `Params` have to be the ones it declared"
 )]
 pub trait PreparedQuery<Params> {
     type Output: DecodeRow;
@@ -588,8 +587,8 @@ pub trait PreparedExt {
         }
     }
 
-    /// The rows one at a time, as `LoadExt::stream` gives them — with the
-    /// `Params` that arrive at the call, which is what a reusable export
+    /// The rows one at a time, as `LoadExt::stream` gives them, with the
+    /// `Params` that arrive at the call. That is what a reusable export
     /// query wants.
     fn stream<'e, Params, E: sqlx::PgExecutor<'e>>(
         &self,
@@ -610,8 +609,8 @@ pub trait PreparedExt {
 impl<D, Params, Output> PreparedExt for Prepared<D, Params, Output> {}
 
 // A prepared query's `load`/`count` are told apart from the plain ones by
-// arity, but `execute` is not — without this, it is the one terminal on the
-// one builder that reports nothing.
+// arity, but `execute` is not. Without this impl, it is the one terminal on
+// the one builder that reports nothing.
 impl<D, Params, Output> ExecuteExt for Prepared<D, Params, Output> {}
 
 #[diagnostic::do_not_recommend]

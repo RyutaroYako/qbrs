@@ -1,14 +1,14 @@
 //! Upsert: `ON CONFLICT (..) DO NOTHING` / `DO UPDATE SET ..`, gated at
-//! compile time to dialects with `SupportsOnConflict` (Postgres, SQLite —
-//! not MySQL, whose `ON DUPLICATE KEY UPDATE` is a different shape and a
-//! separate future API). `ConflictTarget` proves the target column(s)
+//! compile time to dialects with `SupportsOnConflict`. That is Postgres and
+//! SQLite, not MySQL, whose `ON DUPLICATE KEY UPDATE` is a different shape
+//! and a separate future API. `ConflictTarget` proves the target column(s)
 //! actually belong to the table being inserted into, and `partial_index(..)`
 //! repeats an index's own predicate so a *partial* unique index can be the
 //! one inferred. `excluded(..)` names the row the insert proposed, which is
 //! what an accumulating upsert reads and what a value passed to both halves
-//! of the statement cannot say, and `.filter(..)` on that list decides
-//! whether the update fires at all — a rejected row is not counted, so a
-//! one-row upsert's `execute` answers "did this write anything".
+//! of the statement cannot say. `.filter(..)` on that list decides whether
+//! the update fires at all: a rejected row is not counted, so a one-row
+//! upsert's `execute` answers "did this write anything".
 //! Run: `cargo run -p qbrs-examples --example 11_upsert`
 
 use qbrs::prelude::*;
@@ -36,8 +36,8 @@ async fn main() {
         .into_tuple();
     println!("inserted: id={id} display_name={display_name:?}");
 
-    // `email` already exists — DO NOTHING means this row is silently
-    // skipped, so the original `display_name` survives untouched.
+    // `email` already exists, so DO NOTHING means this row is silently
+    // skipped and the original `display_name` survives untouched.
     insert(users::Table)
         .values(
             UsersInsert::builder()
@@ -61,8 +61,8 @@ async fn main() {
     println!("after DO NOTHING, display_name is still: {unchanged:?}");
 
     // Same conflicting email, but this time DO UPDATE SET reuses the same
-    // `*Update` struct an `UPDATE` assigns from — only the fields actually set on
-    // it are updated.
+    // `*Update` struct an `UPDATE` assigns from. Only the fields actually
+    // set on it are updated.
     let updated: Option<String> = insert(users::Table)
         .values(
             UsersInsert::builder()
@@ -89,10 +89,11 @@ async fn main() {
     assert_eq!(updated, Some("Grace Brewster Hopper".to_string()));
 
     // A conflict target of bare columns is inferred against an index over
-    // exactly those columns whose predicate the target's implies — and no
-    // predicate implies nothing, so a *partial* unique index needs its own
-    // repeated. `orders` has no unique constraint on `user_id`, so the
-    // partial index below is the only one there is to infer.
+    // exactly those columns whose predicate the target's implies, and a
+    // target with no predicate implies nothing, so a *partial* unique index
+    // needs its own repeated. `orders` has no unique constraint on
+    // `user_id`, so the partial index below is the only one there is to
+    // infer.
     sqlx::query(
         "CREATE UNIQUE INDEX orders_one_open_per_user ON orders (user_id) WHERE NOT shipped",
     )
@@ -126,7 +127,7 @@ async fn main() {
     // Passing the same Rust value to both halves of an upsert stands in
     // for the proposed row only while the value is one the caller holds.
     // `excluded(..)` names that row itself, so the assignment can read it
-    // and the conflicting row together — here, adding to a running total
+    // and the conflicting row together. Here that adds to a running total
     // rather than replacing it.
     let accumulated: i64 = insert(orders::Table)
         .values(OrdersInsert::builder().user_id(id).total(75).build())
@@ -151,7 +152,7 @@ async fn main() {
     assert_eq!(accumulated, 325);
 
     // A `WHERE` on the `DO UPDATE` itself: the row is touched only if the
-    // condition holds, and a rejected one is not counted — which is what
+    // condition holds, and a rejected one is not counted, which is what
     // lets a one-row upsert's count answer "was this already done?". An
     // unconditional `DO UPDATE` always reports 1.
     let raise_once = |total: i64| {

@@ -1,7 +1,7 @@
 // Deliberately-broken example: `excluded(..)` in a plain `UPDATE`, which
 // has no proposed row for it to name. Used to eyeball the scope error a
-// `DO UPDATE`-only expression gets — `Excluded<users::Table>` is a table
-// only `ConflictScope` holds. Not meant to compile — copy into
+// `DO UPDATE`-only expression gets: `Excluded<users::Table>` is a table
+// only `ConflictScope` holds. Not meant to compile. Copy into
 // tests/compile-bench/examples/ and run with:
 //   cargo build -p compile-bench --example excluded_outside_upsert
 use qbrs::dialect::Postgres;

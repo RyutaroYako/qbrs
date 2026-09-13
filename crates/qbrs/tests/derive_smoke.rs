@@ -80,7 +80,7 @@ fn a_nullable_defaulted_column_says_its_three_states_apart() {
 }
 
 /// Two columns explicitly set to NULL are one value, and Postgres names a
-/// parameter rather than rebinding it — so the row's third cell is the
+/// parameter rather than rebinding it, so the row's third cell is the
 /// second cell's parameter. Which is why the three-state test above gives
 /// `display_name` a value: otherwise its NULL and `nickname`'s would be
 /// the same `$2`, and the states it is checking would be indistinguishable
@@ -144,9 +144,9 @@ fn an_array_column_binds_as_one_parameter_and_vec_u8_stays_bytes() {
 }
 
 /// `x = ANY(arr)` asks the question `IN` asks of a written-out list, of an
-/// array the database unnests — so the array is a column, which is what the
-/// list form cannot be. `!` is "none of them", and a nullable array column
-/// answers it too.
+/// array the database unnests. The array is therefore a column, which is
+/// what the list form cannot be. `!` is "none of them", and a nullable
+/// array column answers it too.
 #[test]
 fn a_value_is_tested_against_an_array_column_with_eq_any() {
     let (sql, params) = select((feeds::id,))
@@ -170,7 +170,7 @@ fn a_value_is_tested_against_an_array_column_with_eq_any() {
 }
 
 /// The array can be a bound value too, which is the shape a request's own
-/// list of ids arrives as — one parameter rather than one per element.
+/// list of ids arrives as: one parameter rather than one per element.
 #[test]
 fn eq_any_takes_a_bound_array_as_well_as_a_column() {
     let (sql, params) = select((feeds::id,))
@@ -185,7 +185,7 @@ fn eq_any_takes_a_bound_array_as_well_as_a_column() {
 }
 
 /// An omitted nullable array is a NULL of the array's own type, not an
-/// untyped one — the same reason every other `NullX` variant exists.
+/// untyped one. That is the same reason every other `NullX` variant exists.
 #[test]
 fn an_omitted_nullable_array_binds_a_typed_null() {
     let (_, params) = qbrs::insert::insert(feeds::Table)
@@ -205,7 +205,7 @@ fn an_omitted_nullable_array_binds_a_typed_null() {
 }
 
 /// `INSERT INTO t (..) SELECT ..` names the columns the target lets a
-/// statement write — `feeds::id` is generated, so it is the database's to
+/// statement write. `feeds::id` is generated, so it is the database's to
 /// fill and naming it would be an error Postgres raises. A `RETURNING`
 /// that binds is numbered after the body, which is the whole reason the
 /// body is a `Fragment` rather than a rendered string.
@@ -454,7 +454,7 @@ fn an_exists_composes_with_other_conditions_once_discharged() {
 #[test]
 fn a_write_statement_builds_its_own_correlated_exists() {
     // The same `EXISTS` a `SELECT` builds, against the one-table scope an
-    // `UPDATE` has — no throwaway `Select` to hang it on.
+    // `UPDATE` has, with no throwaway `Select` to hang it on.
     let statement = qbrs::update::update(users::Table).set_to(users::active, false);
     let has_flag = statement
         .correlated(flags::Table, (flags::id,))
@@ -526,7 +526,7 @@ struct Metrics {
 #[test]
 fn a_schema_qualified_table_is_two_identifiers() {
     // `analytics.events` is a table in a schema, not a table whose name has
-    // a dot in it — quoting it whole asks for a relation nobody created.
+    // a dot in it. Quoting it whole asks for a relation nobody created.
     let (sql, _) = select((metrics::name,))
         .from(metrics::Table)
         .to_sql(Postgres);
@@ -548,7 +548,7 @@ struct ImportRun {
 
 #[test]
 fn a_table_with_nothing_to_insert_says_default_values() {
-    // Every column is the database's to write, so the row names none — and
+    // Every column is the database's to write, so the row names none, and
     // an empty column list is a syntax error in two of the three dialects.
     let (sql, params) = qbrs::insert::insert(import_run::Table)
         .values(ImportRunInsert::builder().build())

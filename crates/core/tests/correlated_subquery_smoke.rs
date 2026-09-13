@@ -82,7 +82,7 @@ fn correlated_exists_references_outer_column() {
 
     // The subquery's `.filter()` references `orders::user_id` (its own
     // FROM) *and* `users::id` (the outer query's FROM) in the same
-    // expression — this is exactly the correlated-subquery case. It
+    // expression. This is exactly the correlated-subquery case. It
     // type-checks with no special API beyond `.correlated()` + the
     // ordinary `Find`/`Superset` machinery already used for joins.
     let subquery = outer.correlated(orders::Table, (orders::user_id,));
@@ -98,7 +98,7 @@ fn correlated_exists_references_outer_column() {
 
 #[test]
 fn correlated_subquery_with_bound_value_renumbers_correctly() {
-    // The outer query also binds a literal value — proving the subquery's
+    // The outer query also binds a literal value, proving the subquery's
     // parameters take their numbers from the statement they end up in,
     // rather than from the query they were written in.
     let outer = select((users::id,))
@@ -135,7 +135,7 @@ fn an_exists_is_a_condition_of_its_own_dialect() {
     // Pinned rather than dialect-agnostic: the subquery was checked against
     // its dialect's capabilities, and any CTE it binds is already rendered
     // in that dialect, so it can only be filtered onto a statement of the
-    // same one. The cross-dialect version is a compile error — see
+    // same one. The cross-dialect version is a compile error. See
     // `tests/compile-bench/trybuild-drafts/exists_across_dialects.rs.draft`.
     let inner = select((orders::user_id,)).from(orders::Table);
     let (sql, _) = select((users::id,))

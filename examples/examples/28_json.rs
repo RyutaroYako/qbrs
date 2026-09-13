@@ -3,7 +3,7 @@
 //! the column is. Known limitations: the marker is `jsonb`'s, so comparing
 //! or ordering by a `json` column compiles and is then rejected by the
 //! server, which has those operators for `jsonb` alone; and the operators
-//! that look *inside* a document (`->`, `->>`, `@>`) are not built — they
+//! that look *inside* a document (`->`, `->>`, `@>`) are not built. Those
 //! go through `sql!{}`, as the last query shows.
 //! Run: `cargo run -p qbrs-examples --example 28_json`
 
@@ -84,7 +84,7 @@ async fn main() {
     assert_eq!(rows[1].content, json!(null));
     assert_eq!(rows[1].notes, None);
 
-    // Reading a key out is an operator, and those aren't built — the
+    // Reading a key out is an operator, and those aren't built. The
     // escape hatch takes the column and the key as slots, so both are
     // still checked and bound. Postgres's `?` existence operator is the
     // one thing that cannot be written there, since a `?` in a `sql!{}`

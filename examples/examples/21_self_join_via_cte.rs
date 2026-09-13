@@ -1,9 +1,9 @@
 //! Self-join workaround: qbrs has no table aliasing (see README's Known
 //! limitations), so a literal `FROM "orders" AS a JOIN "orders" AS b` can't
 //! be written. Binding a `with!{}` pseudo-table to a plain `SELECT` over the
-//! *same* table gets the same result — each order paired with its sibling
-//! orders from the same user — fully type-checked, with no new API beyond
-//! `with!{}` + `cte::with(..)`, already used for real CTEs in `14_cte`.
+//! *same* table gets the same result, each order paired with its sibling
+//! orders from the same user. It is fully type-checked, with no new API
+//! beyond `with!{}` + `cte::with(..)`, already used for real CTEs in `14_cte`.
 //! Run: `cargo run -p qbrs-examples --example 21_self_join_via_cte`
 
 use qbrs::prelude::*;

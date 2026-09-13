@@ -102,8 +102,8 @@ pub trait OrderExt: IntoExpr + Sized {
             _marker: PhantomData,
         }
     }
-    /// The direction as a value, for a sort order that arrives at runtime —
-    /// `?dir=desc` — instead of an N-way match over `.asc()`/`.desc()`.
+    /// The direction as a value, for a sort order that arrives at runtime
+    /// (`?dir=desc`) instead of an N-way match over `.asc()`/`.desc()`.
     fn sort(self, dir: SortDir) -> OrderKey<Self::Req> {
         OrderKey {
             kind: self.into_expr().kind,
@@ -123,13 +123,13 @@ impl<T: IntoExpr> OrderExt for T {}
 
 /// Something a query can select from or join to. A schema table brings
 /// nothing with it; a `Cte` brings its `WITH` binding, so attaching that
-/// binding and putting the pseudo-table in scope stay one act — while every
-/// join kind, and `correlated`, work on both without being written twice.
+/// binding and putting the pseudo-table in scope stay one act. Every join
+/// kind, and `correlated`, work on both without being written twice.
 pub trait JoinSource<D>: join_source::Sealed {
     /// The table this source contributes to the scope.
     type Table: Table;
-    /// The `WITH` binding this source carries into the statement — `None`
-    /// for a schema table, which is already there.
+    /// The `WITH` binding this source carries into the statement. It is
+    /// `None` for a schema table, which is already there.
     #[doc(hidden)]
     fn binding(self) -> Option<CteDef>;
 }
@@ -161,12 +161,12 @@ impl<D, Marker: crate::cte::CteShape> JoinSource<D> for Cte<D, Marker> {
 }
 
 /// Something a query can be ordered by: an `OrderKey` whose tables this
-/// scope contains, or a `SortKey` already discharged against it — the same
-/// pair `Condition` makes for `.filter`.
+/// scope contains, or a `SortKey` already discharged against it. `Condition`
+/// makes the same pair for `.filter`.
 #[diagnostic::on_unimplemented(
     message = "`{Self}` isn't a sort key",
     label = "a column or expression with `.asc()`/`.desc()`/`.sort(dir)` on it, or a `sort_key(..)`",
-    note = "a `SortKey` also has to have been discharged against *this* scope — a scope lists its tables most-recently-joined first, so two that look alike can still differ in order"
+    note = "a `SortKey` also has to have been discharged against *this* scope: a scope lists its tables most-recently-joined first, so two that look alike can still differ in order"
 )]
 pub trait SortBy<Scope, Idxs> {
     #[doc(hidden)]
@@ -194,7 +194,7 @@ impl<Scope> SortBy<Scope, ()> for SortKey<Scope> {
 #[diagnostic::on_unimplemented(
     message = "`{Self}` isn't a grouping key",
     label = "a column or expression, or a `grouping(..)`",
-    note = "a `Grouping` also has to have been discharged against *this* scope — a scope lists its tables most-recently-joined first, so two that look alike can still differ in order"
+    note = "a `Grouping` also has to have been discharged against *this* scope: a scope lists its tables most-recently-joined first, so two that look alike can still differ in order"
 )]
 pub trait GroupBy<Scope, Idxs> {
     #[doc(hidden)]
@@ -217,8 +217,8 @@ impl<Scope> GroupBy<Scope, ()> for Grouping<Scope> {
 }
 
 /// A sort key whose scope requirement has already been discharged, so a
-/// runtime-length collection of them can be built and passed around — the
-/// `?sort=email,-placed_on` case. `select::sort_key` is to `.order_by_all`
+/// runtime-length collection of them can be built and passed around, as in
+/// the `?sort=email,-placed_on` case. `select::sort_key` is to `.order_by_all`
 /// what `predicate` is to `.filter_all`.
 pub struct SortKey<Scope> {
     kind: ExprKind,
@@ -238,13 +238,13 @@ impl<Scope> Clone for SortKey<Scope> {
 
 /// Discharges a sort key's scope requirement. `Scope` is inferred from the
 /// query the keys are eventually given to. Takes whatever `.order_by` takes,
-/// as `predicate` takes whatever `.filter` does — so a helper generic over
+/// as `predicate` takes whatever `.filter` does, so a helper generic over
 /// `SortBy` can discharge without knowing which of the two it was handed.
 pub fn sort_key<Scope, Idxs, K: SortBy<Scope, Idxs>>(key: K) -> SortKey<Scope> {
     key.into_sort_key()
 }
 
-/// A grouping key with its scope requirement discharged — `predicate`'s
+/// A grouping key with its scope requirement discharged: `predicate`'s
 /// counterpart for `GROUP BY`.
 pub struct Grouping<Scope> {
     kind: ExprKind,
@@ -261,7 +261,7 @@ impl<Scope> Clone for Grouping<Scope> {
 }
 
 /// Discharges a grouping key's scope requirement, taking whatever
-/// `.group_by` takes — the same shape `predicate` and `sort_key` have.
+/// `.group_by` takes, the same shape `predicate` and `sort_key` have.
 pub fn grouping<Scope, Idxs, K: GroupBy<Scope, Idxs>>(key: K) -> Grouping<Scope> {
     key.into_grouping()
 }
@@ -273,7 +273,7 @@ pub fn grouping<Scope, Idxs, K: GroupBy<Scope, Idxs>>(key: K) -> Grouping<Scope>
 #[diagnostic::on_unimplemented(
     message = "`{Self}` isn't a condition",
     label = "a comparison (`.eq(..)`, `.gt(..)`, `.is_null()`), an `any_of`/`all_of` of them, a `sql!` fragment of type `Bool`, a `predicate(..)`, or an `EXISTS`/`.contains(..)` of a subquery in *this* dialect",
-    note = "a `Predicate` also has to have been discharged against *this* scope — a scope lists its tables most-recently-joined first, so two that look alike can still differ in order"
+    note = "a `Predicate` also has to have been discharged against *this* scope: a scope lists its tables most-recently-joined first, so two that look alike can still differ in order"
 )]
 pub trait Condition<D, Scope, Idxs> {
     /// Discharged against this scope, which for an `Expr` is where its
@@ -305,7 +305,7 @@ impl<D, Scope> Condition<D, Scope, ()> for Predicate<D, Scope> {
 /// expression this one is dialect-pinned: the subquery it holds was
 /// capability-checked against its own dialect, and any CTE it binds is
 /// already rendered in that dialect. It is therefore a condition and only a
-/// condition — `.filter(..)` it, or `predicate(..)` it into a collection,
+/// condition: `.filter(..)` it, or `predicate(..)` it into a collection,
 /// onto a query of the same dialect. A `Predicate` carries `D` for this
 /// reason: discharging a condition gives up the tables it named, never the
 /// dialect it was built for.
@@ -391,7 +391,7 @@ impl<D, Scope> Predicate<D, Scope> {
         Predicate::combine(preds, false)
     }
 
-    /// True when all of them are — the AND to `any_of`'s OR, so a group of
+    /// True when all of them are: the AND to `any_of`'s OR, so a group of
     /// them can be nested inside one.
     pub fn all_of(preds: impl IntoIterator<Item = Predicate<D, Scope>>) -> Self {
         Predicate::combine(preds, true)
@@ -417,11 +417,11 @@ pub fn predicate<D, Scope, Idxs, C: Condition<D, Scope, Idxs>>(cond: C) -> Predi
 }
 
 /// Holds just the `SELECT` list until `.from(..)` supplies the first table
-/// and therefore the query's initial `Scope`. Splitting this out (rather
-/// than requiring `Scope` be known at `.select(..)` time) is what lets the
-/// builder read in `SELECT -> FROM -> ...` order while still validating
-/// every selected column against the *final* scope only once, at the
-/// query's terminal method (`.to_sql(Postgres)`/`.load()`).
+/// and therefore the query's initial `Scope`. Splitting this out, rather
+/// than requiring `Scope` be known at `.select(..)` time, is what lets the
+/// builder read in `SELECT -> FROM -> ...` order. Every selected column is
+/// still validated against the *final* scope, once, at the query's terminal
+/// method (`.to_sql(Postgres)`/`.load()`).
 pub struct SelectSeed<Sel> {
     selection: Sel,
 }
@@ -431,21 +431,21 @@ pub fn select<Sel>(selection: Sel) -> SelectSeed<Sel> {
 }
 
 impl<Sel> SelectSeed<Sel> {
-    /// `SELECT <expr>` with no `FROM` at all: `now()`,
-    /// `current_setting('..')`, `pg_try_advisory_lock($1)` — a value the
+    /// `SELECT <expr>` with no `FROM` at all (`now()`,
+    /// `current_setting('..')`, `pg_try_advisory_lock($1)`): a value the
     /// database computes rather than a row it reads.
     ///
     /// The seed is the whole statement here, which is why this sits on it
     /// rather than on `Select`: without a `FROM` there is no scope, so no
     /// join, filter or ordering has anything to name. What makes it safe is
-    /// the empty scope itself — a selection is checked against `Nil`, so a
+    /// the empty scope itself: a selection is checked against `Nil`, so a
     /// column reference has nowhere to resolve and does not compile.
     ///
     /// **Known limitations**: this shape is the statement and nothing else.
     /// It cannot be `.prepare()`d (a bound value goes in a `sql!{}` slot
-    /// instead), be a `UNION` branch, a CTE body or an `EXISTS` subquery,
-    /// or be `.count()`ed — a `SELECT` with no `FROM` returns one row, so
-    /// counting it answers nothing.
+    /// instead). It cannot be a `UNION` branch, a CTE body, or an `EXISTS`
+    /// subquery. It cannot be `.count()`ed either: a `SELECT` with
+    /// no `FROM` returns one row, so counting it answers nothing.
     ///
     /// The dialect is an argument for the reason `Select::to_sql`'s is.
     pub fn to_sql<D: Dialect, Idx>(&self, _dialect: D) -> (String, Vec<Value>)
@@ -458,7 +458,7 @@ impl<Sel> SelectSeed<Sel> {
         sink.finish()
     }
 
-    /// `source` is a value, not a turbofish — a schema table's zero-sized
+    /// `source` is a value, not a turbofish: a schema table's zero-sized
     /// token (`users::Table`) or a `cte::with(..)` binding. A CTE brings its
     /// `WITH` clause along, so it cannot be selected from unbound.
     pub fn from<D, S: JoinSource<D>>(
@@ -514,10 +514,10 @@ impl SelectBody {
     ///
     /// A query whose rows aren't one per matching row is counted by
     /// wrapping it, selection and all, since what a page of it would show is
-    /// what has to be counted. Stated as what may be left unwrapped — plain
-    /// columns, no `GROUP BY`/`HAVING`/`DISTINCT` — rather than as a list of
-    /// what may not: an aggregate collapses the rows too, and `sql!` can
-    /// hold anything at all.
+    /// what has to be counted. The rule is stated as what may be left
+    /// unwrapped (plain columns, no `GROUP BY`/`HAVING`/`DISTINCT`) rather
+    /// than as a list of what may not: an aggregate collapses the rows too,
+    /// and `sql!` can hold anything at all.
     fn count_sql<D: Dialect>(&self, selection: &[SelectItem]) -> (String, Vec<Value>) {
         let mut body = self.clone();
         body.order_by.clear();
@@ -548,7 +548,7 @@ impl SelectBody {
     }
 }
 
-/// A `SELECT`. `Outer` is the scope this query was built *against* — `Nil`
+/// A `SELECT`. `Outer` is the scope this query was built *against*: `Nil`
 /// for a query of its own, and the outer query's scope for one started by
 /// `.correlated(..)`, which is what lets `EXISTS` report the outer tables it
 /// references. Defaulted, so a query that isn't a subquery never spells it.
@@ -588,8 +588,8 @@ impl<D, Scope, Sel, Outer> Select<D, Scope, Sel, Outer> {
         }
     }
 
-    /// AND-folded, and callable any number of times — conditionally, in a
-    /// loop, from a helper — without changing `Self`'s type, so the most
+    /// AND-folded, and callable any number of times (conditionally, in a
+    /// loop, from a helper) without changing `Self`'s type, so the most
     /// common kind of dynamic query needs no escape hatch.
     pub fn filter<C: Condition<D, Scope, Idxs>, Idxs>(mut self, cond: C) -> Self {
         self.body.wheres.push(cond.into_predicate().into_kind());
@@ -597,7 +597,7 @@ impl<D, Scope, Sel, Outer> Select<D, Scope, Sel, Outer> {
     }
 
     /// AND-folds a runtime-length collection of already-discharged
-    /// conditions — the shape a search form has, where the conditions come
+    /// conditions, the shape a search form has, where the conditions come
     /// from different tables and so can't share one `Expr` type.
     pub fn filter_all(mut self, conds: impl IntoIterator<Item = Predicate<D, Scope>>) -> Self {
         self.body
@@ -612,8 +612,8 @@ impl<D, Scope, Sel, Outer> Select<D, Scope, Sel, Outer> {
         self
     }
 
-    /// Appends a runtime-length collection of already-discharged sort keys
-    /// — the shape a `?sort=` parameter has, where the keys name different
+    /// Appends a runtime-length collection of already-discharged sort keys,
+    /// the shape a `?sort=` parameter has, where the keys name different
     /// tables and so can't share one `OrderKey` type.
     pub fn order_by_all(mut self, keys: impl IntoIterator<Item = SortKey<Scope>>) -> Self {
         self.body
@@ -623,7 +623,7 @@ impl<D, Scope, Sel, Outer> Select<D, Scope, Sel, Outer> {
     }
 
     /// `.order_by(..)`, but the key also has to be in this query's
-    /// selection — `Sel::Output` has to hold it, the same `row::Field`
+    /// selection. `Sel::Output` has to hold it, through the same `row::Field`
     /// lookup `Row::get` and `SetOp::order_by_column` take, rather than the
     /// key only being in scope. This is the exact rule `SELECT DISTINCT`
     /// puts on a sort key (Postgres rejects one that isn't selected), so
@@ -637,7 +637,7 @@ impl<D, Scope, Sel, Outer> Select<D, Scope, Sel, Outer> {
     /// and the rendered clause are one fact.
     ///
     /// **Known limitation**: `.reselect(..)` afterwards keeps the clause and
-    /// drops the guarantee — swap the selection before sorting by it.
+    /// drops the guarantee. Swap the selection before sorting by it.
     pub fn order_by_selected<K, SelIdx, Idx, L>(mut self, _key: K, dir: SortDir) -> Self
     where
         K: LookupKey,
@@ -653,8 +653,8 @@ impl<D, Scope, Sel, Outer> Select<D, Scope, Sel, Outer> {
 
     /// `.order_by_selected(..)` for a single un-tupled selection
     /// (`select(users::email)`, not `select((users::email,))`): there is
-    /// exactly one selected column, so there is nothing to name — the same
-    /// shape `SetOp`'s single-column `.order_by(dir)` has, and the same
+    /// exactly one selected column, so there is nothing to name. It has the
+    /// same shape `SetOp`'s single-column `.order_by(dir)` has, and the same
     /// `.reselect(..)` caveat.
     pub fn order_by_selection<SelIdx>(mut self, dir: SortDir) -> Self
     where
@@ -669,11 +669,11 @@ impl<D, Scope, Sel, Outer> Select<D, Scope, Sel, Outer> {
     /// `SELECT DISTINCT`: one row per distinct selected tuple. The natural
     /// answer to a one-to-many join that repeats its left side, and unlike a
     /// `GROUP BY` of the whole selection it doesn't have to be restated when
-    /// the selection changes. Idempotent — a query is distinct or it isn't.
+    /// the selection changes. Idempotent: a query is distinct or it isn't.
     ///
     /// **Known limitation**: Postgres requires a `SELECT DISTINCT`'s sort
     /// keys to be in its selection, and nothing here enforces that for
-    /// plain `.order_by(..)` — use `.order_by_selected(..)`/
+    /// plain `.order_by(..)`. Use `.order_by_selected(..)`/
     /// `.order_by_selection(..)` instead, which check exactly this. `GROUP
     /// BY` has a related but different gap: every non-aggregated selected
     /// column has to appear in it, which is the selection-into-`GROUP BY`
@@ -701,7 +701,7 @@ impl<D, Scope, Sel, Outer> Select<D, Scope, Sel, Outer> {
     }
 
     /// A `WHERE`-shaped filter applied after grouping (aggregate
-    /// conditions) — AND-folded across calls exactly like `.filter()`.
+    /// conditions), AND-folded across calls exactly like `.filter()`.
     pub fn having<C: Condition<D, Scope, Idxs>, Idxs>(mut self, cond: C) -> Self {
         self.body.having.push(cond.into_predicate().into_kind());
         self
@@ -727,7 +727,7 @@ impl<D, Scope, Sel, Outer> Select<D, Scope, Sel, Outer> {
     }
 
     /// The joined table is in scope for the `ON` condition, and so is
-    /// everything already joined — the scope the condition is discharged
+    /// everything already joined. The scope the condition is discharged
     /// against is the one the join produces, not the one it started from.
     pub fn inner_join<S: JoinSource<D>, C, Idxs>(
         mut self,
@@ -811,13 +811,13 @@ impl<D, Scope, Sel, Outer> Select<D, Scope, Sel, Outer> {
 /// through `exists`/`not_exists` instead.
 impl<D: Dialect, Scope, Sel> Select<D, Scope, Sel> {
     /// The terminal step, and the *only* point each selected column's
-    /// scope-membership is checked — proven as a side effect of
+    /// scope-membership is checked. Membership is proven as a side effect of
     /// `Sel: Selection<Scope, Idx>` type-checking at all.
     ///
     /// The dialect is an argument rather than a turbofish, so a query that
     /// is rendered instead of executed says which SQL it wants in the one
-    /// place that decides — and everything before it infers, the way a
-    /// table or a column does.
+    /// place that decides. Everything before it infers, the way a table or a
+    /// column does.
     pub fn to_sql<Idx>(&self, _dialect: D) -> (String, Vec<Value>)
     where
         Sel: Selection<Scope, Idx>,
@@ -826,7 +826,7 @@ impl<D: Dialect, Scope, Sel> Select<D, Scope, Sel> {
     }
 
     /// How many rows this query would return, ignoring its
-    /// `ORDER BY`/`LIMIT`/`OFFSET` — a total is about what matches, not about
+    /// `ORDER BY`/`LIMIT`/`OFFSET`. A total is about what matches, not about
     /// the page being shown. `reselect(count())` keeps them, which is what
     /// makes it the wrong tool for a paginated total.
     ///
@@ -944,9 +944,9 @@ impl SelectBody {
 }
 
 /// Starts a correlated subquery against a scope, rather than against a
-/// query — so `UPDATE`/`DELETE`, whose scope is the one table they write,
-/// reach the same `EXISTS` a `SELECT` does without conjuring a `Select`
-/// they don't otherwise need.
+/// query. `UPDATE`/`DELETE`, whose scope is the one table they write,
+/// therefore reach the same `EXISTS` a `SELECT` does without conjuring a
+/// `Select` they don't otherwise need.
 pub(crate) fn correlated_with<D, Scope, S: JoinSource<D>, InnerSel>(
     source: S,
     selection: InnerSel,
@@ -962,7 +962,7 @@ pub(crate) fn correlated_with<D, Scope, S: JoinSource<D>, InnerSel>(
 
 impl<D, Scope, Sel, Outer> Select<D, Scope, Sel, Outer> {
     /// Starts a correlated subquery: a fresh `SELECT` whose scope is
-    /// `Cons<TableSlot<T, NotNull>, Scope>` — the new table, prepended onto
+    /// `Cons<TableSlot<T, NotNull>, Scope>`: the new table, prepended onto
     /// *this* (outer) query's entire scope. Because `Find`/`Superset` walk
     /// the whole flat cons-list regardless of where it came from, the
     /// subquery's `.filter()` can reference both its own new table's
@@ -970,9 +970,9 @@ impl<D, Scope, Sel, Outer> Select<D, Scope, Sel, Outer> {
     /// casing: growing the scope works the same whether the new table came
     /// from a join or from a subquery's `FROM`.
     ///
-    /// The result is an ordinary `Select` — every clause it takes is the
-    /// one `Select` already has — carrying this query's scope as its
-    /// `Outer`, which is what `exists` reports.
+    /// The result is an ordinary `Select`, carrying this query's scope as
+    /// its `Outer`, which is what `exists` reports. Every clause it takes is
+    /// the one `Select` already has.
     pub fn correlated<S: JoinSource<D>, InnerSel>(
         &self,
         source: S,
@@ -1017,7 +1017,7 @@ impl<D: Dialect, Scope, Sel, Outer: ScopeTables> Select<D, Scope, Sel, Outer> {
     }
 
     /// `lhs IN (<this query>)`. This query selects exactly one column
-    /// (`Sel: RowField` — a bare column, aggregate, or labelled one of
+    /// (`Sel: RowField`, so a bare column, aggregate, or labelled one of
     /// those, never a tuple), so its SQL type can be checked against `lhs`
     /// the same way `.eq(..)` checks two columns: `RowField::Sql` carries
     /// the marker a decoded `Selection::Output` has already resolved away.
@@ -1026,7 +1026,7 @@ impl<D: Dialect, Scope, Sel, Outer: ScopeTables> Select<D, Scope, Sel, Outer> {
     /// scope.
     ///
     /// **Known limitation**: membership only. A *scalar* subquery
-    /// (`col = (SELECT max(x) ..)`) stays deferred — it would have to be an
+    /// (`col = (SELECT max(x) ..)`) stays deferred. It would have to be an
     /// `Expr`, which carries no dialect to pin the subquery's capability
     /// check to.
     pub fn contains<Lhs, Idx>(
@@ -1078,13 +1078,13 @@ impl<D: Dialect, Scope, Sel, Outer: ScopeTables> Select<D, Scope, Sel, Outer> {
     }
 }
 
-/// A number of rows — what a `LIMIT` and an `OFFSET` each are: an integer,
-/// or a `prepare!{}` placeholder for one, so a paginated endpoint can
-/// prepare its query once and vary the page. A trait rather than
-/// `Into<i64>` so a `usize` page size — the shape a paginated handler
-/// already has — goes in without a cast. Every numeric impl lands in
-/// `0..=i64::MAX`: a negative count is not a query any database will run,
-/// and a `usize` past `i64::MAX` is not a page anyone is asking for.
+/// A number of rows, which is what a `LIMIT` and an `OFFSET` each are: an
+/// integer, or a `prepare!{}` placeholder for one, so a paginated endpoint
+/// can prepare its query once and vary the page. A trait rather than
+/// `Into<i64>` so a `usize` page size, the shape a paginated handler already
+/// has, goes in without a cast. Every numeric impl lands in `0..=i64::MAX`:
+/// a negative count is not a query any database will run, and a `usize` past
+/// `i64::MAX` is not a page anyone is asking for.
 #[diagnostic::on_unimplemented(
     message = "`{Self}` isn't a number of rows",
     label = "an integer, or a `prepare!{{}}` placeholder of type `Integer`/`BigInt`"
@@ -1123,9 +1123,9 @@ macro_rules! into_row_count {
 }
 into_row_count!(i8, i16, i32, i64, isize ; u8, u16, u32, u64, usize);
 
-/// A `prepare!{}` placeholder, or any other scope-free `Expr` of an integer type:
-/// bound rather than written, so one prepared query serves every page. Only
-/// the two integer types — a page is a number.
+/// A `prepare!{}` placeholder, or any other scope-free `Expr` of an integer
+/// type: bound rather than written, so one prepared query serves every page.
+/// Only the two integer types, since a page is a number.
 impl IntoRowCount for Expr<Nil, crate::expr::Integer> {
     fn into_row_count(self) -> RowCount {
         RowCount(RowCountKind::Bound(self.kind))
@@ -1139,7 +1139,7 @@ impl IntoRowCount for Expr<Nil, crate::expr::BigInt> {
 }
 
 /// `LIMIT`/`OFFSET`, with the filler a dialect needs when there's an offset
-/// and no limit — a bare `OFFSET` is Postgres-only.
+/// and no limit, since a bare `OFFSET` is Postgres-only.
 pub(crate) fn render_limit_offset<D: Dialect>(
     sink: &mut dyn Sink,
     limit: Option<&RowCount>,

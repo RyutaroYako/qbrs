@@ -130,7 +130,7 @@ async fn array_columns_bind_and_decode_as_the_vec_the_schema_names() {
     );
 
     // An array compares as a whole, which is what `Comparable<T> for T`
-    // gives every leaf type — and Postgres agrees for arrays.
+    // gives every leaf type, and Postgres agrees for arrays.
     let matched: i64 = select(qbrs::expr::count())
         .from(accounts::Table)
         .filter(accounts::retry_delays.eq(vec![1i32, 2, 5]))
@@ -175,8 +175,8 @@ async fn array_columns_bind_and_decode_as_the_vec_the_schema_names() {
     }
 
     // The shape the issue was stuck on: is this value referenced inside
-    // any row's array column — a scalar against an array, which `is_in`
-    // (a scalar against a written-out list) cannot ask.
+    // any row's array column? That tests a scalar against an array, which
+    // `is_in` (a scalar against a written-out list) cannot do.
     let referencing: i64 = select(qbrs::expr::count())
         .from(accounts::Table)
         .filter("sso".to_string().eq_any(accounts::login_methods))
@@ -186,8 +186,8 @@ async fn array_columns_bind_and_decode_as_the_vec_the_schema_names() {
         .expect("one row");
     assert_eq!(referencing, 1);
 
-    // `!` is "none of them", which is `<> ALL(..)` and not `<> ANY(..)` —
-    // the row whose array holds only `sso` is the one it excludes.
+    // `!` is "none of them", which is `<> ALL(..)` and not `<> ANY(..)`.
+    // The row whose array holds only `sso` is the one it excludes.
     let others: i64 = select(qbrs::expr::count())
         .from(accounts::Table)
         .filter(!"sso".to_string().eq_any(accounts::login_methods))
@@ -198,7 +198,7 @@ async fn array_columns_bind_and_decode_as_the_vec_the_schema_names() {
     assert_eq!(others, 1);
 
     // A nullable array column: the row that holds the value matches, and
-    // the row whose array is NULL answers NULL rather than false — so it
+    // the row whose array is NULL answers NULL rather than false, so it
     // is in neither count, and the two do not add up to the table.
     let notified: i64 = select(qbrs::expr::count())
         .from(accounts::Table)
@@ -217,7 +217,7 @@ async fn array_columns_bind_and_decode_as_the_vec_the_schema_names() {
     assert_eq!((notified, not_notified), (1, 0));
 
     // The array can be a bound value rather than a column, which is how a
-    // request's own list of ids arrives — one parameter, not one per id.
+    // request's own list of ids arrives: one parameter, not one per id.
     let by_id: Vec<i64> = select(accounts::id)
         .from(accounts::Table)
         .filter(accounts::id.eq_any(vec![id, id + 1000]))

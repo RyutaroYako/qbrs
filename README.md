@@ -23,14 +23,14 @@
 ---
 
 qbrs checks column and join references at compile time without giving up
-dynamic query composition — most builders make you pick one. See [Why
-qbrs?](#why-qbrs) for how.
+dynamic query composition. Most builders make you pick one of the two. See
+[Why qbrs?](#why-qbrs) for how.
 
 > [!WARNING]
-> **Not production ready.** 0.1.0 is the first public release. The API will
-> break between 0.x minors, only Postgres has an execution layer, and nothing
-> here has been run against a real workload yet. Worth trying and filing
-> issues against; not worth putting under something that matters.
+> **Not production ready.** qbrs is pre-1.0: the API will break between 0.x
+> minors, only Postgres has an execution layer, and nothing here has been run
+> against a real workload yet. Worth trying and filing issues against; not
+> worth putting under something that matters.
 
 > **Not an ORM.** qbrs builds and renders SQL with compile-time-checked
 > column/join references; it doesn't do change-tracking, identity maps, or
@@ -103,7 +103,7 @@ error[E0277]: `orders::Table` is not available in this query's scope
 
 |                                                                                         |    qbrs     |                                            diesel                                            |       sea-query        |            sqlx            |
 | --------------------------------------------------------------------------------------- | :---------: | :------------------------------------------------------------------------------------------: | :--------------------: | :------------------------: |
-| Compile-time column/join validity checking                                              |     ✅      |                                              ✅                                              |    ❌ (runtime AST)    |    n/a — not a builder     |
+| Compile-time column/join validity checking                                              |     ✅      |                                              ✅                                              |    ❌ (runtime AST)    |     n/a (not a builder)    |
 | `NULL`-ability auto-derived from join kind                                              |     ✅      |                                  ❌ (manual `.nullable()`)                                   |           ❌           |            n/a             |
 | Add predicates conditionally/in a loop, no escape hatch                                 |     ✅      |                                   ⚠️ needs `.into_boxed()`                                   | ✅ (dynamic by design) | ⚠️ drops to `QueryBuilder` |
 | Table/column refs are plain values, not turbofish/closures                              |     ✅      |                                           partial                                            |           ✅           |            n/a             |
@@ -113,11 +113,12 @@ error[E0277]: `orders::Table` is not available in this query's scope
 The trick: whether a column reference makes sense given what's joined is a
 compile-time question, checked once via a flat type-level list (see
 [`crates/core/src/scope.rs`](crates/core/src/scope.rs)). How many predicates
-you've added is a runtime question — a plain `Vec`, so `.filter()` can be
+you've added is a runtime question: a plain `Vec`, so `.filter()` can be
 called conditionally or in a loop without changing the query's type. Most
 builders conflate the two and need an escape hatch (`.$dynamic()`,
 `.into_boxed()`) the moment a query gets built conditionally. qbrs needs one
-too, but it's deliberately narrow — see [Known limitations](#known-limitations).
+too, but it stays deliberately narrow. See
+[Known limitations](#known-limitations).
 
 ## Install
 
@@ -130,10 +131,10 @@ sqlx = { version = "0.9", features = ["runtime-tokio", "postgres"] }  # for `PgP
 
 `qbrs-sqlx`'s methods take any `sqlx::PgExecutor`, so the `sqlx` version has
 to be the one it is built against (0.9). Column types that need a crate to
-decode to are features — `chrono`, `uuid`, `decimal`, `json` — and each has to be enabled on
-**both** `qbrs` and `qbrs-sqlx`, which are separate `cfg`s over one `Value`:
-enabling it on `qbrs` alone is a compile error where the value is decoded
-and a `FeatureNotEnabled` where one is bound.
+decode to are features (`chrono`, `uuid`, `decimal`, `json`), and each has to
+be enabled on **both** `qbrs` and `qbrs-sqlx`, which are separate `cfg`s over
+one `Value`. Enabling it on `qbrs` alone is a compile error where the value is
+decoded, and a `FeatureNotEnabled` where one is bound.
 
 ## What's in it
 
@@ -151,7 +152,7 @@ Postgres array columns (`Vec<T>` as `TEXT[]`/`INTEGER[]`/`BIGINT[]`/`UUID[]`, wi
 
 A schema is a `#[derive(Table)]` struct; `use qbrs::prelude::*;` and
 `use qbrs_sqlx::prelude::*;` cover a query. Everything above has a runnable,
-end-to-end example against a real Postgres — see
+end-to-end example against a real Postgres. See
 **[`examples/README.md`](examples/README.md)** for the index, and
 [docs.rs/qbrs](https://docs.rs/qbrs) for the API.
 
@@ -165,43 +166,52 @@ Three things that aren't obvious from a signature:
   field is untouched, or an insert of zero rows, hands back
   `NothingToSet`/`NothingToInsert` rather than rendering broken SQL. These are
   the only fallible builder methods; everything downstream is infallible.
-- **The dialect is part of a query's type** — capability gating happens while
-  the query is built, not when it renders — but it's never a turbofish:
+- **The dialect is part of a query's type**, so capability gating happens
+  while the query is built, not when it renders. It is never a turbofish:
   `.load(&pool)` infers it from the executor, `.to_sql(Postgres)` takes it as
   a value.
 
 ## Known limitations
 
-Deferred rather than half-supported, and documented in the relevant module:
-`WITH RECURSIVE`, aggregates as window functions (`sum(x) OVER (..)`), a CTE
-referencing another CTE, a data-modifying CTE anywhere but the top level
-(Postgres refuses one inside an `EXISTS`/`IN` subquery or a set-operation
-branch, and that is the server's error rather than the compiler's), row
-locking (`FOR UPDATE`/`SKIP LOCKED`), a scalar
-subquery in an expression position (`col = (SELECT max(x) ..)`, `RETURNING`
-included), `UPDATE .. FROM` / `DELETE .. USING`, the array
-operators (`@>`, `&&`, `array_append` — `= ANY(..)` is `.eq_any(..)`) and the array element
-types beyond the four (`BOOLEAN[]`, `DOUBLE PRECISION[]`, `TIMESTAMPTZ[]`,
-`NUMERIC[]`, and any array whose elements can be NULL), the JSON operators
-(`->`, `->>`, `@>`, `?`) and a `json` column's missing `=`/`ORDER BY` (the
-marker is `jsonb`'s), `ON CONFLICT` or a
-column subset on an `INSERT .. SELECT` (it fills every column the target
-lets a statement write, and its source is a `Select` rather than a
-`UNION` or a `DynSelect`), and relations/eager-loading. `sql!{}` doesn't reach the last two: it builds an
-expression, not a statement suffix, and a `Select` isn't a slot value.
-`IN (SELECT ..)`/`NOT IN (SELECT ..)` is covered by `Select::contains`/
-`.not_contains`, which — like `EXISTS` — is dialect-pinned rather than a
-plain expression.
+Deferred rather than half-supported, each documented in the module it
+belongs to:
+
+- `WITH RECURSIVE`.
+- Aggregates as window functions (`sum(x) OVER (..)`).
+- A CTE referencing another CTE.
+- A data-modifying CTE anywhere but the top level. Postgres refuses one inside
+  an `EXISTS`/`IN` subquery or a set-operation branch, and that is the server's
+  error rather than the compiler's.
+- Row locking (`FOR UPDATE`/`SKIP LOCKED`).
+- A scalar subquery in an expression position (`col = (SELECT max(x) ..)`,
+  `RETURNING` included).
+- `UPDATE .. FROM` and `DELETE .. USING`.
+- The array operators `@>`, `&&`, `array_append`. `= ANY(..)` is built, as
+  `.eq_any(..)`.
+- Array element types beyond the four that are built (`TEXT[]`, `INTEGER[]`,
+  `BIGINT[]`, `UUID[]`): `BOOLEAN[]`, `DOUBLE PRECISION[]`, `TIMESTAMPTZ[]`,
+  `NUMERIC[]`, and any array whose elements can be NULL.
+- The JSON operators `->`, `->>`, `@>`, `?`, and a `json` column's missing
+  `=`/`ORDER BY` (the marker is `jsonb`'s).
+- `ON CONFLICT` or a column subset on an `INSERT .. SELECT`. It fills every
+  column the target lets a statement write, and its source is a `Select`
+  rather than a `UNION` or a `DynSelect`. `sql!{}` reaches neither: it builds
+  an expression, not a statement suffix, and a `Select` is not a slot value.
+- Relations and eager-loading.
+
+`IN (SELECT ..)`/`NOT IN (SELECT ..)` is not a limitation:
+`Select::contains`/`.not_contains` cover it. Like `EXISTS`, it is
+dialect-pinned rather than a plain expression.
 
 Design constraints worth knowing before adopting:
 
-- **Conditionally *joining* a table has no fully-static solution** — a single
+- **Conditionally *joining* a table has no fully-static solution.** A single
   type can't mean "joined" in one branch and "not joined" in another.
-  `.erase()` into `DynSelect` is the way out, and it's narrow: only the join
-  skeleton is erased, and no further `.filter()`/`.join()` is offered on it.
-  Conditional *filtering* needs none of this.
+  `.erase()` into `DynSelect` is the way out, and it stays narrow: only the
+  join skeleton is erased, and no further `.filter()`/`.join()` is offered on
+  it. Conditional *filtering* needs none of this.
 - **No table aliasing, so no literal `FROM "t" AS a JOIN "t" AS b`.** Two
-  `#[derive(Table)]` structs must not share a `#[table(name = "..")]` — that
+  `#[derive(Table)]` structs must not share a `#[table(name = "..")]`. That
   compiles and then renders `FROM "t" JOIN "t"`, which the database refuses.
   A `with!{}` pseudo-table bound to a plain `select(..).from(t::Table)` gets
   the same result today: `with! { struct managers { id: Integer, name: Text } }`
@@ -209,51 +219,50 @@ Design constraints worth knowing before adopting:
   .inner_join(cte::with(managers::Table,
   &select((employees::id, employees::name)).from(employees::Table)),
   managers::id.eq(employees::manager_id))` renders a `WITH` CTE joined back
-  to the same table — correct, type-checked, and available now — rather
-  than the bare-alias SQL shape. The declared column types are the body's:
+  to the same table: correct, type-checked, and available today, rather than
+  the bare-alias SQL shape. The declared column types are the body's:
   `Integer` because `employees::id` is an `i32`.
-- **`RETURNING` names the written row.** SQL's reaches further — a scalar
-  subquery, or a column of an `UPDATE .. FROM` — and neither is built, the
-  first being the deferred scalar subquery. Bind the write as a CTE body and
-  join from the outer query instead: that is checked, and it stays one
-  statement (`29_data_modifying_cte`).
+- **`RETURNING` names the written row.** SQL's reaches further, to a scalar
+  subquery or a column of an `UPDATE .. FROM`, and neither is built. The
+  first of those is the deferred scalar subquery. Bind the write as a CTE
+  body and join from the outer query instead: that is checked, and it stays
+  one statement (`29_data_modifying_cte`).
 - **`GROUP BY` isn't related to the selection list.** Every non-aggregated
   selected column has to appear in `GROUP BY` (or be functionally
-  dependent), and nothing here checks that — it's the selection-into-`GROUP
-  BY` direction, the reverse of what a `row::Field` lookup can check (`GROUP
-  BY` naming a column that isn't selected is perfectly valid SQL, so
-  checking membership the other way round would be enforcing a rule that
-  doesn't exist). An aggregate or window function in `WHERE` or `RETURNING`
-  is accepted by the builder and rejected by the database, too. Aggregates
-  take a bare column: `sum(price * qty)` and `count(DISTINCT x)` need
-  `sql!{}`, as does an `ORDER BY` inside a `string_agg` — SQLite reached
-  that only in 3.44, past the 3.39 this crate targets, and MySQL spells it
-  elsewhere in the call. `string_agg`'s separator binds under Postgres and
-  SQLite, which take it as an argument; MySQL's `SEPARATOR` takes a literal
-  and rejects a parameter, so there it is written into the SQL, which is
-  why it is a `&'static str` everywhere. MySQL also truncates the result at
-  `group_concat_max_len` (1024 bytes by default) with a warning rather than
-  an error.
+  dependent), and nothing here checks that. It is the selection-into-`GROUP BY`
+  direction, the reverse of what a `row::Field` lookup can check: `GROUP BY`
+  naming a column that isn't selected is perfectly valid SQL, so checking
+  membership the other way round would enforce a rule that doesn't exist. An
+  aggregate or window function in `WHERE` or `RETURNING` is likewise accepted
+  by the builder and rejected by the database. Aggregates take a bare column,
+  so `sum(price * qty)` and `count(DISTINCT x)` need `sql!{}`. So does an
+  `ORDER BY` inside a `string_agg`: SQLite reached that only in 3.44, past
+  the 3.39 this crate targets, and MySQL spells it elsewhere in the call.
+  `string_agg`'s separator binds under Postgres and SQLite, which take it as
+  an argument. MySQL's `SEPARATOR` takes a literal and rejects a parameter,
+  so there it is written into the SQL, which is why it is a `&'static str`
+  everywhere. MySQL also truncates the result at `group_concat_max_len`
+  (1024 bytes by default) with a warning rather than an error.
 - **`ORDER BY` has a checked and an unchecked form.** Plain `.order_by(..)`
   only checks scope membership, since a non-`DISTINCT` query may sort by any
   column in scope. `.order_by_selected(..)`/`.order_by_selection(..)` also
-  check the sort key is in the selection — the same `row::Field` lookup
-  `Row::get` uses — which is exactly what `SELECT DISTINCT` requires
-  (Postgres rejects a sort key that isn't selected): pair `.distinct()` with
-  one of these instead of plain `.order_by(..)` for a query that can't
-  render SQL the database would reject. One thing they still don't catch:
+  check the sort key is in the selection, through the same `row::Field`
+  lookup `Row::get` uses. That is exactly what `SELECT DISTINCT` requires,
+  since Postgres rejects a sort key that isn't selected. Pair `.distinct()`
+  with one of these rather than plain `.order_by(..)`, and the sort key is
+  checked before the database sees it. One thing they still don't catch:
   `.reselect(..)` after one of them keeps the `ORDER BY` it added, so swap
   the selection before sorting by it.
 - **A computed expression's nullability isn't derived** the way a column's is.
-  An expression whose type the builder inferred — a comparison, an `is_null`,
-  a `LIKE` — says what it decodes to once, with `.decodes_as::<Bool>()`; a
+  An expression whose type the builder inferred (a comparison, an `is_null`,
+  a `LIKE`) says what it decodes to once, with `.decodes_as::<Bool>()`. A
   `sql!{}` fragment states its type in the macro.
 - **A selection list holds at most 32 elements** (`<table>::All` counts as
   one, whatever the column count). Naming a row type in a signature takes a
   type alias long enough to trip `clippy::type_complexity`; inference covers
   everything that stays inside a function, and `<table>::AllRow` covers a
   stored `select(All)`.
-- **One `label!` per scope** — it declares a `label` module, and a scope holds
+- **One `label!` per scope.** It declares a `label` module, and a scope holds
   one. List every name that scope needs in the one invocation.
 - **The derives expand to `::qbrs::` paths**, so depend on the `qbrs` facade
   rather than on `qbrs-core` + `qbrs-macros` directly.
@@ -268,21 +277,21 @@ Design constraints worth knowing before adopting:
   `jsonb_exists_any(..)` and `jsonb_exists_all(..)`.
 - **An array column is a value, not a set.** `Vec<T>` binds and decodes as
   a Postgres array, and `=` compares two of them whole. `.eq_any(..)` asks
-  the one question about an element — `x = ANY(arr)`, which is what `is_in`
+  the one question about an element: `x = ANY(arr)`, which is what `is_in`
   asks of a written-out list, of an array the database unnests. The array
-  *operators* — `@>`, `&&`, `array_append` — are not built; they go through
+  *operators* (`@>`, `&&`, `array_append`) are not built; they go through
   `sql!{}`, where the column and the value are still slots.
   MySQL and SQLite have no array type at all, and since an `Expr` carries no
   dialect there is nothing to gate on: an array reaches those two as a bind
   their driver refuses, and `= ANY(..)` as a statement they won't parse.
-- **Every `?` in a `sql!{}` text is a slot**, with no escape for a literal one
-  — MySQL and SQLite spell their bind parameters the same way. Its text must
-  be a constant (a literal, a `const`, `concat!`, `include_str!`), so
-  runtime-assembled text can never become SQL shape. One fragment reused
-  across clauses of a statement — selected, grouped by, ordered by — renders
-  as one expression, which is what Postgres's syntactic `GROUP BY` matching
-  asks for; where its placeholders are numbered a repeated value is named
-  again rather than bound again, so the rendered text depends on which of a
+- **Every `?` in a `sql!{}` text is a slot**, with no escape for a literal
+  one, since MySQL and SQLite spell their bind parameters the same way. Its
+  text must be a constant (a literal, a `const`, `concat!`, `include_str!`),
+  so runtime-assembled text can never become SQL shape. One fragment reused
+  across clauses of a statement (selected, grouped by, ordered by) renders as
+  one expression, which is what Postgres's syntactic `GROUP BY` matching asks
+  for. Where its placeholders are numbered, a repeated value is named again
+  rather than bound again, so the rendered text depends on which of a
   statement's values are equal, as it already depends on how many rows an
   `INSERT` carries.
 
@@ -299,18 +308,18 @@ Design constraints worth knowing before adopting:
 
 MySQL is rendered and asserted as strings only, so its dialect differences are
 caught only where someone thought to look. One known difference: `DEFAULT` in
-an `INSERT ... VALUES` is Postgres and MySQL only — SQLite rejects it, which
+an `INSERT ... VALUES` is Postgres and MySQL only. SQLite rejects it, which
 makes `Defaultable::Default` unusable there.
 
 ## Development
 
-- [`crates/core`](crates/core) — type-level machinery and SQL rendering. No
+- [`crates/core`](crates/core): type-level machinery and SQL rendering. No
   I/O, no async, no driver.
-- [`crates/macros`](crates/macros) — `#[derive(Table)]`, `#[derive(FromRow)]`,
+- [`crates/macros`](crates/macros): `#[derive(Table)]`, `#[derive(FromRow)]`,
   `label!`, `with!`.
-- [`crates/qbrs`](crates/qbrs) — the facade; depend on this one.
-- [`crates/qbrs-sqlx`](crates/qbrs-sqlx) — execution via `sqlx` (Postgres).
-- [`examples`](examples) — runnable examples; [`tests/dialect-exec`](tests/dialect-exec)
+- [`crates/qbrs`](crates/qbrs): the facade; depend on this one.
+- [`crates/qbrs-sqlx`](crates/qbrs-sqlx): execution via `sqlx` (Postgres).
+- [`examples`](examples): runnable examples; [`tests/dialect-exec`](tests/dialect-exec)
   runs every rendered shape against SQLite; [`tests/compile-bench`](tests/compile-bench)
   backs the "linear at 40+ joins" claim.
 
@@ -320,7 +329,7 @@ cargo nextest run --workspace --all-features   # all but the doctests, in parall
 ```
 
 No setup required: the real-DB tests start their own throwaway PostgreSQL
-17.5, embedded via [`pglite-rs`](https://crates.io/crates/pglite-rs) — no
+17.5, embedded via [`pglite-rs`](https://crates.io/crates/pglite-rs). No
 Docker and no service to launch. The engine is downloaded once, when the crate
 is first built, and cached under `~/.cache/pglite-rs`; nothing is fetched while
 a test runs. The first run also pays for an `initdb`, then caches the data

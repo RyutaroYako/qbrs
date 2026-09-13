@@ -142,8 +142,8 @@ fn bare_over_with_no_partition_or_order_renders_empty_parens() {
 fn window_can_be_used_in_a_filter_via_a_derived_table_shape() {
     // `.filter()` doesn't reject a window function expression at the type
     // level (real SQL rejects it at the WHERE-clause position specifically,
-    // not because of the expression's shape) — proving it composes with the
-    // rest of the expression machinery (e.g. `.gt(..)`) like any other
+    // not because of the expression's shape). That proves it composes with
+    // the rest of the expression machinery (e.g. `.gt(..)`) like any other
     // `Expr<Req, S>` once built via `.over()`.
     let q = select((employees::department,))
         .from(employees::Table)
@@ -159,7 +159,7 @@ fn window_can_be_used_in_a_filter_via_a_derived_table_shape() {
 }
 
 // Uncomment to eyeball the compile error for partitioning/ordering by a
-// column outside the query's scope (confirmed working — kept out of the
+// column outside the query's scope (confirmed working, kept out of the
 // normal test run since it's meant to fail): `orders::total` isn't in scope
 // here (no `orders` table joined), so `Req` accumulated by `Window` fails
 // the `Superset` check at `.select()`'s terminal `.to_sql(Postgres)`.

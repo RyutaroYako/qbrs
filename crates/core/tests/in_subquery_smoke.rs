@@ -79,8 +79,8 @@ mod orders {
 
 #[test]
 fn an_uncorrelated_in_subquery_renders_and_typechecks() {
-    // `orders::user_id` is `BigInt`, `users::id` is `Integer` — comparable
-    // across widths exactly like `.eq(..)`, proving `contains` reuses the
+    // `orders::user_id` is `BigInt` and `users::id` is `Integer`, comparable
+    // across widths exactly like `.eq(..)`. That proves `contains` reuses the
     // same `Comparable` check rather than requiring identical SQL types.
     let subquery = select(orders::user_id).from(orders::Table);
     let outer = select((users::id,)).from(users::Table);
@@ -112,7 +112,7 @@ fn a_correlated_in_subquery_references_the_outer_column() {
     // `.contains()` is built from `Outer::Tables` the same way `.exists()`
     // is, so a subquery started via `.correlated(..)` can reference the
     // outer column in its own `.filter()` while `contains`'s `lhs` also
-    // reaches into the outer scope — both through the one flat cons-list,
+    // reaches into the outer scope. Both go through the one flat cons-list,
     // with no correlation-specific machinery.
     let outer = select((users::id,)).from(users::Table);
     let subquery = outer.correlated(orders::Table, orders::user_id);

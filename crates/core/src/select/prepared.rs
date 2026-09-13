@@ -16,16 +16,16 @@ pub trait PreparedParams {
 /// A query rendered once, with its `Value::Placeholder(name)` slots left
 /// unresolved, reusable across many `.load(executor, params)` calls. `load`
 /// takes the exact `Params` struct `prepare!{}` generated for this query, so
-/// a missing or mistyped value is caught. The dialect it was
-/// rendered in stays in its type, so it can only be run by an executor of
-/// that dialect — the same rule `Select` and `DynSelect` follow.
+/// a missing or mistyped value is caught. The dialect it was rendered in
+/// stays in its type, so it can only be run by an executor of that dialect,
+/// the same rule `Select` and `DynSelect` follow.
 ///
-/// `Params` is a free parameter, though — nothing ties the placeholder names
-/// baked into the template to the struct that fills them — so a query built
-/// from one `prepare!` struct and run with another is caught at `resolve`
-/// rather than at compile time. Placeholder names are qualified by the
-/// module and struct they were declared in, so that mismatch is always an
-/// `UnresolvedPlaceholder` and never a value bound to the wrong slot.
+/// `Params` is a free parameter, though: nothing ties the placeholder names
+/// baked into the template to the struct that fills them. A query built from
+/// one `prepare!` struct and run with another is therefore caught at
+/// `resolve` rather than at compile time. Placeholder names are qualified by
+/// the module and struct they were declared in, so that mismatch is always
+/// an `UnresolvedPlaceholder` and never a value bound to the wrong slot.
 pub struct Prepared<D, Params, Output> {
     sql: String,
     template: Vec<Value>,
@@ -50,8 +50,8 @@ impl<D, Scope, Sel> Select<D, Scope, Sel> {
         }
     }
 
-    /// The same query prepared as its own total — `count_sql` with the
-    /// placeholders still unresolved, so a paginated endpoint reuses one
+    /// The same query prepared as its own total, meaning `count_sql` with
+    /// the placeholders still unresolved, so a paginated endpoint reuses one
     /// rendering for the page and one for the count. `Total` rather than
     /// `i64`: what a statement produces is what decides how it is run, and a
     /// total is a number, not a row.
@@ -74,11 +74,10 @@ impl<D, Scope, Sel> Select<D, Scope, Sel> {
 /// `SELECT` of one `i64` column is never mistaken for one.
 pub struct Total;
 
-/// Returned by `Prepared::resolve` — and so by the `.load()` that calls
-/// it — when a placeholder in the
-/// template has no matching field in the `Params` passed in: a query
-/// prepared with one `prepare!` struct and run with another, or a
-/// hand-constructed `expr::placeholder` name.
+/// Returned by `Prepared::resolve` (and so by the `.load()` that calls it)
+/// when a placeholder in the template has no matching field in the `Params`
+/// passed in: a query prepared with one `prepare!` struct and run with
+/// another, or a hand-constructed `expr::placeholder` name.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct UnresolvedPlaceholder(pub &'static str);
 

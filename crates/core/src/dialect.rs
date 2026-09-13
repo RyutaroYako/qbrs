@@ -23,7 +23,7 @@ pub trait Dialect: 'static + Copy + Default + private::Sealed {
     const IDENTIFIER_QUOTE: char;
 
     /// How this dialect spells the two types an aggregate is cast back to.
-    /// `CAST` itself is standard; the type names are not — MySQL takes
+    /// `CAST` itself is standard; the type names are not. MySQL takes
     /// `SIGNED` and `DOUBLE` where Postgres takes `BIGINT` and
     /// `DOUBLE PRECISION`.
     const CAST_BIGINT: &'static str = "BIGINT";
@@ -47,7 +47,8 @@ pub trait Dialect: 'static + Copy + Default + private::Sealed {
     /// and with it whether the separator can be a parameter. One value
     /// rather than a name beside a syntax, because the two only make sense
     /// together: `group_concat(x, ', ')` is valid MySQL and means something
-    /// else entirely — each row's values run together, not the group's.
+    /// else entirely, running each row's values together rather than the
+    /// group's.
     const STRING_AGG: StringAggSyntax = StringAggSyntax::Argument("group_concat");
 
     /// Whether one bound parameter can be named from several places in a
@@ -55,9 +56,9 @@ pub trait Dialect: 'static + Copy + Default + private::Sealed {
     /// Postgres's `$N` names a parameter, so repeating `$1` is repeating one
     /// value, while `?` *is* the next parameter, so a second one consumes a
     /// second value. Naming one again keeps a statement's parameters down to
-    /// the values it actually holds, at the cost of a rendered text that
-    /// depends on which of them are equal: a driver caching prepared
-    /// statements by SQL text sees a bulk `INSERT` as one statement per
+    /// the values it actually holds. The cost is a rendered text that depends
+    /// on which of those values are equal. A driver caching prepared
+    /// statements by SQL text then sees a bulk `INSERT` as one statement per
     /// repetition pattern, as it already sees one per row count.
     const PLACEHOLDERS_ARE_NUMBERED: bool = false;
 
@@ -72,7 +73,7 @@ pub trait Dialect: 'static + Copy + Default + private::Sealed {
 
 /// Where a `string_agg` separator goes, and so whether it is a value or
 /// text. Two dialects take it as an ordinary argument, where it binds like
-/// any other value; MySQL's grammar takes a literal after a keyword and
+/// any other value. MySQL's grammar takes a literal after a keyword and
 /// rejects a parameter there, which is the only reason this crate ever
 /// writes a value into SQL instead of handing it to the driver.
 #[derive(Debug, Clone, Copy)]
@@ -83,9 +84,10 @@ pub enum StringAggSyntax {
     /// escaped. `backslash_escapes` says how: MySQL reads a backslash
     /// inside a literal as an escape, so a lone one would carry the closing
     /// quote away and has to be doubled. A session running
-    /// `NO_BACKSLASH_ESCAPES` reads the doubled pair as two backslashes —
-    /// a separator that isn't the one asked for, though still not a way out
-    /// of the literal, since a doubled quote escapes under either mode.
+    /// `NO_BACKSLASH_ESCAPES` reads the doubled pair as two backslashes,
+    /// which is not the separator asked for. The doubled pair is still no
+    /// way out of the literal, since a doubled quote escapes under either
+    /// mode.
     SeparatorKeyword {
         func: &'static str,
         backslash_escapes: bool,
@@ -154,8 +156,8 @@ pub trait SupportsOnConflict: Dialect {}
 impl SupportsOnConflict for Postgres {}
 impl SupportsOnConflict for Sqlite {}
 
-/// A data-modifying statement as a CTE body — `WITH x AS (UPDATE ..
-/// RETURNING ..) SELECT ..` — which is Postgres's alone. SQLite and MySQL
+/// A data-modifying statement as a CTE body (`WITH x AS (UPDATE ..
+/// RETURNING ..) SELECT ..`), which is Postgres's alone. SQLite and MySQL
 /// both take a `SELECT` there and nothing else.
 #[diagnostic::on_unimplemented(
     message = "`{Self}` has no data-modifying CTE",
@@ -167,10 +169,11 @@ impl SupportsDataModifyingCte for Postgres {}
 
 /// `RIGHT JOIN` support. Every dialect this crate speaks has it (SQLite
 /// since 3.39, the minimum this crate targets), so this gate excludes
-/// nothing today — it is here so that `SupportsFullOuterJoin`, which MySQL
-/// genuinely lacks, is one capability rather than a pair of joins lumped
-/// together, and so that adding a dialect without `RIGHT JOIN` is a new
-/// impl rather than a change to `right_join`'s signature.
+/// nothing today. It is here for two reasons. `SupportsFullOuterJoin`, the
+/// capability MySQL genuinely lacks, stays a capability of its own rather
+/// than a pair of joins lumped together. And adding a dialect without
+/// `RIGHT JOIN` stays a new impl rather than a change to `right_join`'s
+/// signature.
 #[diagnostic::on_unimplemented(
     message = "`{Self}` has no `RIGHT JOIN`",
     label = "swap the tables and use `.left_join(..)`, which every dialect has"
@@ -182,8 +185,8 @@ impl SupportsRightJoin for Sqlite {}
 
 /// `FULL JOIN` support: Postgres always, SQLite 3.39+, **not** MySQL at any
 /// version. The usual MySQL workaround is a `UNION` of `LEFT` and `RIGHT`
-/// joins — a different SQL shape, not something `.full_join()` should
-/// silently rewrite into.
+/// joins. That is a different SQL shape, not something `.full_join()`
+/// should silently rewrite into.
 #[diagnostic::on_unimplemented(
     message = "`{Self}` has no `FULL JOIN`",
     label = "Postgres and SQLite do; MySQL's idiom is a `UNION` of a `LEFT` and a `RIGHT` join",

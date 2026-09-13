@@ -110,7 +110,7 @@ mod archived_users {
 
 #[test]
 fn union_combines_two_different_scopes_and_renumbers_params() {
-    // Each branch has its own bound parameter — proves placeholders get
+    // Each branch has its own bound parameter, which proves placeholders get
     // renumbered across the splice, not just copied verbatim (which would
     // collide on `$1` twice).
     let live = select((users::id, users::email))
@@ -278,8 +278,8 @@ fn a_set_operation_can_be_ordered_by_a_column_instead_of_a_number() {
 }
 
 // Uncomment to eyeball the compile error for mismatched output shapes
-// (confirmed working — kept out of the normal test run since it's meant to
-// fail): `users::email` (Text) vs. `archived_users::id` (Integer) — the two
+// (confirmed working, kept out of the normal test run since it's meant to
+// fail): `users::email` (Text) vs. `archived_users::id` (Integer). The two
 // branches' `Selection::Output` types differ, so this is a compile error,
 // not a runtime "column count/type mismatch" surprise.
 //
@@ -293,7 +293,7 @@ fn a_set_operation_can_be_ordered_by_a_column_instead_of_a_number() {
 #[test]
 fn a_single_column_set_operation_orders_without_naming_a_position() {
     // One column, one position: nothing to state, and no way to state a
-    // wrong one — `ORDER BY 99` is not spellable anywhere any more.
+    // wrong one. `ORDER BY 99` is not spellable anywhere any more.
     let a = select(users::id).from(users::Table);
     let b = select(archived_users::id).from(archived_users::Table);
 
@@ -311,8 +311,8 @@ fn a_single_column_set_operation_orders_without_naming_a_position() {
 fn a_chain_renders_as_the_left_fold_it_reads_as() {
     // SQL binds `INTERSECT` tighter than `UNION`/`EXCEPT`, and SQLite reads
     // compound operators left to right, so flat text would mean two
-    // different things in the two dialects this crate executes — and
-    // neither of them the fold the builder describes.
+    // different things in the two dialects this crate executes, neither of
+    // them the fold the builder describes.
     let a = select((users::id,)).from(users::Table);
     let b = select((users::id,))
         .from(users::Table)

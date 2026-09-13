@@ -11,7 +11,7 @@ use std::marker::PhantomData;
 /// derived from the Rust type name so the derive macro can freely rename
 /// tables.
 ///
-/// **Known limitation**: no schema qualification — a table is rendered
+/// **Known limitation**: no schema qualification. A table is rendered
 /// bare, so `search_path` decides which one it is.
 pub trait Table: 'static {
     const NAME: &'static str;
@@ -24,7 +24,7 @@ pub trait Table: 'static {
 #[diagnostic::on_unimplemented(
     message = "`{Self}` isn't a schema table",
     label = "a `with!{{}}` pseudo-table is entered through its `cte::with(..)` binding",
-    note = "pass the `cte::with(..)` binding itself to `.from(..)`/`.inner_join(..)` — binding a CTE is what puts it in scope"
+    note = "pass the `cte::with(..)` binding itself to `.from(..)`/`.inner_join(..)`: binding a CTE is what puts it in scope"
 )]
 pub trait BaseTable: Table + private::Sealed {}
 
@@ -98,8 +98,8 @@ impl<I: Position> Position for There<I> {
 /// which is what a seal on `Self` alone cannot do: `Find<T, _>` and
 /// `row::Field<K, _>` take the caller's own marker as a bare parameter, so
 /// the orphan rule licenses a schema crate to write
-/// `impl Find<orders::Table, Here> for <a scope without orders>` — and with
-/// it, the compile error this crate exists to produce.
+/// `impl Find<orders::Table, Here> for <a scope without orders>`. Such an
+/// impl silences the compile error this crate exists to produce.
 ///
 /// A private *type* in an associated position is not enough, and was the
 /// mistake this replaces: `type Proof: Sealed` can be satisfied from
@@ -114,12 +114,12 @@ pub(crate) mod proof {
 
 /// Proof that table `T` appears somewhere in a scope list, found at
 /// compile-time-inferred position `Index`. `Index` is never spelled out by
-/// callers — it's inferred, exactly like frunk's `Plucker` — and it's what
+/// callers: it's inferred, exactly like frunk's `Plucker`. It is also what
 /// keeps the two impls below structurally distinct rather than overlapping.
 #[diagnostic::on_unimplemented(
     message = "`{T}` is not available in this query's scope",
     label = "add `.join(<table>, ..)` (or `.from(..)`) for `{T}` before referencing its columns here",
-    note = "columns can only be referenced once their table has been joined into the current FROM/JOIN scope — and in a generic helper give each table its own `Idx` parameter, since one shared index matches no scope"
+    note = "columns can only be referenced once their table has been joined into the current FROM/JOIN scope. In a generic helper, give each table its own `Idx` parameter, since one shared index matches no scope"
 )]
 pub trait Find<T: Table, Index>: proof::FoundAt<T, Index> {
     /// The nullability `T` has in this scope (derived from how it was
@@ -168,13 +168,13 @@ impl<Head, Tail: Concat<Other>, Other> Concat<Other> for Cons<Head, Tail> {
 ///
 /// `Idxs` mirrors `Find`'s own `Index` parameter: it holds the per-element
 /// lookup indices, and callers never name it explicitly. It has to live in
-/// the trait's parameter list — an index constrained only by the `where`
-/// clause isn't accepted, since Rust has no existential quantification over
-/// impl generics.
+/// the trait's parameter list, because an index constrained only by the
+/// `where` clause isn't accepted: Rust has no existential quantification
+/// over impl generics.
 #[diagnostic::on_unimplemented(
     message = "this expression references a table that isn't in scope here",
     label = "requires {Req}, but the current query scope doesn't contain all of it",
-    note = "in a generic helper, `Idxs` has to be a type parameter of its own — one shared index matches no scope, however right the tables look"
+    note = "in a generic helper, `Idxs` has to be a type parameter of its own: one shared index matches no scope, however right the tables look"
 )]
 pub trait Superset<Req, Idxs>: proof::SupersetOf<Req, Idxs> {}
 
@@ -230,9 +230,9 @@ impl<T: Table, N: Nullability, Tail: MapNullable> MapNullable for Cons<TableSlot
 pub(crate) mod wrap {
     /// Sealed carrying the nullability, for the reason `proof` explains:
     /// what a join does to a column is the join's to decide, and `Self` is
-    /// the caller's own type wherever a schema declares one — so an open
-    /// impl lets a schema say a `LEFT JOIN` leaves its column NOT NULL, and
-    /// the row then decodes a NULL into a non-`Option`.
+    /// the caller's own type wherever a schema declares one. An open impl
+    /// therefore lets a schema say a `LEFT JOIN` leaves its column NOT
+    /// NULL, and the row then decodes a NULL into a non-`Option`.
     pub trait Sealed<N> {}
 }
 
@@ -250,9 +250,9 @@ pub trait WrapNullable<N: Nullability>: wrap::Sealed<N> {
 /// overlapping the per-base-type impls below.
 pub struct Nullable<T>(PhantomData<T>);
 
-// `NotNull` never changes the type, for *any* `T` (including `Nullable<T>`
-// itself) — a single blanket impl is coherence-safe here because there is
-// no second impl competing for the `NotNull` slot.
+// `NotNull` never changes the type, for *any* `T`, including `Nullable<T>`
+// itself. A single blanket impl is coherence-safe here because there is no
+// second impl competing for the `NotNull` slot.
 impl<T> wrap::Sealed<NotNull> for T {}
 
 impl<T> WrapNullable<NotNull> for T {
@@ -268,7 +268,7 @@ impl<T> WrapNullable<MaybeNull> for Nullable<T> {
 }
 
 // IMPORTANT: there must be NO blanket `impl<T> WrapNullable<MaybeNull> for T`
-// alongside the `Nullable<T>` impl above — the two overlap, since coherence
+// alongside the `Nullable<T>` impl above. The two overlap, since coherence
 // treats a blanket impl over a fully generic `T` as potentially covering
 // `Nullable<_>`. Each concrete base SQL type (Integer, Text, Bool, ...) gets
 // its own individual, non-generic `WrapNullable<MaybeNull>` impl instead,

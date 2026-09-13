@@ -8,8 +8,8 @@ use qbrs::prelude::*;
 use qbrs_examples::*;
 use qbrs_sqlx::prelude::*;
 
-/// Takes any row carrying `users::email`, whatever else it holds — the
-/// static equivalent of width subtyping, which a tuple can't express.
+/// Takes any row carrying `users::email`, whatever else it holds. This is
+/// the static equivalent of width subtyping, which a tuple can't express.
 /// `Idx` is the inferred lookup index; callers never write it.
 ///
 /// One index parameter per column, always: the index records *where* a
@@ -22,7 +22,7 @@ fn masked_email<Idx, R: users::HasEmail<Idx, Value = String>>(row: &R) -> String
     format!("{}***{}", &email[..1], &email[at..])
 }
 
-/// Two columns, two indices — and generic over whether the join made
+/// Two columns, two indices, and generic over whether the join made
 /// `total` nullable, so the same helper serves an INNER and a LEFT join.
 fn line<I1, I2, R>(row: &R) -> String
 where

@@ -1,6 +1,6 @@
 //! UPDATE: only the fields a request actually set are sent, and a nullable
-//! column tells "leave alone" apart from "set to NULL" — the builder's
-//! `.column(value)` vs `.column_null()`.
+//! column tells "leave alone" apart from "set to NULL". That is the
+//! builder's `.column(value)` vs `.column_null()`.
 //! Run: `cargo run -p qbrs-examples --example 04_update`
 
 use qbrs::prelude::*;
@@ -21,7 +21,7 @@ async fn main() {
         .expect("ada exists");
 
     // A request's fields, mapped across one for one: `email` was not sent,
-    // so it is absent from the rendered SQL — not set to NULL, and not
+    // so it is absent from the rendered SQL. It is not set to NULL, and not
     // left unchanged via a redundant `email = email` self-assignment.
     let requested_email: Option<String> = None;
     let requested_name: Option<String> = Some("Ada, Countess of Lovelace".into());
@@ -60,7 +60,7 @@ async fn main() {
     println!("normalised {stamped} row(s)");
 
     // Clearing the column is its own call, distinct from having nothing to
-    // say about it — the struct literal spells the same two states
+    // say about it. The struct literal spells those same two states
     // `Some(None)` and `None`.
     let cleared = update(users::Table)
         .set(

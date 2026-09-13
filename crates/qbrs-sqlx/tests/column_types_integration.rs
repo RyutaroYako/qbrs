@@ -91,7 +91,7 @@ async fn timestamp_uuid_and_numeric_columns_survive_a_round_trip() {
         .expect("select by timestamp and amount");
     assert_eq!(found, vec![id]);
 
-    // The same columns into a DTO, and ordered — `min`/`max` are the two
+    // The same columns into a DTO, and ordered: `min`/`max` are the two
     // aggregates a timestamp and a money column want.
     let dtos: Vec<EventDto> = select((events::happened_at, events::amount))
         .from(events::Table)

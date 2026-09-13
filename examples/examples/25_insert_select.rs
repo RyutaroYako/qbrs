@@ -1,8 +1,8 @@
-//! `INSERT INTO t (..) SELECT ..`: the archival copy — rows a query
-//! produces rather than rows the caller holds. The header is the columns
-//! the target lets a statement write, so a generated key stays the
-//! database's to fill, and `row::SameShape` checks the query against them
-//! at compile time — the same one comparison a `UNION` branch goes through.
+//! `INSERT INTO t (..) SELECT ..`: the archival copy. The rows are the ones
+//! a query produces rather than the ones the caller holds. The header is the
+//! columns the target lets a statement write, so a generated key stays the
+//! database's to fill, and `row::SameShape` checks the query against them at
+//! compile time, the same one comparison a `UNION` branch goes through.
 //! Known limitation: no `ON CONFLICT` on this shape, and no column subset.
 //! Run: `cargo run -p qbrs-examples --example 25_insert_select`
 
@@ -45,7 +45,7 @@ async fn main() {
     .await
     .expect("create archived_orders");
 
-    // The source is an ordinary query — filters, joins, whatever it takes
+    // The source is an ordinary query: filters, joins, whatever it takes
     // to say which rows to copy. Its bind is numbered by the statement it
     // lands in, not by the query on its own.
     let shipped = select((orders::user_id, orders::total, orders::shipped))

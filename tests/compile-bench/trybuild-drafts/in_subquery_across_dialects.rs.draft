@@ -1,6 +1,6 @@
 // Deliberately-broken example: an `IN (<subquery>)` built for one dialect,
 // filtered onto a statement of another. Used to eyeball `Condition`'s
-// message. Not meant to compile — copy into `tests/compile-bench/examples/`
+// message. Not meant to compile. Copy into `tests/compile-bench/examples/`
 // and run:
 //   cargo build -p compile-bench --example in_subquery_across_dialects
 use qbrs::prelude::*;

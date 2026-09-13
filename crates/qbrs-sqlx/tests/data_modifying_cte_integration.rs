@@ -186,7 +186,7 @@ async fn a_write_runs_as_a_cte_body_and_the_query_reads_what_the_row_doesnt_hold
 
     // Postgres takes a data-modifying `WITH` at the top level only, so the
     // query binding one has to be the statement. Nothing in the types says
-    // so — this pins which error a nested one is, and that it is the
+    // so. This pins which error a nested one is, and that it is the
     // server's rather than a wrong answer.
     let nested = qbrs::update::update(campaigns::Table)
         .set_to(campaigns::name, "winter")

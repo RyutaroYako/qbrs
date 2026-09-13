@@ -1,7 +1,7 @@
 //! Postgres array columns: `TEXT[]`, `INTEGER[]` and `BIGINT[]` declared in
 //! a schema as `Vec<T>`, bound as one parameter and decoded back. `UUID[]`
 //! is the same shape as a `Vec<Uuid>` behind the `uuid` feature.
-//! `Vec<u8>` stays `bytea` — the element type is what decides.
+//! `Vec<u8>` stays `bytea`: the element type is what decides.
 //! `.eq_any(..)` asks whether a value is one of an array column's elements
 //! (`x = ANY(arr)`).
 //! Known limitation: the array *operators* (`@>`, `&&`, `array_append`) are
@@ -98,7 +98,7 @@ async fn main() {
     assert_eq!(lists[1].recipients, Vec::<String>::new());
     assert_eq!(lists[1].cc, None);
 
-    // An array compares as a whole — one bind parameter against one column,
+    // An array compares as a whole: one bind parameter against one column,
     // not a rendered list.
     let exact: i64 = select(qbrs::expr::count())
         .from(mailing_lists::Table)
@@ -121,7 +121,7 @@ async fn main() {
     assert_eq!(sent, vec![vec![9_000_000_000i64, 9_000_000_001], vec![]]);
 
     // "Is this value one of the elements" is the question `is_in` asks of
-    // a written-out list, asked of an array the database unnests — so the
+    // a written-out list, asked of an array the database unnests. So the
     // array can be a column, which a list cannot.
     let listing: Vec<String> = select(mailing_lists::name)
         .from(mailing_lists::Table)
@@ -137,7 +137,7 @@ async fn main() {
     assert_eq!(listing, vec!["ops".to_string()]);
 
     // Asking whether an array *contains* another is an operator, and those
-    // aren't built — the escape hatch takes the column and the value as
+    // aren't built. The escape hatch takes the column and the value as
     // slots, so both are still checked and bound.
     let containing: Vec<String> = select(mailing_lists::name)
         .from(mailing_lists::Table)

@@ -1,6 +1,6 @@
 //! Transactions against a real Postgres: `LoadExt`/`ExecuteExt`/etc. are
 //! generic over `sqlx::PgExecutor`, so a `sqlx::PgTransaction` works
-//! everywhere a `&PgPool` does — see `postgres_integration.rs` for the
+//! everywhere a `&PgPool` does. See `postgres_integration.rs` for the
 //! DB-setup rationale (Docker vs. `postgresql_embedded`). Kept as a single
 //! test function (rather than one per scenario) so every scenario shares
 //! one `tx_users` table without racing against parallel test threads.

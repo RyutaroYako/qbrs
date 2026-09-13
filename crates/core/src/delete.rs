@@ -28,9 +28,9 @@ pub struct Delete<D, T: Table> {
 }
 
 impl<D, T: Table> Delete<D, T> {
-    /// A correlated subquery over the table this statement writes — the
-    /// same `EXISTS` a `SELECT` builds with `Select::correlated`, against
-    /// the one-table scope a write statement has.
+    /// A correlated subquery over the table this statement writes. It is
+    /// the same `EXISTS` a `SELECT` builds with `Select::correlated`,
+    /// against the one-table scope a write statement has.
     pub fn correlated<S, InnerSel>(
         &self,
         source: S,

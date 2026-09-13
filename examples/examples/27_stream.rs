@@ -1,7 +1,8 @@
-//! `.stream(..)`: the rows one at a time, for a result too large to hold —
-//! an export that writes as it reads rather than collecting first. Not a
-//! cursor: the server still produces the whole result and the connection is
-//! held until the stream ends; what this bounds is the client's memory.
+//! `.stream(..)`: the rows one at a time, for a result too large to hold.
+//! An export can then write as it reads rather than collecting first.
+//! Not a cursor: the server still produces the whole result and the
+//! connection is held until the stream ends; what this bounds is the
+//! client's memory.
 //! Run: `cargo run -p qbrs-examples --example 27_stream`
 
 use qbrs::prelude::*;

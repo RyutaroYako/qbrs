@@ -16,7 +16,7 @@ pub trait Statement: private::Sealed {
     type Dialect: Dialect;
     type Table: Table;
 
-    /// Renders into whatever sink the statement is going into — a
+    /// Renders into whatever sink the statement is going into: a
     /// `QuerySink` when it is the statement, a `FragmentSink` when it is a
     /// CTE body whose placeholders the host query will number.
     #[doc(hidden)]
@@ -29,13 +29,13 @@ pub trait Statement: private::Sealed {
         sink.finish()
     }
 
-    /// `RETURNING`, on whichever of the three this is — the clause is the
+    /// `RETURNING`, on whichever of the three this is. The clause is the
     /// same clause. A distinct type rather than `Self` with a flag set: the
     /// execution layer needs `Sel`'s concrete type to know what to decode a
     /// returned row into, and an optional field would erase it.
     ///
-    /// The selection is checked against [`WrittenTable`] — this statement's
-    /// own row.
+    /// The selection is checked against [`WrittenTable`], which is this
+    /// statement's own row.
     ///
     /// **Known limitation**: SQL's `RETURNING` reaches further. A scalar
     /// subquery there is the deferral
@@ -69,7 +69,7 @@ pub type WrittenTable<T> = Cons<TableSlot<T, NotNull>, Nil>;
 
 /// `<statement> RETURNING <selection>`. A distinct type rather than a flag
 /// on the statement, because `Sel` has to survive to the point rows are
-/// decoded — and one type rather than three, because the clause is the same
+/// decoded. One type rather than three, because the clause is the same
 /// clause whichever statement it follows.
 pub struct Returning<S, Sel> {
     pub(crate) statement: S,

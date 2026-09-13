@@ -8,6 +8,6 @@ publish = false
 qbrs-core = { path = "../../crates/core" }
 
 # The `trybuild-drafts` are copied into `examples/` to eyeball diagnostics,
-# and some of them use the derive — which lives behind the facade.
+# and some of them use the derive, which lives behind the facade.
 [dev-dependencies]
 qbrs = { path = "../../crates/qbrs" }

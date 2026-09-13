@@ -2,19 +2,20 @@
 //!
 //! A CTE's column names are just positions in a `SELECT` list, with nothing
 //! at the type level for `.from(some_cte)` to check against. `with!{}`
-//! declares them, generating everything `#[derive(Table)]` does — so a bound
-//! CTE *is* a real table to `Scope`/`Find`/`Superset`/`Selection`, with no
-//! parallel virtual-table machinery.
+//! declares them, generating everything `#[derive(Table)]` does. A bound
+//! CTE *is* therefore a real table to `Scope`/`Find`/`Superset`/`Selection`,
+//! with no parallel virtual-table machinery.
 //!
 //! Being syntactic, `with!{}` can't see the query it will be paired with.
-//! `with()` checks that the body produces the declared columns — the same
-//! types *and* the same names, in the same order — through `row::SameShape`,
-//! the one comparison a `UNION` branch also goes through. Checking only
-//! types would accept a body whose columns are type-compatible but
-//! transposed, and the outer query reads those columns by key.
+//! `with()` checks through `row::SameShape` that the body produces the
+//! declared columns: the same types *and* the same names, in the same
+//! order. That is the one comparison a `UNION` branch also goes through.
+//! Checking only types would accept a body whose columns are
+//! type-compatible but transposed, and the outer query reads those columns
+//! by key.
 //!
 //! A body can be a write statement with a `RETURNING`, where the dialect
-//! has data-modifying CTEs — which is Postgres alone. That is what turns
+//! has data-modifying CTEs, which is Postgres alone. That is what turns
 //! "write a row, then read a value the row doesn't hold" into one
 //! round-trip instead of two statements in a transaction. Every part of
 //! such a statement sees one snapshot, so the outer query reads the rows
@@ -29,9 +30,9 @@
 //! binding one and then used as an `EXISTS`/`IN` subquery or a set-operation
 //! branch is refused by the server (`0A000`) rather than by the compiler.
 //! Saying it in the types would mean tracking, on every `Select`, whether
-//! its scope was reached through such a binding — which is what `Scope`
-//! deliberately does not carry, since a scope is the tables in it and
-//! nothing about how they got there.
+//! its scope was reached through such a binding. `Scope` deliberately does
+//! not carry that, since a scope is the tables in it and nothing about how
+//! they got there.
 
 use std::marker::PhantomData;
 
@@ -52,17 +53,18 @@ use crate::statement::{Returning, Statement, WrittenTable};
 #[diagnostic::on_unimplemented(
     message = "`{Self}` isn't a `with!{{}}` pseudo-table",
     label = "only a `with!{{}}`-declared name can be bound as a CTE",
-    note = "a schema table is already a table — it is selected from directly, with no `WITH` clause to bind"
+    note = "a schema table is already a table: it is selected from directly, with no `WITH` clause to bind"
 )]
 pub trait CteShape: Table + crate::select::SelectableSealed {
-    /// The declared columns as a row — the same `RowCons` chain a selection
-    /// produces, so a body is checked against it by the one comparison
-    /// `UNION` branches already use: same names, same types, same order.
+    /// The declared columns as a row. It is the same `RowCons` chain a
+    /// selection produces, so a body is checked against it by the one
+    /// comparison `UNION` branches already use: same names, same types,
+    /// same order.
     type Row: crate::row::ColumnNames;
 }
 
-/// A `WITH name AS (..)` binding. It goes where a table goes — `.from(..)`,
-/// `.inner_join(..)` — and passing it is what both attaches the `WITH`
+/// A `WITH name AS (..)` binding. It goes where a table goes (`.from(..)`,
+/// `.inner_join(..)`), and passing it is what both attaches the `WITH`
 /// clause and puts the pseudo-table in scope: one act, so a CTE cannot be
 /// selected from without being bound, or bound without being used.
 pub struct Cte<D, Marker> {
@@ -87,8 +89,8 @@ impl<D, Marker> Clone for Cte<D, Marker> {
     }
 }
 
-/// What a `WITH` clause can bind: a `SELECT`, or — where the dialect has
-/// data-modifying CTEs — an `INSERT`/`UPDATE`/`DELETE` with a `RETURNING`.
+/// What a `WITH` clause can bind: a `SELECT`, or (where the dialect has
+/// data-modifying CTEs) an `INSERT`/`UPDATE`/`DELETE` with a `RETURNING`.
 /// `Output` is the row the body produces, which is what [`with`] checks
 /// against the declared shape.
 ///
@@ -102,7 +104,7 @@ impl<D, Marker> Clone for Cte<D, Marker> {
     note = "an `INSERT`/`UPDATE`/`DELETE` body is Postgres's alone, and needs the `RETURNING` that gives the CTE its columns"
 )]
 pub trait CteBody<D, Idx>: cte_body::Sealed<D, Idx> {
-    /// The row the body produces — a selection's `Output` either way.
+    /// The row the body produces: a selection's `Output` either way.
     type Output;
 
     #[doc(hidden)]
@@ -150,7 +152,7 @@ where
 }
 
 /// Builds a `Cte` from `body`, checking that the columns it produces match
-/// `Marker`'s `with!{}`-declared shape exactly — same count, order, names,
+/// `Marker`'s `with!{}`-declared shape exactly: same count, order, names,
 /// and native types.
 pub fn with<D: Dialect, Marker: CteShape, Body, Idx>(_marker: Marker, body: &Body) -> Cte<D, Marker>
 where

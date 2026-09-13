@@ -1,7 +1,8 @@
 //! A `SELECT` with no `FROM`: a value the database computes rather than a
-//! row it reads — `now()`, `current_setting('..')`, an advisory lock. The
-//! seed goes straight to a terminal, and what makes that safe is the empty
-//! scope: a column has nowhere to resolve, so naming one does not compile.
+//! row it reads, such as `now()`, `current_setting('..')`, or an advisory
+//! lock. The seed goes straight to a terminal, and what makes that safe is
+//! the empty scope: a column has nowhere to resolve, so naming one does not
+//! compile.
 //! Run: `cargo run -p qbrs-examples --example 26_no_from`
 
 use qbrs::prelude::*;
