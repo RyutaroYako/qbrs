@@ -344,6 +344,8 @@ stored `Prepared`/`DynSelect` names a row instead of spelling a `RowCons` chain 
 selection list is a chain of `select::SelectionPart`s, each contributing `Fields<Tail>` in
 front of whatever the rest of the list contributes. That is what lets one tuple element
 carry a whole table, and it makes the 32-element limit count tables rather than columns.
+A tuple is a `SelectionPart` too, contributing what its own elements do, which is how a
+selection is named once and then used both bare and inside a longer list.
 
 `label!(rank_in_user, ..)` generates the same shape for a computed column, in a fixed
 `label` module so a same-named local binding can never shadow it. One invocation per scope

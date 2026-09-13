@@ -114,6 +114,28 @@ fn a_field_is_read_by_the_value_that_selected_it() {
     assert_eq!(row.get(orders::total), &Some(1000));
 }
 
+/// A nested selection contributes its fields to the one row, so a caller
+/// reading the result cannot tell how the list was assembled. That is what
+/// makes naming a selection once and reusing it worth anything: the two
+/// spellings produce the same SQL and the same row type.
+#[test]
+fn a_nested_selection_keys_its_row_the_way_a_flat_one_does() {
+    const CORE: (Column<users::columns::id>, Column<users::columns::email>) =
+        (users::id, users::email);
+
+    fn same_row_type<D, Scope, A, B, IdxA, IdxB>(_: &Select<D, Scope, A>, _: &Select<D, Scope, B>)
+    where
+        A: Selection<Scope, IdxA>,
+        B: Selection<Scope, IdxB, Output = A::Output>,
+    {
+    }
+
+    let nested = select((CORE, users::display_name)).from(users::Table);
+    let spelled_out = select((users::id, users::email, users::display_name)).from(users::Table);
+    same_row_type(&nested, &spelled_out);
+    assert_eq!(nested.to_sql(Postgres).0, spelled_out.to_sql(Postgres).0);
+}
+
 #[test]
 fn two_same_typed_columns_of_one_table_stay_distinct() {
     // `users::email` and `users::display_name` are both text columns, so a

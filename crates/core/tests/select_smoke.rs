@@ -356,6 +356,39 @@ fn order_by_selected_renders_the_selected_item_rather_than_the_key_it_was_given(
 //         .to_sql(Postgres);
 // }
 
+/// A selection named once and used in two places, which is what a list
+/// endpoint and a detail endpoint over the same columns need. The tuple is
+/// one element of the longer list, the way a whole table is.
+#[test]
+fn a_named_selection_is_reused_as_one_element_of_a_longer_list() {
+    const CORE: (
+        qbrs_core::expr::Column<users::columns::id>,
+        qbrs_core::expr::Column<users::columns::name>,
+    ) = (users::id, users::name);
+
+    let (listing, _) = select(CORE).from(users::Table).to_sql(Postgres);
+    assert_eq!(
+        listing,
+        "SELECT \"users\".\"id\", \"users\".\"name\" FROM \"users\""
+    );
+
+    let (detail, _) = select((CORE, users::active, qbrs_core::expr::count()))
+        .from(users::Table)
+        .to_sql(Postgres);
+    assert_eq!(
+        detail,
+        "SELECT \"users\".\"id\", \"users\".\"name\", \"users\".\"active\", count(*) FROM \"users\""
+    );
+
+    let (nested, _) = select(((CORE, users::active), users::created_at))
+        .from(users::Table)
+        .to_sql(Postgres);
+    assert_eq!(
+        nested,
+        "SELECT \"users\".\"id\", \"users\".\"name\", \"users\".\"active\", \"users\".\"created_at\" FROM \"users\""
+    );
+}
+
 #[test]
 fn basic_select_renders_expected_sql() {
     let q = select((users::id, users::name))
