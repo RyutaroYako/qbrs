@@ -91,8 +91,9 @@ async fn main() {
     // A conflict target of bare columns is inferred against an index over
     // exactly those columns whose predicate the target's implies, and a
     // target with no predicate implies nothing, so a *partial* unique index
-    // needs its own repeated. `orders` has no unique constraint on `user_id`, so the
-    // partial index below is the only one there is to infer.
+    // needs its own repeated. `orders` has no unique constraint on
+    // `user_id`, so the partial index below is the only one there is to
+    // infer.
     sqlx::query(
         "CREATE UNIQUE INDEX orders_one_open_per_user ON orders (user_id) WHERE NOT shipped",
     )

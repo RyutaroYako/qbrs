@@ -414,7 +414,7 @@ impl<Req, S: SqlType> Clone for Expr<Req, S> {
 #[diagnostic::on_unimplemented(
     message = "`{Self}` isn't a SQL expression",
     label = "a column, a literal, an aggregate, or a `sql!{{}}` fragment is; a `label!` name is not",
-    note = "an `Option` isn't one either: asking about NULL is `.is_null()`, and assigning it is `null::<Text>()`; `= NULL` is never true in SQL"
+    note = "an `Option` isn't one either: asking about NULL is `.is_null()`, since `= NULL` is never true in SQL, and assigning it is `null::<Text>()`"
 )]
 pub trait IntoExpr {
     /// The SQL type this expression has. An associated type rather than a

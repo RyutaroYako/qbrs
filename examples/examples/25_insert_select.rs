@@ -1,9 +1,8 @@
 //! `INSERT INTO t (..) SELECT ..`: the archival copy. The rows are the ones
-//! a query produces rather than the ones the caller holds. The header is
-//! the columns
-//! the target lets a statement write, so a generated key stays the
-//! database's to fill, and `row::SameShape` checks the query against them
-//! at compile time, the same one comparison a `UNION` branch goes through.
+//! a query produces rather than the ones the caller holds. The header is the
+//! columns the target lets a statement write, so a generated key stays the
+//! database's to fill, and `row::SameShape` checks the query against them at
+//! compile time, the same one comparison a `UNION` branch goes through.
 //! Known limitation: no `ON CONFLICT` on this shape, and no column subset.
 //! Run: `cargo run -p qbrs-examples --example 25_insert_select`
 

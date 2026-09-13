@@ -2,9 +2,10 @@
 //!
 //! A column with a schema default gets a `Defaultable<T>` field, so "omit"
 //! and "explicit value" stay distinguishable. One that is nullable as well
-//! gets `Defaultable<Option<T>>`, making that three distinct states. Omission renders as the `DEFAULT` keyword in that row's
-//! `VALUES (..)` tuple rather than changing the column list, so rows that
-//! omit different fields still share one statement.
+//! gets `Defaultable<Option<T>>`, making that three distinct states.
+//! Omission renders as the `DEFAULT` keyword in that row's `VALUES (..)`
+//! tuple rather than changing the column list, so rows that omit different
+//! fields still share one statement.
 //!
 //! An `ON CONFLICT` target names columns, and the database infers an index
 //! from them: one over exactly those columns whose own predicate the

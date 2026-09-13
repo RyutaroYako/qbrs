@@ -41,14 +41,14 @@ cargo test -p dialect-exec                                   # rendered SQL, run
 **No database setup is needed anywhere.** Tests and examples that need Postgres start their
 own throwaway PostgreSQL 17.5, linked into the binary via `pglite-rs` (multi-process mode, a
 real postmaster over a unix socket). Docker is not involved, and nothing is fetched while a
-test runs. The fetching happens at build time: the engine is downloaded once, the first
-time `pglite-rs-sys` is built, from GitHub Releases into `~/.cache/pglite-rs`. That directory is outside everything cargo
-tracks, while `target/` records the absolute path into it, which is why CI caches the two
-together. Set `DATABASE_URL` to run the same tests/examples against an external Postgres
-instead. Integration tests are written to be idempotent (`DROP TABLE IF EXISTS` first), so
-they work against a persistent server too. No two of them name the same table, which is
-what lets them run at once against the one server `DATABASE_URL` points at; a new test
-brings its own table names.
+test runs. The fetching happens at build time: the engine is downloaded once, the first time
+`pglite-rs-sys` is built, from GitHub Releases into `~/.cache/pglite-rs`. That directory is
+outside everything cargo tracks, while `target/` records the absolute path into it, which is
+why CI caches the two together. Set `DATABASE_URL` to run the same tests/examples against an
+external Postgres instead. Integration tests are written to be idempotent
+(`DROP TABLE IF EXISTS` first), so they work against a persistent server too. No two of them
+name the same table, which is what lets them run at once against the one server
+`DATABASE_URL` points at; a new test brings its own table names.
 
 `initdb` is what makes a cold run slow. Bootstrapping the template databases costs about
 seven seconds, against a fifth of a second for everything else a test does. So it runs once
@@ -178,11 +178,10 @@ A field says which column fills it by name, by `#[from_row(rename = "..")]`, or 
 `#[from_row(from = users::id)]`, which routes that one field through `Field` (identity)
 instead of `TakeNamed` (name). Identity is the only lookup that stays unambiguous when a
 selection holds two columns of the same name, and it is what makes
-`select((a::All, b::All))` fillable.
-The attribute takes the column path a call site writes; `<table>::<column>` and
-`<table>::columns::<column>` are the value and the type of one thing, which `#[derive(Table)]`
-and `with!` both arrange. A `label!` name is one item that is both, so it has no identity
-route and is matched by name.
+`select((a::All, b::All))` fillable. The attribute takes the column path a call site writes;
+`<table>::<column>` and `<table>::columns::<column>` are the value and the type of one
+thing, which `#[derive(Table)]` and `with!` both arrange. A `label!` name is one item that
+is both, so it has no identity route and is matched by name.
 
 `FromRow` is its own trait rather than `From`: the per-field lookup indices have nowhere to
 live in a foreign trait's fixed shape. Hence `into_struct`/`into_structs`.
@@ -195,9 +194,8 @@ carries `#[diagnostic::do_not_recommend]` so the reported obligation is the two 
 not the `NameChar` spelling behind them.
 
 One consequence to preserve: `render::SelectItem` carries an optional `AS` label, so a
-selection list is `&[SelectItem]` rather than `&[ExprKind]`. `render::render_select_list`
-is the single place that renders one, shared by `SELECT` and all three `RETURNING`
-builders.
+selection list is `&[SelectItem]` rather than `&[ExprKind]`. `render::render_select_list` is
+the single place that renders one, shared by `SELECT` and all three `RETURNING` builders.
 
 ### Expressions and rendering stay non-generic
 
@@ -206,16 +204,16 @@ generics, and `Value` is a closed enum (not `Box<dyn ToSql>`). This keeps `rende
 single function monomorphized once per *dialect*, never per query shape. Preserve this: don't
 add generics to `ExprKind`/`Value`, and don't make the renderer generic over query types.
 
-`ExprKind` is `pub(crate)` and `Expr::from_kind` is too, so the typed wrapper is the only way
-to build one. That is what makes the `Req`/`S` tags mean anything rather than merely exist.
-`expr::raw_expr` and `expr::placeholder` are the two `#[doc(hidden)]` doors, needed because
-`sql!` and `prepare!` expand in the caller's crate. A `sql!` slot takes an `expr::RawArg`:
-a value, or an expression the renderer writes out. So a column in a slot is quoted by the
-same code that quotes it anywhere else, and carries its table into the fragment's `Req`
-(`expr::RawArgs` unions the slots' `Req`s). Only
-the text *between* slots is unchecked. A fragment is selectable as written, since `sql!`'s
-first argument *is* the decoded type; what still needs `decodes_as::<S>()` is an expression
-whose `S` the builder inferred, which can contradict the join.
+`ExprKind` is `pub(crate)` and `Expr::from_kind` is too, so the typed wrapper is the only
+way to build one. That is what makes the `Req`/`S` tags mean anything rather than merely
+exist. `expr::raw_expr` and `expr::placeholder` are the two `#[doc(hidden)]` doors, needed
+because `sql!` and `prepare!` expand in the caller's crate. A `sql!` slot takes an
+`expr::RawArg`: a value, or an expression the renderer writes out. So a column in a slot is
+quoted by the same code that quotes it anywhere else, and carries its table into the
+fragment's `Req` (`expr::RawArgs` unions the slots' `Req`s). Only the text *between* slots
+is unchecked. A fragment is selectable as written, since `sql!`'s first argument *is* the
+decoded type; what still needs `decodes_as::<S>()` is an expression whose `S` the builder
+inferred, which can contradict the join.
 
 ### Dialects and capability gating
 
@@ -246,17 +244,16 @@ slots rendered with everything else. If you add another place that embeds a *que
 expression, hold the query; if you add one that embeds SQL in a dialect-tagged builder,
 take a `Fragment`. Don't reintroduce a bare `(String, Vec<Value>)` pair.
 
-`ExprKind::InSubquery` (`x IN (SELECT ..)`/`NOT IN`) is the same shape one level up: it holds
-its own `SelectBody`/selection unrendered *and* an `lhs: Box<ExprKind>` for the left side, and
-`Select::contains`/`.not_contains` return a `select::InSubquery<D, Req>`, which is a
-`Condition<D, ..>` and nothing else, for the same reason `Exists` is one. `Req` there is
+`ExprKind::InSubquery` (`x IN (SELECT ..)`/`NOT IN`) is the same shape one level up: it
+holds its own `SelectBody`/selection unrendered *and* an `lhs: Box<ExprKind>` for the left
+side, and `Select::contains`/`.not_contains` return a `select::InSubquery<D, Req>`, which is
+a `Condition<D, ..>` and nothing else, for the same reason `Exists` is one. `Req` there is
 `Outer::Tables` folded with `lhs`'s own `Req` (via `scope::Concat`), since `lhs` is built
-independently and may
-reference tables the subquery itself never joined. Checking `lhs` against the subquery's one
-selected column needs the column's `SqlType` marker, which `Selection::Output` has already
-resolved away to a native Rust type by the time it's visible here. That is what
-`RowField::Sql` is for: the same per-field trait a selection list already walks, just also
-exposing the marker `Value` doesn't carry.
+independently and may reference tables the subquery itself never joined. Checking `lhs`
+against the subquery's one selected column needs the column's `SqlType` marker, which
+`Selection::Output` has already resolved away to a native Rust type by the time it's visible
+here. That is what `RowField::Sql` is for: the same per-field trait a selection list already
+walks, just also exposing the marker `Value` doesn't carry.
 
 Every clause that takes a condition goes through `select::Condition` and comes out a
 `Predicate<D, Scope>`: `.filter`, `.having`, and all four joins' `ON`, where the scope
@@ -294,24 +291,22 @@ from outside. What holds is a **private supertrait carrying the trait's own para
 implemented only for the honest combinations: there is no type to project and no trait to
 implement. `row::SameNameAs`, `row::ColumnNames`, `expr::SqlType` and `scope::WrapNullable`
 are sealed the same way. `ColumnNames` is sealed because `CteShape::Row` is bounded by it,
-so an open impl let a `WITH` header be spelled by something that was not the row
-`SameShape` checked (and put a local type where `SameShape` could then be forged).
-`SqlType` and `WrapNullable` are sealed because what a join does to a column is the join's
-business: an open
-`WrapNullable<MaybeNull>` let a schema declare that a `LEFT JOIN` leaves its column NOT
-NULL, which decodes a NULL into a non-`Option`.
-`row::SameNameAs` is sealed the same way in spirit (a private supertrait carrying the one
-honest impl's bounds), since without it a schema crate could declare two differently-named
-columns interchangeable and splice a `UNION` branch in transposed.
-`select::AllColumns`/`ColumnList`, `expr::RawArg` and `cte::CteShape` are sealed
-for the reason `InsertRow` is: each pairs a type-level claim with the runtime list that is
-supposed to match it, and a hand-written impl could select a row that decodes transposed.
-`select::SelectableSealed` is the `#[doc(hidden)] pub` half, since the derive emits
-`AllColumns`/`CteShape` in the schema's own crate. `ColumnList` and `RawArg` need no such
-door, since nothing outside this crate implements them. Both still need the seal: each
-pairs a type-level claim with runtime data (`ColumnList` the row against the pushed items, `RawArg`
-a slot's `Req` against the column it delegates to), which is precisely what splitting
-`AllColumns` was meant to remove.
+so an open impl let a `WITH` header be spelled by something that was not the row `SameShape`
+checked (and put a local type where `SameShape` could then be forged). `SqlType` and
+`WrapNullable` are sealed because what a join does to a column is the join's business: an
+open `WrapNullable<MaybeNull>` let a schema declare that a `LEFT JOIN` leaves its column NOT
+NULL, which decodes a NULL into a non-`Option`. `row::SameNameAs` is sealed the same way in
+spirit (a private supertrait carrying the one honest impl's bounds), since without it a
+schema crate could declare two differently-named columns interchangeable and splice a
+`UNION` branch in transposed. `select::AllColumns`/`ColumnList`, `expr::RawArg` and
+`cte::CteShape` are sealed for the reason `InsertRow` is: each pairs a type-level claim with
+the runtime list that is supposed to match it, and a hand-written impl could select a row
+that decodes transposed. `select::SelectableSealed` is the `#[doc(hidden)] pub` half, since
+the derive emits `AllColumns`/`CteShape` in the schema's own crate. `ColumnList` and
+`RawArg` need no such door, since nothing outside this crate implements them. Both still
+need the seal: each pairs a type-level claim with runtime data (`ColumnList` the row against
+the pushed items, `RawArg` a slot's `Req` against the column it delegates to), which is
+precisely what splitting `AllColumns` was meant to remove.
 
 ### Derive and codegen (`crates/macros`)
 
@@ -344,15 +339,14 @@ carry a whole table, and it makes the 32-element limit count tables rather than 
 
 `label!(rank_in_user, ..)` generates the same shape for a computed column, in a fixed
 `label` module so a same-named local binding can never shadow it. One invocation per scope
-(a second one collides on `mod label`); declaring it inside the function that runs the
-query is the intended usage and sidesteps that. Nullability comes from `Option<T>` wrapping
-(no separate attribute); attributes are only `#[column(primary_key | generated |
-default)]`. Every column setter takes `insert::IntoColumnValue<Field>`, one trait for all
-four field shapes, so two same-typed columns accept the same values however they are
-declared. A table whose every column is generated leaves an `INSERT` with no column to
-name, which SQL spells `DEFAULT VALUES` (`() VALUES ()` in MySQL) and spells for exactly
-one row. So the bulk paths take `insert::Insertable`, which the derive emits only when
-there is a column to repeat.
+(a second one collides on `mod label`); declaring it inside the function that runs the query
+is the intended usage and sidesteps that. Nullability comes from `Option<T>` wrapping (no
+separate attribute); attributes are only `#[column(primary_key | generated | default)]`.
+Every column setter takes `insert::IntoColumnValue<Field>`, one trait for all four field
+shapes, so two same-typed columns accept the same values however they are declared. A table
+whose every column is generated leaves an `INSERT` with no column to name, which SQL spells
+`DEFAULT VALUES` (`() VALUES ()` in MySQL) and spells for exactly one row. So the bulk paths
+take `insert::Insertable`, which the derive emits only when there is a column to repeat.
 
 `InsertRow::Values` is one chain carrying both halves: `RowCons<C, InsertValue, Tail>`,
 sealed like every other chain. The header is its keys and a row is its cells, walked once
@@ -386,11 +380,11 @@ places that read such data, `Assignments::from_row(..)` and `.values_all(..)`, r
 that cannot be `Err`. A column assigned twice keeps the last assignment, since a `SET` list
 naming one column twice is SQL no database accepts.
 
-A set-operation chain is a left fold, and SQL's precedence isn't: `INTERSECT` binds tighter
-than `UNION`/`EXCEPT`, and SQLite reads all of them left to right. `SetOp::render_branches`
-parenthesises the accumulator wherever the operator changes, so the rendered statement says
-the fold outright and means the same thing in every dialect, with no precedence table
-anywhere.
+A set-operation chain is a left fold, and SQL's precedence isn't: `INTERSECT` binds
+tighter than `UNION`/`EXCEPT`, and SQLite reads all of them left to right.
+`SetOp::render_branches` parenthesises the accumulator wherever the operator changes, so
+the rendered statement says the fold outright and means the same thing in every dialect,
+with no precedence table anywhere.
 
 `with!{}` generates the same shape for a CTE pseudo-table, markers, consts, accessor traits
 and `AllRow` alike, so a CTE *is* a real table to `Scope`/`Find`/`Superset` with no separate
