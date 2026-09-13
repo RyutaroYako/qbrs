@@ -266,6 +266,14 @@ Design constraints worth knowing before adopting:
   An expression whose type the builder inferred (a comparison, an `is_null`,
   a `LIKE`) says what it decodes to once, with `.decodes_as::<Bool>()`. A
   `sql!{}` fragment states its type in the macro.
+- **A selection's shape includes position.** Three places make two
+  selections agree, and each walks them together: a `UNION` branch against
+  the first branch, a CTE body against its `with!{}` declaration, and an
+  `INSERT .. SELECT` source against its target. The pair at each position
+  must match on name and on type. Two lists holding the same columns in a
+  different order are therefore not the same shape. For the first two that
+  is because the result is read by key; for the third, because SQL fills an
+  `INSERT`'s column list by position.
 - **A selection list holds at most 32 elements.** `<table>::All` counts as
   one whatever the column count, and so does a nested tuple, so a wider row
   is reached by naming part of the list. Separately, `into_tuple` stops at

@@ -576,11 +576,16 @@ impl<D, T: Table> InsertSeed<D, T> {
     ///
     /// The query fills every column the target lets a statement write: all
     /// of them but the generated ones, which the database writes itself and
-    /// refuses a value for. `SameShape` compares name and type cell by
-    /// cell, so the source's columns must be spelled and typed as the
-    /// target's. SQL would widen an `INTEGER` into a `BIGINT` and take a
-    /// NOT NULL value for a nullable column, and neither is accepted here.
-    /// A source column under another name takes a `label!{}` one.
+    /// refuses a value for. That is the target's order too, which is its
+    /// `#[derive(Table)]` field order with the generated fields left out.
+    ///
+    /// `SameShape` walks the two lists together, so the source's columns
+    /// must be spelled and typed as the target's and come in that order.
+    /// Order because SQL fills an `INSERT`'s column list by position, and
+    /// the rendered header is read off the same list this is checked
+    /// against. SQL would widen an `INTEGER` into a `BIGINT` and take a NOT
+    /// NULL value for a nullable column, and neither is accepted here. A
+    /// source column under another name takes a `label!{}` one.
     ///
     /// **Known limitations**: the source is a `Select`, so a `SetOp`
     /// (`UNION`) or a `DynSelect` cannot be one; a one-column target still

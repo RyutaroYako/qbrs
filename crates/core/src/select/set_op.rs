@@ -7,6 +7,10 @@
 //! splice in transposed. Keys from different tables still match, since the
 //! comparison is on names, and SQL itself takes a `UNION`'s column names from
 //! the first branch.
+//!
+//! A one-column branch is a one-tuple or a bare selection, and the two are
+//! different shapes: `select((t::only,))` produces a row and `select(t::only)`
+//! produces the value. Both branches have to be the same one.
 
 use std::marker::PhantomData;
 
