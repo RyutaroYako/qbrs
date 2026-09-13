@@ -277,7 +277,9 @@ mod same_name {
 #[diagnostic::on_unimplemented(
     message = "`{Self}` can't stand in for `{Other}`",
     label = "these two selected items must have the same name",
-    note = "matched by name: `.label(label::..)` whichever side is spelled wrong. An unnamed expression (`Anon`) has no name to match with at all"
+    note = "the two lists are compared position by position, so the usual cause is two columns in a different order rather than a wrong name",
+    note = "where a name really does differ, `.label(label::..)` renames whichever side is wrong",
+    note = "an unnamed expression (`Anon`) has no name to match with, so two of them never stand in for each other"
 )]
 pub trait SameNameAs<Other>: same_name::Sealed<Other> {}
 
@@ -297,7 +299,8 @@ where
 /// happen to be type-compatible would otherwise splice in transposed.
 #[diagnostic::on_unimplemented(
     message = "these two selections don't produce the same row",
-    label = "must select the same names, in the same order, decoding to the same types"
+    label = "must select the same names, in the same order, decoding to the same types",
+    note = "the two lists are walked together, so what fails is one position. Compare them in order"
 )]
 pub trait SameShape<Other> {}
 

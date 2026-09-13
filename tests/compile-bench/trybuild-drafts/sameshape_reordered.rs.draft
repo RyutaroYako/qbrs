@@ -1,0 +1,36 @@
+// Deliberately-broken example: a CTE body producing the declared columns in
+// the other order. Both are `Text`, so the pair at each position shares a
+// type and the failure is reported by `SameNameAs`. Used to eyeball that
+// message, which has to name reordering before renaming: the reader swapped
+// two columns, and telling them to `.label(..)` one sends them the wrong
+// way. Give the two columns different types and the same mistake is
+// reported by `SameShape` instead. Not meant to compile. Copy into
+// tests/compile-bench/examples/ and run with:
+//   cargo build -p compile-bench --example sameshape_reordered
+use qbrs::dialect::Postgres;
+use qbrs::prelude::*;
+
+#[derive(Table)]
+#[table(name = "users")]
+#[allow(dead_code)]
+struct Users {
+    #[column(primary_key, generated)]
+    id: i64,
+    email: String,
+    nickname: String,
+}
+
+with! {
+    struct picked { nickname: Text, email: Text }
+}
+
+fn main() {
+    // error[E0277]: `users::columns::email` can't stand in for
+    //   `picked::columns::nickname`
+    //   note: the two lists are compared position by position, so the usual
+    //   cause is two columns in a different order rather than a wrong name
+    let body = select((users::email, users::nickname)).from(users::Table);
+    let _ = select(picked::email)
+        .from(qbrs::cte::with(picked::Table, &body))
+        .to_sql(Postgres);
+}
