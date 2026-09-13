@@ -1115,6 +1115,7 @@ dependencies = [
  "qbrs-core",
  "qbrs-macros",
  "serde_json",
+ "uuid",
 ]
 
 [[package]]
