@@ -1,0 +1,8 @@
+# Config for `cargo-nextest` (https://nexte.st), which `cargo test` ignores.
+
+[profile.default]
+# A test whose embedded Postgres never comes up blocks on the connection
+# rather than failing, so a terminating timeout is what turns that hang into
+# a result. Warm, the whole suite runs in seconds; cold, the one `initdb`
+# every later test copies costs about seven of them.
+slow-timeout = { period = "30s", terminate-after = 4 }

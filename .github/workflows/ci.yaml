@@ -27,6 +27,10 @@ permissions:
 jobs:
   check:
     runs-on: ubuntu-latest
+    # A stuck test is `.config/nextest.toml`'s job. This bounds everything
+    # else, so a hung build or doctest fails in half an hour rather than at
+    # GitHub's own six-hour limit.
+    timeout-minutes: 30
     # No Postgres service: the real-DB tests start their own embedded
     # Postgres (see crates/qbrs-sqlx/tests/common/mod.rs).
     steps:
