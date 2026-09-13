@@ -21,7 +21,11 @@ cargo fmt --all -- --check                              # CI gate
 
 `cargo test --workspace --all-features` still runs the lot in one command, and is the
 slower way to: cargo runs one test binary at a time, and every real-Postgres test starts
-a server of its own.
+a server of its own. It also reads no `.config/nextest.toml`, so it is the one path with
+nothing bounding a test that hangs. Under nextest a test still running after two minutes
+is killed and reported as a failure, which is what a server that never comes up would
+otherwise do to a run: block it rather than fail it. CI's `timeout-minutes` bounds the
+steps nextest does not own.
 
 Narrower loops:
 
