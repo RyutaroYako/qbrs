@@ -1031,9 +1031,22 @@ mod raw_arg {
 }
 
 macro_rules! sql_leaf_type {
+    // A SQL type Rust has no type of its own for: the marker is a type this
+    // crate declares, and `$native` is what a row decodes to.
     ($name:ident, $native:ty, $null_variant:ident) => {
         pub struct $name;
 
+        sql_leaf_type!(@of $name, $native, $null_variant);
+    };
+    // A SQL type whose marker name would *be* the name of the Rust type it
+    // decodes to, so the two would shadow each other in a schema's imports:
+    // the Rust type is the marker instead. Every other marker's name differs
+    // from its native's (`Numeric`/`Decimal`, `Date`/`NaiveDate`), so only
+    // this one has anything to collide with.
+    (native $native:ty, $null_variant:ident) => {
+        sql_leaf_type!(@of $native, $native, $null_variant);
+    };
+    (@of $name:ty, $native:ty, $null_variant:ident) => {
         impl sql_type::Sealed for $name {}
 
         impl SqlType for $name {
@@ -1198,7 +1211,9 @@ sql_leaf_type!(Timestamptz, chrono::DateTime<chrono::Utc>, NullTimestamptz);
 #[cfg(feature = "chrono")]
 sql_leaf_type!(Date, chrono::NaiveDate, NullDate);
 #[cfg(feature = "uuid")]
-sql_leaf_type!(Uuid, uuid::Uuid, NullUuid);
+pub use uuid::Uuid;
+#[cfg(feature = "uuid")]
+sql_leaf_type!(native uuid::Uuid, NullUuid);
 #[cfg(feature = "decimal")]
 sql_leaf_type!(Numeric, rust_decimal::Decimal, NullNumeric);
 

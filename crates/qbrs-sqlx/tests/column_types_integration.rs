@@ -125,5 +125,22 @@ async fn timestamp_uuid_and_numeric_columns_survive_a_round_trip() {
     assert_eq!(total, Some(amount));
     assert_eq!(mean, Some(12.34));
 
+    // The marker position takes the same `Uuid` this file imported from the
+    // `uuid` crate: it *is* the marker, so `use uuid::Uuid` shadows nothing
+    // and neither `sql!{}` nor `with!{}` has to be told a longer name.
+    with! {
+        struct recent { id: Uuid }
+    }
+    let ids: Vec<Uuid> = select(recent::id)
+        .from(qbrs::cte::with(
+            recent::Table,
+            &select((events::id,)).from(events::Table),
+        ))
+        .filter(recent::id.eq(qbrs::sql!(Uuid, "?", id)))
+        .load(&pool)
+        .await
+        .expect("a uuid in a CTE declaration and in a sql! fragment");
+    assert_eq!(ids, vec![id]);
+
     common::shutdown(pool, guard).await;
 }

@@ -73,8 +73,6 @@ pub mod prelude {
     pub use qbrs_core::expr::Json;
     #[cfg(feature = "decimal")]
     pub use qbrs_core::expr::Numeric;
-    #[cfg(feature = "uuid")]
-    pub use qbrs_core::expr::UuidArray;
     pub use qbrs_core::expr::{Agg, Avg, Count, CountOf, Max, Min, StringAgg, Sum};
     pub use qbrs_core::expr::{
         ArrayOf, AssignsTo, BoolLike, Comparable, Concatenable, Ordered, SqlType, Summable,
@@ -88,6 +86,11 @@ pub mod prelude {
     #[cfg(feature = "chrono")]
     pub use qbrs_core::expr::{Date, Timestamptz};
     pub use qbrs_core::expr::{Declared, Expr, IntoExpr, Keyed, Labeled};
+    // `Uuid` is `uuid::Uuid`, so a schema importing it directly and one taking
+    // it from here name a single type: the explicit import wins over the glob
+    // and both mean the same thing.
+    #[cfg(feature = "uuid")]
+    pub use qbrs_core::expr::{Uuid, UuidArray};
     pub use qbrs_core::insert::{
         ConflictColumns, ConflictTarget, ConflictUpdate, Defaultable, Insert, InsertRow,
         InsertSeed, InsertSelect, Insertable, IntoColumnValue, Missing, NothingToInsert,

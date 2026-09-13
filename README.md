@@ -205,6 +205,13 @@ dialect-pinned rather than a plain expression.
 
 Design constraints worth knowing before adopting:
 
+- **A SQL type is a marker type, except `Uuid`.** `Text`, `BigInt`, `Numeric` and the
+  rest are markers this crate declares, each named apart from the Rust type it decodes
+  to. `UUID` is the one whose marker name would *be* that type's, so `Uuid` is
+  `uuid::Uuid` itself rather than a second thing of the same name: importing it from the
+  `uuid` crate and taking it from the prelude name one type, and a marker position takes
+  the same `Uuid` a field's type does.
+
 - **Conditionally *joining* a table has no fully-static solution.** A single
   type can't mean "joined" in one branch and "not joined" in another.
   `.erase()` into `DynSelect` is the way out, and it stays narrow: only the

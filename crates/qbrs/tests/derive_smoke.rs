@@ -573,3 +573,85 @@ fn an_assignments_list_clones_and_prints() {
     assert_eq!(sql, "UPDATE \"users\" SET \"email\" = $1");
     assert!(format!("{sets:?}").starts_with("Assignments"));
 }
+
+/// The prelude carries `Uuid`, so a schema that never names the `uuid` crate
+/// still has the marker. What it gets is that crate's type: the column it
+/// declares binds a `Value::Uuid`, and `Uuid::nil()` is a call on it.
+#[cfg(feature = "uuid")]
+mod uuid_from_the_prelude {
+    use qbrs::prelude::*;
+
+    #[derive(Table)]
+    #[table(name = "tokens")]
+    #[allow(dead_code)]
+    struct Tokens {
+        #[column(primary_key)]
+        id: Uuid,
+    }
+
+    #[test]
+    fn the_prelude_alone_supplies_the_marker_and_its_native_type() {
+        // `nil()` is `uuid::Uuid`'s own: what the prelude hands over is that
+        // type, not a marker standing beside it.
+        let id = Uuid::nil();
+        let (sql, params) = select((tokens::id,))
+            .from(tokens::Table)
+            .filter(tokens::id.eq(id))
+            .to_sql(Postgres);
+        assert_eq!(
+            sql,
+            "SELECT \"tokens\".\"id\" FROM \"tokens\" WHERE (\"tokens\".\"id\" = $1)"
+        );
+        assert_eq!(params, vec![qbrs::expr::Value::Uuid(id)]);
+    }
+}
+
+/// And the shape a schema file actually has: the prelude globbed beside
+/// `use uuid::Uuid`. The explicit import is what supplies the name here, so
+/// what this adds to the module above is that the marker positions
+/// (`#[derive(Table)]`, `with!{}`, `sql!{}`) take that import's `Uuid`.
+#[cfg(feature = "uuid")]
+mod uuid_marker {
+    use qbrs::prelude::*;
+    use uuid::Uuid;
+
+    #[derive(Table)]
+    #[table(name = "sessions")]
+    #[allow(dead_code)]
+    struct Sessions {
+        #[column(primary_key)]
+        id: Uuid,
+        replaces: Option<Uuid>,
+    }
+
+    qbrs::with! {
+        struct live { id: Uuid }
+    }
+
+    #[test]
+    fn an_imported_uuid_is_taken_by_every_marker_position() {
+        let id = Uuid::nil();
+        let (sql, params) = select((sessions::id,))
+            .from(sessions::Table)
+            .filter(sessions::id.eq(qbrs::sql!(Uuid, "?", id)))
+            .filter(sessions::replaces.is_null())
+            .to_sql(Postgres);
+        assert_eq!(
+            sql,
+            "SELECT \"sessions\".\"id\" FROM \"sessions\" \
+             WHERE (\"sessions\".\"id\" = ($1)) AND (\"sessions\".\"replaces\" IS NULL)"
+        );
+        assert_eq!(params, vec![qbrs::expr::Value::Uuid(id)]);
+
+        // The `with!{}` declaration names it too, and the body it is checked
+        // against is the column the derive mapped through the same marker.
+        let bound = select((sessions::id,)).from(sessions::Table);
+        let (with_sql, _) = select(live::id)
+            .from(qbrs::cte::with(live::Table, &bound))
+            .to_sql(Postgres);
+        assert!(
+            with_sql.starts_with("WITH \"live\" (\"id\") AS ("),
+            "{with_sql}"
+        );
+    }
+}
