@@ -78,6 +78,13 @@ together (`release.toml`: `shared-version = true`), tags, pushes, and publishes
 `publish = false` already, so cargo-release leaves them alone. Requires `cargo login` (or
 `CARGO_REGISTRY_TOKEN`) with publish rights on all four crates.
 
+Packaging a crate at a version crates.io already has is what makes `cargo package -p qbrs`
+fail with the last release's API rather than the tree's: a dependent's
+`qbrs-core = "<current>"` resolves to the published copy instead of the sibling being
+packaged beside it. That is why the dry run passes `--no-verify` and why the four are never
+packaged one at a time — the real run bumps first, so the new version exists nowhere but
+locally and they verify against each other.
+
 ## Workspace layout
 
 - `crates/core` (`qbrs-core`) — all the type-level machinery and SQL rendering. No I/O, no
