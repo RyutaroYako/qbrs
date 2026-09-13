@@ -230,9 +230,9 @@ pub trait RowQuery<Idx> {
 /// rows: what a builder can't do is then reported by `RowQuery`, which says
 /// so, rather than by the method not existing, which rustc answers with a
 /// list of unsatisfied bounds or, worse, by suggesting `Iterator`. Not a
-/// blanket impl, since `load`/`count`/`execute` are names
-/// other traits in a caller's scope have too. A builder added here needs
-/// its three empty impls, or its terminal goes back to reporting nothing.
+/// blanket impl, since `load`/`count`/`execute` are names other traits in a
+/// caller's scope have too. A builder added here needs its three empty
+/// impls, or its terminal goes back to reporting nothing.
 pub trait LoadExt {
     fn load<'e, Idx, E: sqlx::PgExecutor<'e>>(
         &self,

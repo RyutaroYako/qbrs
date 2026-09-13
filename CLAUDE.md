@@ -329,10 +329,10 @@ names to its module and `use crate::schema::*;` is all a call site needs.
 It also emits `const All` (a `select::All<Table>`) and the `select::AllColumns` impl behind
 it, so `select(users::All)` never restates the column list. That impl states only
 `type Columns`, the table's columns as a type-level list, since `select::ColumnList` walks
-that one list for both the row's fields and the rendered items; stating the two separately is
-what let a hand-written impl select a row that decodes transposed. It emits `type AllRow`
-too: what that selection decodes to with the table joined not-null, so a stored
-`Prepared`/`DynSelect` names a row instead of spelling a `RowCons` chain by hand. A
+that one list for both the row's fields and the rendered items; stating the two separately
+is what let a hand-written impl select a row that decodes transposed. The derive emits
+`type AllRow` too: what that selection decodes to with the table joined not-null, so a
+stored `Prepared`/`DynSelect` names a row instead of spelling a `RowCons` chain by hand. A
 selection list is a chain of `select::SelectionPart`s, each contributing `Fields<Tail>` in
 front of whatever the rest of the list contributes. That is what lets one tuple element
 carry a whole table, and it makes the 32-element limit count tables rather than columns.

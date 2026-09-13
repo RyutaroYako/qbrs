@@ -51,8 +51,8 @@ impl<T: AllColumns, Scope, Idx> private::Sealed<Scope, Idx> for All<T> where
 
 /// What a single un-tupled selection decodes to: a bare native value, or
 /// its `Option`. Sealed by construction, since the impls come from the same
-/// `sql_leaf_type!` that declares the types. Used to give a one-column set
-/// operation an `ORDER BY` with no position to state.
+/// `sql_leaf_type!` that declares the types. It is what gives a one-column
+/// set operation an `ORDER BY` with no position to state.
 pub trait SingleColumn {}
 
 /// One *field* of a resulting `Row`: the key its value is filed under, and
