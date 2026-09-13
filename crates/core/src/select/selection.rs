@@ -153,12 +153,18 @@ macro_rules! scalar_selection {
 }
 
 /// One element of a selection list. A column or an expression contributes
-/// one field; `All` contributes a whole table's worth. `Fields<Tail>` is
-/// what it puts in front of whatever the rest of the list contributes, so a
-/// list is assembled by nesting rather than by concatenating afterwards.
+/// one field; `All` contributes a whole table's worth, and a tuple whatever
+/// its own elements do. `Fields<Tail>` is what it puts in front of whatever
+/// the rest of the list contributes, so a list is assembled by nesting
+/// rather than by concatenating afterwards.
+///
+/// A tuple being one of these is what lets a selection be named once and
+/// used in several places: a `const` of columns goes into `select(..)` on
+/// its own and into a longer tuple beside an aggregate, with no macro to
+/// expand it at each call site.
 #[diagnostic::on_unimplemented(
     message = "`{Self}` can't be part of a selection list",
-    label = "a column, an aggregate, a window function, a `sql!` fragment, a labelled one of those, or `<table>::All` can be",
+    label = "a column, an aggregate, a window function, a `sql!` fragment, a labelled one of those, `<table>::All`, or a tuple of those can be",
     note = "an expression the builder inferred a type for (a comparison, an `is_null`, a `LIKE`) has to state what it decodes to with `.decodes_as::<..>()`, since that inference can contradict the join"
 )]
 pub trait SelectionPart<Scope, Idx>: private::Sealed<Scope, Idx> {
@@ -290,12 +296,15 @@ where
     }
 }
 
+/// The fields a list contributes, nested in front of whatever follows it.
+/// `$tail` is `RowNil` for a whole selection and the rest of the outer list
+/// for a nested one, which is the only difference between the two.
 macro_rules! row_chain {
-    ($n:ident $i:ident) => {
-        <$n as SelectionPart<Scope, $i>>::Fields<RowNil>
+    ($tail:ty; $n:ident $i:ident) => {
+        <$n as SelectionPart<Scope, $i>>::Fields<$tail>
     };
-    ($n:ident $i:ident, $($rest:tt)*) => {
-        <$n as SelectionPart<Scope, $i>>::Fields<row_chain!($($rest)*)>
+    ($tail:ty; $n:ident $i:ident, $($rest:tt)*) => {
+        <$n as SelectionPart<Scope, $i>>::Fields<row_chain!($tail; $($rest)*)>
     };
 }
 
@@ -312,12 +321,24 @@ macro_rules! tuple_selection {
         where
             $($n: SelectionPart<Scope, $i>,)+
         {
-                    type Output = Row<row_chain!($($n $i),+)>;
+                    type Output = Row<row_chain!(RowNil; $($n $i),+)>;
             fn items(&self) -> Vec<SelectItem> {
                 let ($($n,)+) = self;
                 let mut out = Vec::new();
                 $(SelectionPart::push_items($n, &mut out);)+
                 out
+            }
+        }
+
+        #[allow(non_snake_case)]
+        impl<Scope, $($n,)+ $($i,)+> SelectionPart<Scope, ($($i,)+)> for ($($n,)+)
+        where
+            $($n: SelectionPart<Scope, $i>,)+
+        {
+            type Fields<Tail> = row_chain!(Tail; $($n $i),+);
+            fn push_items(&self, out: &mut Vec<SelectItem>) {
+                let ($($n,)+) = self;
+                $(SelectionPart::push_items($n, out);)+
             }
         }
     };

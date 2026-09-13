@@ -148,7 +148,9 @@ Postgres array columns (`Vec<T>` as `TEXT[]`/`INTEGER[]`/`BIGINT[]`/`UUID[]`, wi
 `JSON`/`JSONB` columns (`serde_json::Value`),
 `IN (SELECT ..)`/`NOT IN (SELECT ..)`, transactions, streaming
 (`.stream(..)`), the `sql!{}` escape hatch, and typed prepared statements
-(`prepare!{}`).
+(`prepare!{}`). A selection is named once and reused: a tuple of columns is
+one element of a longer list, the way `<table>::All` is, so a `const` of the
+columns two endpoints share goes into both.
 
 A schema is a `#[derive(Table)]` struct; `use qbrs::prelude::*;` and
 `use qbrs_sqlx::prelude::*;` cover a query. Everything above has a runnable,
@@ -264,11 +266,13 @@ Design constraints worth knowing before adopting:
   An expression whose type the builder inferred (a comparison, an `is_null`,
   a `LIKE`) says what it decodes to once, with `.decodes_as::<Bool>()`. A
   `sql!{}` fragment states its type in the macro.
-- **A selection list holds at most 32 elements** (`<table>::All` counts as
-  one, whatever the column count). Naming a row type in a signature takes a
-  type alias long enough to trip `clippy::type_complexity`; inference covers
-  everything that stays inside a function, and `<table>::AllRow` covers a
-  stored `select(All)`.
+- **A selection list holds at most 32 elements.** `<table>::All` counts as
+  one whatever the column count, and so does a nested tuple, so a wider row
+  is reached by naming part of the list. Separately, `into_tuple` stops at
+  32 *fields*: past that a row is read by key, which is how it is read
+  anyway. Naming a row type in a signature takes a type alias long enough to
+  trip `clippy::type_complexity`; inference covers everything that stays
+  inside a function, and `<table>::AllRow` covers a stored `select(All)`.
 - **One `label!` per scope.** It declares a `label` module, and a scope holds
   one. List every name that scope needs in the one invocation.
 - **The derives expand to `::qbrs::` paths**, so depend on the `qbrs` facade

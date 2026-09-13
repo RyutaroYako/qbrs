@@ -70,3 +70,4 @@ DATABASE_URL=postgres://postgres:postgres@localhost:5432/qbrs_test \
 | [`27_stream`](examples/27_stream.rs) | `.stream(..)`: the rows one at a time for an export too large to collect, holding one batch rather than the whole result |
 | [`28_json`](examples/28_json.rs) | a `JSON`/`JSONB` column as `serde_json::Value`, carried whole, with `sql!{}` for the operators that look inside one |
 | [`29_data_modifying_cte`](examples/29_data_modifying_cte.rs) | `WITH x AS (UPDATE .. RETURNING ..) SELECT ..`: a write and the read it feeds in one round-trip, `LEFT JOIN` included, gated to Postgres |
+| [`30_reusable_selection`](examples/30_reusable_selection.rs) | Naming a selection once: a `const` tuple of columns, used bare, joined to another table, and beside an aggregate |
