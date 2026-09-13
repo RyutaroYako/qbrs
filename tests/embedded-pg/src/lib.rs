@@ -94,11 +94,12 @@ async fn template() -> PathBuf {
 }
 
 /// Renaming onto a directory that already holds a template fails rather than
-/// replacing it, so the first run to finish wins and every other discards
-/// its own. There is no lock, and no moment at which the shared path holds
-/// half a template. What can hold that path without being one is a directory
-/// a run left behind when it was killed mid-`initdb`, and that is cleared
-/// only once the rename has already failed on it.
+/// replacing it, so the first run to finish wins and every other discards its
+/// own staged copy. There is no lock, and no moment at which the shared path
+/// holds half a template: `initdb` runs in `staged`, so a run killed during
+/// it leaves that behind and never the shared path. What the `PG_VERSION`
+/// branch clears is a shared path the rename could not replace and no copy
+/// could use, and it is reached only once the rename has already failed.
 fn publish(staged: &Path, template: &Path) {
     if std::fs::rename(staged, template).is_ok() {
         return;
