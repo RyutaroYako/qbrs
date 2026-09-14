@@ -19,10 +19,11 @@ on:
         required: false
         default: ""
 
-# Publishing cannot be undone, so a second run never overlaps a first. One
-# group for every tag, since two releases racing each other's index waits is
-# the case a per-tag group would miss. Not `cancel-in-progress`: a run killed
-# between two uploads is the one state this is here to avoid.
+# Publishing cannot be undone, so one release runs at a time whatever the
+# tag. Not `cancel-in-progress`: a run killed between two uploads is the one
+# state this is here to avoid. A run queued while another is already waiting
+# cancels the waiting one, which has published nothing, so re-dispatch its
+# tag.
 concurrency:
   group: release
   cancel-in-progress: false
@@ -59,14 +60,15 @@ jobs:
 
       # The tag names the version; the manifest is what gets published. A
       # mistyped tag would otherwise publish something other than what it
-      # says, and crates.io keeps whatever it is handed.
-      - name: Check the tag names the version in the tree
-        if: github.event_name == 'push'
+      # says, and crates.io keeps whatever it is handed. This is also what
+      # holds a recovery run to the tag, since any other ref fails here.
+      - name: Check the ref names the version in the tree
         run: |
           tree="$(cargo metadata --no-deps --format-version 1 \
             | jq -r '.packages[] | select(.name == "qbrs") | .version')"
           if [ "v$tree" != "$GITHUB_REF_NAME" ]; then
-            echo "error: tag $GITHUB_REF_NAME does not name the workspace version v$tree." >&2
+            echo "error: ref $GITHUB_REF_NAME does not name the workspace version v$tree." >&2
+            echo "       Run this from the version tag." >&2
             exit 1
           fi
 
@@ -85,8 +87,10 @@ jobs:
           PACKAGES: ${{ inputs.packages }}
         run: |
           if [ -n "$PACKAGES" ]; then
-            read -r -a packages <<<"$PACKAGES"
-            for package in "${packages[@]}"; do
+            # The input is a list of names, so it is split into words and not
+            # matched against filenames.
+            set -f
+            for package in $PACKAGES; do
               cargo publish -p "$package" --locked
             done
           else
@@ -96,7 +100,8 @@ jobs:
       # After the upload, so a release never points at a version crates.io
       # does not have.
       - name: Create the GitHub release
-        if: github.event_name == 'push'
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create "$GITHUB_REF_NAME" --verify-tag --generate-notes
+        run: |
+          gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1 \
+            || gh release create "$GITHUB_REF_NAME" --verify-tag --generate-notes

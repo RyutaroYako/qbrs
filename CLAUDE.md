@@ -74,7 +74,7 @@ the child process outlives the test binary.
 ## Releasing
 
 `./scripts/release.sh <patch|minor|major|<exact-version>>`, from a clean `main` in sync with
-origin. It runs the same fmt/clippy/test gate CI does, shows a `cargo-release` dry run, and
+origin. It runs the fmt/clippy/test gate, shows a `cargo-release` dry run, and
 asks for one confirmation before the real run. That run bumps all four publishable crates
 together (`release.toml`: `shared-version = true`), commits, tags and pushes.
 `tests/compile-bench`, `tests/dialect-exec`, `tests/embedded-pg`, and `examples` carry
@@ -93,7 +93,13 @@ publishing until every registration is updated.
 and packages all four before uploading any. So a failure almost always lands before anything
 is published. What it cannot do is resume, since a version already on crates.io is an error
 rather than a skip. Where an upload dies partway, re-run the workflow from the tag with its
-`packages` input set to the ones that did not land, in dependency order.
+`packages` input set to the ones that did not land, in dependency order. The workflow
+rejects any other ref. Packaging one crate works there, because the sibling on crates.io is
+the version being released rather than the one before it.
+
+One release runs at a time. A run queued while another is already waiting cancels the
+waiting one, so a tag whose run shows cancelled has published nothing and needs
+re-dispatching.
 
 Packaging a crate at a version crates.io already has is what makes `cargo package -p qbrs`
 fail with the last release's API rather than the tree's: a dependent's
