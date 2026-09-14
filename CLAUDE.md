@@ -79,15 +79,16 @@ rather than nextest. It shows a `cargo-release` dry run and asks for one confirm
 before the real run. That run bumps all four publishable crates together (`release.toml`:
 `shared-version = true`), commits, tags and pushes. `tests/compile-bench`,
 `tests/dialect-exec`, `tests/embedded-pg`, and `examples` inherit the workspace version, so
-they are bumped too. They carry `publish = false`, so cargo-release never publishes them.
+they are bumped too. They carry `publish = false`, so CI's `cargo publish --workspace` never
+uploads them.
 
 It stops at the tag. `.github/workflows/release.yaml` reacts to a `v*` tag, re-runs CI's
 gate from `ci.yaml` itself (`workflow_call`, so the two cannot drift), checks that the ref
-is the tag naming the version the manifest carries, and publishes. It authenticates by OIDC through
-crates.io Trusted Publishing, so no crates.io credential exists on a laptop or in a repo
-secret; the token it fetches lives for the job. Trusted Publishing is registered per crate,
-so all four carry their own registration naming this repository and `release.yaml`. One
-missing registration is a publish that dies partway. Renaming that workflow file breaks
+is the tag naming the version the manifest carries, and publishes. It authenticates by OIDC
+through crates.io Trusted Publishing, so no crates.io credential exists on a laptop or in a
+repo secret; the token it fetches lives for the job. Trusted Publishing is registered per
+crate, so all four carry their own registration naming this repository and `release.yaml`.
+One missing registration is a publish that dies partway. Renaming that workflow file breaks
 publishing until every registration is updated.
 
 `cargo publish --workspace` orders the four by dependency, waits on the index between them,
@@ -97,10 +98,9 @@ rather than a skip. Where an upload dies partway, dispatch the workflow against 
 (`gh workflow run release.yaml --ref v<version> -f packages="..."`, or the Tags tab of the
 Actions "Use workflow from" dropdown) with `packages` set to the ones that did not land, in
 dependency order. Re-running the failed run instead replays the push, which carries no
-input. The workflow rejects any ref but the version tag, a branch named like one
-included. Packaging one crate
-works there, because the sibling on crates.io is the version being released rather than the
-one before it.
+input. The workflow rejects any ref but the version tag. A branch named like a tag is
+rejected too. Packaging one crate works there, because the sibling on crates.io is the
+version being released rather than the one before it.
 
 Where only the release creation failed, there is no door back: both recovery paths run the
 publish step first, and it errors on a version crates.io already has. Create the release by
