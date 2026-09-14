@@ -74,11 +74,12 @@ the child process outlives the test binary.
 ## Releasing
 
 `./scripts/release.sh <patch|minor|major|<exact-version>>`, from a clean `main` in sync with
-origin. It runs the same fmt/clippy/test gate CI does, shows a `cargo-release` dry run, and
-asks for one confirmation before the real run. That run bumps all four publishable crates
-together (`release.toml`: `shared-version = true`), commits, tags and pushes.
-`tests/compile-bench`, `tests/dialect-exec`, `tests/embedded-pg`, and `examples` carry
-`publish = false` already, so cargo-release leaves them alone.
+origin. It runs CI's fmt and clippy gates, then the whole test suite through `cargo test`
+rather than nextest. It shows a `cargo-release` dry run and asks for one confirmation
+before the real run. That run bumps all four publishable crates together (`release.toml`:
+`shared-version = true`), commits, tags and pushes. `tests/compile-bench`,
+`tests/dialect-exec`, `tests/embedded-pg`, and `examples` inherit the workspace version, so
+they are bumped too. They carry `publish = false`, so cargo-release never publishes them.
 
 It stops at the tag. `.github/workflows/release.yaml` reacts to a `v*` tag, re-runs CI's
 gate from `ci.yaml` itself (`workflow_call`, so the two cannot drift), checks that the ref
@@ -99,6 +100,10 @@ dependency order. Re-running the failed run instead replays the push, which carr
 input. The workflow rejects any ref that does not name the version. Packaging one crate
 works there, because the sibling on crates.io is the version being released rather than the
 one before it.
+
+Where only the release creation failed, there is no door back: both recovery paths run the
+publish step first, and it errors on a version crates.io already has. Create the release by
+hand with `gh release create v<version> --verify-tag --generate-notes`.
 
 One release runs at a time. A run cancelled before it started has published nothing, so
 re-dispatch its tag. A run cancelled during the publish step may have published some of the

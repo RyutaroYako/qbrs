@@ -46,7 +46,7 @@ if [ "$(git rev-parse HEAD)" != "$(git rev-parse origin/main)" ]; then
     exit 1
 fi
 
-echo "==> Running the same checks CI gates on"
+echo "==> Running the fmt, clippy and test gates"
 cargo fmt --all -- --check
 cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
 cargo test --workspace --locked --all-features
@@ -65,7 +65,7 @@ case "$reply" in
         ;;
 esac
 
-cargo release "$LEVEL" --execute
+cargo release "$LEVEL" --execute --no-confirm
 
 echo
 echo "==> Tag pushed. crates.io publishing runs from .github/workflows/release.yaml:"

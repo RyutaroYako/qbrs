@@ -7,8 +7,9 @@ name: Release
 # packages and verifies all four crates before uploading any, so a failure
 # almost always lands before anything is published. What it cannot do is
 # resume: a version already on crates.io is an error rather than a skip. So
-# where an upload dies partway, re-run this from the tag with `packages` set
-# to the ones that did not land, in dependency order.
+# where an upload dies partway, dispatch this against the tag with `packages`
+# set to the ones that did not land, in dependency order. Re-running the
+# failed run replays the push, which carries no input.
 on:
   push:
     tags: ["v*"]
@@ -22,7 +23,7 @@ on:
 # Publishing cannot be undone, so one release runs at a time whatever the
 # tag. Not `cancel-in-progress`: a run killed between two uploads is the one
 # state this is here to avoid. A run queued while another is already waiting
-# is cancelled. It has published nothing, so re-dispatch its tag.
+# cancels that waiting run. It has published nothing, so re-dispatch its tag.
 concurrency:
   group: release
   cancel-in-progress: false
@@ -99,8 +100,7 @@ jobs:
           fi
 
       # After the upload, so a release never points at a version crates.io
-      # does not have. A recovery run finds the release already there, which
-      # is the one failure this tolerates.
+      # does not have. Tolerates the release already existing.
       - name: Create the GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
