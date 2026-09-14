@@ -1,8 +1,8 @@
 # Workspace config for `cargo-release` (https://github.com/crate-ci/cargo-release).
-# Two callers read it: `scripts/release.sh` and the `cut` job in
-# `.github/workflows/release.yaml`. Both run the gate first, so neither
-# touches a version number before the tree is green. Nothing else should call
-# `cargo release` directly.
+# Two callers run `cargo release` against it: `scripts/release.sh` and the
+# `cut` job in `.github/workflows/release.yaml`. Both run the gate first, so
+# neither touches a version number before the tree is green. Nothing else
+# should call `cargo release` directly.
 #
 # `tests/compile-bench`, `tests/dialect-exec`, `tests/embedded-pg`, and
 # `examples` all carry `publish = false` in their own Cargo.toml. Their

@@ -74,16 +74,21 @@ the child process outlives the test binary.
 ## Releasing
 
 A release is a `v*` tag, and `.github/workflows/release.yaml` owns both halves of making
-one. Dispatched from `main` with a `bump` of `patch`, `minor`, `major` or an exact version,
-its `cut` job runs CI's gate, bumps all four publishable crates together (`release.toml`:
-`shared-version = true`), commits, tags and pushes. Reached by that tag, its `publish` job
-runs the gate again and uploads. `tests/compile-bench`, `tests/dialect-exec`,
-`tests/embedded-pg`, and `examples` inherit the workspace version, so they are bumped too.
-They carry `publish = false`, so `cargo publish --workspace` never uploads them.
+one. Its `gate` job runs `ci.yaml` itself (`workflow_call`, so the two cannot drift), and
+both halves wait on it. Dispatched from `main` with a `bump` of `patch`, `minor`, `major` or
+an exact version, the `cut` job bumps all four publishable crates together (`release.toml`:
+`shared-version = true`), commits, tags and pushes. Reached by that tag, the `publish` job
+uploads. `tests/compile-bench`, `tests/dialect-exec`, `tests/embedded-pg`, and `examples`
+inherit the workspace version, so they are bumped too. They carry `publish = false`, so
+`cargo publish --workspace` never uploads them.
+
+Each half refuses the other's ref. A cut is rejected from anything but the default branch,
+and a publish from anything but the tag naming the version the manifest carries. A branch
+named like a tag is rejected too.
 
 A tag pushed with `github.token` does not fire the `push` trigger, which is GitHub refusing
 to let a workflow start another. So `cut` starts the publish half by name, through
-`workflow_dispatch`, the one event exempt from that rule. A run started this way is a
+`workflow_dispatch`, which GitHub exempts from that rule. A run started this way is a
 second run against the tag, not a continuation, so it re-runs the gate.
 
 `./scripts/release.sh <patch|minor|major|<exact-version>>` cuts the same tag from a laptop,
@@ -92,9 +97,9 @@ test suite through `cargo test` rather than nextest. It shows a `cargo-release` 
 asks for one confirmation before the real run. It stops at the tag, and the tag push fires
 `publish` on its own, since a person's credential is not `github.token`.
 
-The publish half checks that the ref is the tag naming the version the manifest carries. It
-authenticates by OIDC through crates.io Trusted Publishing, so no crates.io credential
-exists on a laptop or in a repo secret; the token it fetches lives for the job. Trusted
+The publish half authenticates by OIDC through crates.io Trusted Publishing, so no
+crates.io credential exists on a laptop or in a repo secret; the token it fetches lives for
+the job. Trusted
 Publishing is registered per crate, so all four carry their own registration naming this
 repository and `release.yaml`. One missing registration is a publish that dies partway.
 Renaming that workflow file breaks publishing until every registration is updated.
@@ -115,9 +120,10 @@ publish step first, and it errors on a version crates.io already has. Create the
 hand with `gh release create v<version> --verify-tag --generate-notes`.
 
 One release runs at a time, and the two halves share that one slot, so a cut queues its own
-publish behind itself. A run cancelled before it started has published nothing, so
-re-dispatch its tag. A run cancelled during the publish step may have published some of the
-four, so read crates.io before re-dispatching.
+publish behind itself. Waiting runs queue in order (`queue: max`) rather than replacing each
+other, so a second cut dispatched meanwhile does not drop that publish. A run cancelled
+during the publish step may have published some of the four, so read crates.io before
+re-dispatching.
 
 Packaging a crate at a version crates.io already has is what makes `cargo package -p qbrs`
 fail with the last release's API rather than the tree's: a dependent's

@@ -27,11 +27,12 @@ on:
 
 # Publishing cannot be undone, so one release runs at a time whatever the
 # tag. Not `cancel-in-progress`: a run killed between two uploads is the one
-# state this is here to avoid. A run queued while another is already waiting
-# cancels that waiting run. It has published nothing, so re-dispatch its tag.
+# state this is here to avoid. `queue: max` because the default drops all but
+# the newest waiting run, and a cut queues its own publish behind itself.
 concurrency:
   group: release
   cancel-in-progress: false
+  queue: max
 
 permissions:
   contents: read
@@ -43,10 +44,31 @@ jobs:
   gate:
     uses: ./.github/workflows/ci.yaml
 
+  # Its own job, with no `needs`, so a dispatch that cannot cut a release says
+  # so in seconds rather than after the gate.
+  cut_inputs:
+    if: inputs.bump != ''
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Check the dispatch can cut a release
+        env:
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          PACKAGES: ${{ inputs.packages }}
+        run: |
+          if [ "$GITHUB_REF_TYPE" != "branch" ] || [ "$GITHUB_REF_NAME" != "$DEFAULT_BRANCH" ]; then
+            echo "error: a release is cut from $DEFAULT_BRANCH, not from $GITHUB_REF_TYPE $GITHUB_REF_NAME." >&2
+            exit 1
+          fi
+          if [ -n "$PACKAGES" ]; then
+            echo "error: packages belongs to the publish half. Leave it empty to cut a release." >&2
+            exit 1
+          fi
+
   # Bump, commit, tag, push. The publish half then runs against that tag.
   cut:
     if: inputs.bump != ''
-    needs: gate
+    needs: [gate, cut_inputs]
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:
@@ -55,21 +77,6 @@ jobs:
       # Starting the publish run below.
       actions: write
     steps:
-      # This job pushes, so it keeps the credential the publish job drops.
-      - name: Checkout
-        uses: actions/checkout@v7.0.1
-        with:
-          fetch-depth: 0
-
-      - name: Refuse a ref that is not the default branch
-        env:
-          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
-        run: |
-          if [ "$GITHUB_REF_TYPE" != "branch" ] || [ "$GITHUB_REF_NAME" != "$DEFAULT_BRANCH" ]; then
-            echo "error: a release is cut from $DEFAULT_BRANCH, not from $GITHUB_REF_TYPE $GITHUB_REF_NAME." >&2
-            exit 1
-          fi
-
       - name: Install Rust
         uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # master (2026-08-05)
         with:
@@ -79,6 +86,14 @@ jobs:
         uses: taiki-e/install-action@3f74d7c16a4242f1c95561e98edc25d36adb4375 # v2.87.12
         with:
           tool: cargo-release
+
+      # Last, and credentialed: this job pushes, so the write token has to
+      # reach the git config, and everything that runs before it is a third
+      # party.
+      - name: Checkout
+        uses: actions/checkout@v7.0.1
+        with:
+          fetch-depth: 0
 
       # `release.toml` decides what a release is, here as on a laptop: which
       # crates move, the tag's name, and that nothing is published from the
@@ -92,8 +107,8 @@ jobs:
           cargo release "$BUMP" --execute --no-confirm
 
       # A tag pushed with `github.token` does not fire the `push` trigger.
-      # `workflow_dispatch` is the one event GitHub exempts from that, so the
-      # publish half is started by name.
+      # `workflow_dispatch` is exempt from that, so the publish half is
+      # started by name.
       - name: Start the publish run on the new tag
         env:
           GH_TOKEN: ${{ github.token }}
