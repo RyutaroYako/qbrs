@@ -1,22 +1,27 @@
 name: Release
 
-# A tag is the release. `scripts/release.sh` cuts one from a green `main`
-# after bumping the version, and this reacts to it.
+# A tag is the release, and this owns both halves of making one. Dispatched
+# from the default branch with `bump`, it cuts the tag. Reached by that tag,
+# it publishes. `scripts/release.sh` cuts the same tag from a laptop.
 #
-# `workflow_dispatch` is the recovery door. `cargo publish --workspace`
-# packages and verifies all four crates before uploading any, so a failure
-# almost always lands before anything is published. What it cannot do is
-# resume: a version already on crates.io is an error rather than a skip. So
-# where an upload dies partway, dispatch this against the tag with `packages`
-# set to the ones that did not land, in dependency order. Re-running the
-# failed run replays the push, which carries no input.
+# Dispatched against a tag with `packages`, it republishes just those crates.
+# That is the recovery door. `cargo publish --workspace` packages and verifies
+# all four crates before uploading any, so a failure almost always lands
+# before anything is published. What it cannot do is resume: a version
+# already on crates.io is an error rather than a skip. Re-running the failed
+# run replays the event it was started by, which for a tag push carries no
+# input.
 on:
   push:
     tags: ["v*"]
   workflow_dispatch:
     inputs:
+      bump:
+        description: "Cut a release from the default branch: patch, minor, major, or an exact version. Empty publishes the tag this runs from."
+        required: false
+        default: ""
       packages:
-        description: "Crates to publish, space separated, in dependency order. Empty publishes the whole workspace."
+        description: "Recovery only. Crates to publish, space separated, in dependency order. Empty publishes the whole workspace."
         required: false
         default: ""
 
@@ -38,7 +43,67 @@ jobs:
   gate:
     uses: ./.github/workflows/ci.yaml
 
+  # Bump, commit, tag, push. The publish half then runs against that tag.
+  cut:
+    if: inputs.bump != ''
+    needs: gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      # The release commit and its tag.
+      contents: write
+      # Starting the publish run below.
+      actions: write
+    steps:
+      # This job pushes, so it keeps the credential the publish job drops.
+      - name: Checkout
+        uses: actions/checkout@v7.0.1
+        with:
+          fetch-depth: 0
+
+      - name: Refuse a ref that is not the default branch
+        env:
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: |
+          if [ "$GITHUB_REF_TYPE" != "branch" ] || [ "$GITHUB_REF_NAME" != "$DEFAULT_BRANCH" ]; then
+            echo "error: a release is cut from $DEFAULT_BRANCH, not from $GITHUB_REF_TYPE $GITHUB_REF_NAME." >&2
+            exit 1
+          fi
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # master (2026-08-05)
+        with:
+          toolchain: stable
+
+      - name: Install cargo-release
+        uses: taiki-e/install-action@3f74d7c16a4242f1c95561e98edc25d36adb4375 # v2.87.12
+        with:
+          tool: cargo-release
+
+      # `release.toml` decides what a release is, here as on a laptop: which
+      # crates move, the tag's name, and that nothing is published from the
+      # machine that cuts it.
+      - name: Cut the release
+        env:
+          BUMP: ${{ inputs.bump }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          cargo release "$BUMP" --execute --no-confirm
+
+      # A tag pushed with `github.token` does not fire the `push` trigger.
+      # `workflow_dispatch` is the one event GitHub exempts from that, so the
+      # publish half is started by name.
+      - name: Start the publish run on the new tag
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          version="$(cargo metadata --no-deps --format-version 1 \
+            | jq -r '.packages[] | select(.name == "qbrs") | .version')"
+          gh workflow run release.yaml --ref "v$version"
+
   publish:
+    if: inputs.bump == ''
     needs: gate
     runs-on: ubuntu-latest
     timeout-minutes: 30

@@ -5,7 +5,8 @@
 #
 # It does not publish. `.github/workflows/release.yaml` reacts to the tag and
 # does that, authenticating to crates.io by OIDC, so no crates.io credential
-# has to exist on a laptop.
+# has to exist on a laptop. That workflow can cut the tag too, dispatched from
+# `main` with a `bump`, which is the same release without a laptop.
 #
 # Prerequisite: on `main`, clean working tree, up to date with origin/main.
 #
