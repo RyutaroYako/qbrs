@@ -26,7 +26,7 @@ cd "$(git rev-parse --show-toplevel)"
 
 if ! command -v cargo-release >/dev/null 2>&1; then
     echo "==> cargo-release not found; installing with 'cargo install cargo-release --locked'"
-    cargo install cargo-release --locked
+    cargo install cargo-release --locked --version 1.1.5
 fi
 
 BRANCH="$(git branch --show-current)"

@@ -100,12 +100,11 @@ test suite through `cargo test` rather than nextest. It shows a `cargo-release` 
 asks for one confirmation before the real run. It stops at the tag, and the tag push fires
 `publish` on its own, since a person's credential is not `github.token`.
 
-The publish half authenticates by OIDC through crates.io Trusted Publishing, so no
-crates.io credential exists on a laptop or in a repo secret; the token it fetches lives for
-the job. Trusted Publishing is registered per crate, so all four carry their own
-registration naming this repository and `release.yaml`. One missing registration is a
-publish that dies partway. Renaming that workflow file breaks publishing until every
-registration is updated.
+The publish half authenticates by OIDC through crates.io Trusted Publishing, so no crates.io
+credential exists on a laptop or in a repo secret; the token it fetches lives for the job.
+Trusted Publishing is registered per crate, so all four carry their own registration naming
+this repository and `release.yaml`. One missing registration is a publish that dies partway.
+Renaming that workflow file breaks publishing until every registration is updated.
 
 `cargo publish --workspace` orders the four by dependency, waits on the index between them,
 and packages all four before uploading any. So a failure almost always lands before anything
@@ -114,9 +113,9 @@ rather than a skip. Where an upload dies partway, dispatch the workflow against 
 (`gh workflow run release.yaml --ref v<version> -f packages="..."`, or the Tags tab of the
 Actions "Use workflow from" dropdown) with `packages` set to the ones that did not land, in
 dependency order. Leave `bump` empty there, since it is what tells the two halves apart.
-Re-running the failed run instead replays the event that started it, which for a tag push
-carries no input. Packaging one crate works on that path, because the sibling on crates.io
-is the version being released rather than the one before it.
+Re-running the failed run instead replays the inputs it was started with, which are not the
+ones recovery needs. Packaging one crate works on that path, because the sibling on
+crates.io is the version being released rather than the one before it.
 
 Where only the release creation failed, there is no door back: both recovery paths run the
 publish step first, and it errors on a version crates.io already has. Create the release by

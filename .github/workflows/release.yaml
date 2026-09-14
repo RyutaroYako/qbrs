@@ -9,8 +9,8 @@ name: Release
 # all four crates before uploading any, so a failure almost always lands
 # before anything is published. What it cannot do is resume: a version
 # already on crates.io is an error rather than a skip. Re-running the failed
-# run replays the event it was started by, which for a tag push carries no
-# input.
+# run replays the inputs it was started with, which are not the ones recovery
+# needs.
 on:
   push:
     tags: ["v*"]
@@ -99,8 +99,9 @@ jobs:
         with:
           toolchain: stable
 
-      # Built here rather than fetched by an action, so the tool that decides
-      # what a release is carries a version this file pins.
+      # Pinned, since it is the tool that decides what a release is. Built
+      # here, so the one job holding a write token runs no third party but
+      # the toolchain.
       - name: Install cargo-release
         run: cargo install cargo-release --locked --version 1.1.5
 
@@ -133,8 +134,8 @@ jobs:
             | jq -r '.packages[] | select(.name == "qbrs") | .version')"
           # The tag was pushed moments ago and the API can still 404 on it.
           for attempt in 1 2 3 4 5; do
+            [ "$attempt" -eq 1 ] || sleep "$((attempt * 5))"
             gh workflow run release.yaml --ref "v$version" && exit 0
-            sleep "$((attempt * 5))"
           done
           echo "error: could not start the publish run on v$version." >&2
           exit 1
@@ -168,8 +169,8 @@ jobs:
 
       # The tag names the version; the manifest is what gets published. A
       # mistyped tag would otherwise publish something other than what it
-      # says, and crates.io keeps whatever it is handed. That the ref is a tag
-      # at all is `preflight`'s.
+      # says, and crates.io keeps whatever it is handed. `preflight` has
+      # already checked that the ref is a tag.
       - name: Check the tag names the version in the tree
         run: |
           tree="$(cargo metadata --no-deps --format-version 1 \
