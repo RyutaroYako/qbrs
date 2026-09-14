@@ -22,8 +22,7 @@ on:
 # Publishing cannot be undone, so one release runs at a time whatever the
 # tag. Not `cancel-in-progress`: a run killed between two uploads is the one
 # state this is here to avoid. A run queued while another is already waiting
-# cancels the waiting one, which has published nothing, so re-dispatch its
-# tag.
+# is cancelled. It has published nothing, so re-dispatch its tag.
 concurrency:
   group: release
   cancel-in-progress: false
@@ -86,11 +85,13 @@ jobs:
           # input that reaches a shell as text is a shell it can rewrite.
           PACKAGES: ${{ inputs.packages }}
         run: |
-          if [ -n "$PACKAGES" ]; then
-            # The input is a list of names, so it is split into words and not
-            # matched against filenames.
-            set -f
-            for package in $PACKAGES; do
+          # The input is a list of names, so it is split into words. Globbing
+          # is off, so a name is never matched against a filename.
+          set -f
+          set -- $PACKAGES
+          set +f
+          if [ "$#" -gt 0 ]; then
+            for package in "$@"; do
               cargo publish -p "$package" --locked
             done
           else
@@ -98,10 +99,11 @@ jobs:
           fi
 
       # After the upload, so a release never points at a version crates.io
-      # does not have.
+      # does not have. A recovery run finds the release already there, which
+      # is the one failure this tolerates.
       - name: Create the GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1 \
-            || gh release create "$GITHUB_REF_NAME" --verify-tag --generate-notes
+          gh release create "$GITHUB_REF_NAME" --verify-tag --generate-notes \
+            || gh release view "$GITHUB_REF_NAME" >/dev/null
