@@ -82,9 +82,12 @@ uploads. `tests/compile-bench`, `tests/dialect-exec`, `tests/embedded-pg`, and `
 inherit the workspace version, so they are bumped too. They carry `publish = false`, so
 `cargo publish --workspace` never uploads them.
 
-Each half refuses the other's ref. A cut is rejected from anything but the default branch,
-and a publish from anything but the tag naming the version the manifest carries. A branch
-named like a tag is rejected too.
+A `preflight` job refuses everything that can be refused without reading the tree: a cut
+from anything but the default branch, a publish from anything but a tag, a `bump` that is
+not a level or a version, and a `packages` value on a cut. `publish` then checks the one
+thing that needs the tree, that the tag names the version the manifest carries. The gate
+runs its course whatever `preflight` says, so a refused dispatch holds the release slot
+until it finishes.
 
 A tag pushed with `github.token` does not fire the `push` trigger, which is GitHub refusing
 to let a workflow start another. So `cut` starts the publish half by name, through
@@ -99,10 +102,10 @@ asks for one confirmation before the real run. It stops at the tag, and the tag 
 
 The publish half authenticates by OIDC through crates.io Trusted Publishing, so no
 crates.io credential exists on a laptop or in a repo secret; the token it fetches lives for
-the job. Trusted
-Publishing is registered per crate, so all four carry their own registration naming this
-repository and `release.yaml`. One missing registration is a publish that dies partway.
-Renaming that workflow file breaks publishing until every registration is updated.
+the job. Trusted Publishing is registered per crate, so all four carry their own
+registration naming this repository and `release.yaml`. One missing registration is a
+publish that dies partway. Renaming that workflow file breaks publishing until every
+registration is updated.
 
 `cargo publish --workspace` orders the four by dependency, waits on the index between them,
 and packages all four before uploading any. So a failure almost always lands before anything
@@ -122,8 +125,8 @@ hand with `gh release create v<version> --verify-tag --generate-notes`.
 One release runs at a time, and the two halves share that one slot, so a cut queues its own
 publish behind itself. Waiting runs queue in order (`queue: max`) rather than replacing each
 other, so a second cut dispatched meanwhile does not drop that publish. A run cancelled
-during the publish step may have published some of the four, so read crates.io before
-re-dispatching.
+before it started has published nothing, so re-dispatch its tag. A run cancelled during the
+publish step may have published some of the four, so read crates.io before re-dispatching.
 
 Packaging a crate at a version crates.io already has is what makes `cargo package -p qbrs`
 fail with the last release's API rather than the tree's: a dependent's
