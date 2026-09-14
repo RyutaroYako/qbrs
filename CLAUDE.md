@@ -84,9 +84,10 @@ It stops at the tag. `.github/workflows/release.yaml` reacts to a `v*` tag, re-r
 gate from `ci.yaml` itself (`workflow_call`, so the two cannot drift), checks that the tag
 names the version the manifest carries, and publishes. It authenticates by OIDC through
 crates.io Trusted Publishing, so no crates.io credential exists on a laptop or in a repo
-secret; the token it fetches lives for the job. Registration on the crates.io side names
-this repository and `release.yaml`, so renaming that file breaks publishing until the
-registration is updated.
+secret; the token it fetches lives for the job. Trusted Publishing is registered per crate,
+so all four carry their own registration naming this repository and `release.yaml`. One
+missing registration is a publish that dies partway. Renaming that workflow file breaks
+publishing until every registration is updated.
 
 `cargo publish --workspace` orders the four by dependency, waits on the index between them,
 and packages all four before uploading any. So a failure almost always lands before anything
@@ -98,8 +99,9 @@ Packaging a crate at a version crates.io already has is what makes `cargo packag
 fail with the last release's API rather than the tree's: a dependent's
 `qbrs-core = "<current>"` resolves to the published copy instead of the sibling being
 packaged beside it. It never comes up in a release, because the version is bumped before
-anything is packaged and the four are packaged together. It is why packaging one crate on
-its own, to check something by hand between releases, cannot succeed.
+anything is packaged and the four are packaged together. It is why packaging `qbrs` or
+`qbrs-sqlx` on its own, to check something by hand between releases, cannot succeed.
+`qbrs-core` and `qbrs-macros` depend on no sibling, so those two package alone fine.
 
 ## Workspace layout
 

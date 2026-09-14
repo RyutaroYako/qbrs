@@ -1,8 +1,7 @@
 name: Release
 
 # A tag is the release. `scripts/release.sh` cuts one from a green `main`
-# after bumping the version, and this reacts to it: nothing here decides what
-# to publish, only whether the thing already decided is fit to go.
+# after bumping the version, and this reacts to it.
 #
 # `workflow_dispatch` is the recovery door. `cargo publish --workspace`
 # packages and verifies all four crates before uploading any, so a failure
@@ -20,11 +19,12 @@ on:
         required: false
         default: ""
 
-# Publishing cannot be undone, so a second run never overlaps a first. Not
-# `cancel-in-progress`: a run killed between two uploads is the one state
-# this is here to avoid.
+# Publishing cannot be undone, so a second run never overlaps a first. One
+# group for every tag, since two releases racing each other's index waits is
+# the case a per-tag group would miss. Not `cancel-in-progress`: a run killed
+# between two uploads is the one state this is here to avoid.
 concurrency:
-  group: release-${{ github.ref }}
+  group: release
   cancel-in-progress: false
 
 permissions:
@@ -85,9 +85,8 @@ jobs:
           PACKAGES: ${{ inputs.packages }}
         run: |
           if [ -n "$PACKAGES" ]; then
-            # Word splitting is the point: the input is a list.
-            # shellcheck disable=SC2086
-            for package in $PACKAGES; do
+            read -r -a packages <<<"$PACKAGES"
+            for package in "${packages[@]}"; do
               cargo publish -p "$package" --locked
             done
           else
