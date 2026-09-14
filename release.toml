@@ -1,6 +1,8 @@
 # Workspace config for `cargo-release` (https://github.com/crate-ci/cargo-release).
-# Run via ./scripts/release.sh, never `cargo release` directly. The script
-# runs the fmt, clippy and test gates before ever touching a version number.
+# Two callers run `cargo release` against it: `scripts/release.sh` and the
+# `cut` job in `.github/workflows/release.yaml`. Both run the gate first, so
+# neither touches a version number before the tree is green. Nothing else
+# should call `cargo release` directly.
 #
 # `tests/compile-bench`, `tests/dialect-exec`, `tests/embedded-pg`, and
 # `examples` all carry `publish = false` in their own Cargo.toml. Their
@@ -22,8 +24,8 @@ tag-name = "v{{version}}"
 tag-message = "Release {{version}}"
 pre-release-commit-message = "Release {{version}}"
 
-# CI publishes. This script's job ends at the tag, and the tag is what the
-# release workflow reacts to, so a crates.io credential never has to exist on
-# a laptop.
+# CI publishes. Cutting a release ends at the tag, wherever it is cut from,
+# and the tag is what the publish half runs against. So a crates.io
+# credential never has to exist on a laptop.
 publish = false
 push = true

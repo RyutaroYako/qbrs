@@ -1,32 +1,39 @@
 name: Release
 
-# A tag is the release. `scripts/release.sh` cuts one from a green `main`
-# after bumping the version, and this reacts to it.
+# A tag is the release, and this owns both halves of making one. Dispatched
+# from the default branch with `bump`, it cuts the tag. Reached by that tag,
+# it publishes. `scripts/release.sh` cuts the same tag from a laptop.
 #
-# `workflow_dispatch` is the recovery door. `cargo publish --workspace`
-# packages and verifies all four crates before uploading any, so a failure
-# almost always lands before anything is published. What it cannot do is
-# resume: a version already on crates.io is an error rather than a skip. So
-# where an upload dies partway, dispatch this against the tag with `packages`
-# set to the ones that did not land, in dependency order. Re-running the
-# failed run replays the push, which carries no input.
+# Dispatched against a tag with `packages`, it republishes just those crates.
+# That is the recovery door. `cargo publish --workspace` packages and verifies
+# all four crates before uploading any, so a failure almost always lands
+# before anything is published. What it cannot do is resume: a version
+# already on crates.io is an error rather than a skip. Re-running the failed
+# run replays the inputs it was started with, which are not the ones recovery
+# needs.
 on:
   push:
     tags: ["v*"]
   workflow_dispatch:
     inputs:
+      bump:
+        description: "Cut a release from the default branch: patch, minor, major, or an exact version. Empty publishes the tag this runs from."
+        required: false
+        default: ""
       packages:
-        description: "Crates to publish, space separated, in dependency order. Empty publishes the whole workspace."
+        description: "Recovery only. Crates to publish, space separated, in dependency order. Empty publishes the whole workspace."
         required: false
         default: ""
 
 # Publishing cannot be undone, so one release runs at a time whatever the
 # tag. Not `cancel-in-progress`: a run killed between two uploads is the one
-# state this is here to avoid. A run queued while another is already waiting
-# cancels that waiting run. It has published nothing, so re-dispatch its tag.
+# state this is here to avoid. A cut queues its own publish behind itself, so
+# waiting runs have to survive. `queue: max` keeps them in order, where the
+# default drops all but the newest.
 concurrency:
   group: release
   cancel-in-progress: false
+  queue: max
 
 permissions:
   contents: read
@@ -38,8 +45,104 @@ jobs:
   gate:
     uses: ./.github/workflows/ci.yaml
 
+  # Everything a run can be refused for without reading the tree. No `needs`,
+  # so a dispatch that cannot do anything is refused in seconds. The gate runs
+  # its course either way, and holds the concurrency slot until it does.
+  preflight:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions: {}
+    steps:
+      - name: Check the ref and the inputs
+        env:
+          BUMP: ${{ inputs.bump }}
+          PACKAGES: ${{ inputs.packages }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: |
+          if [ -z "$BUMP" ]; then
+            if [ "$GITHUB_REF_TYPE" != "tag" ]; then
+              echo "error: publishing runs from a version tag, not from $GITHUB_REF_TYPE $GITHUB_REF_NAME." >&2
+              exit 1
+            fi
+            exit 0
+          fi
+          if [ "$GITHUB_REF_TYPE" != "branch" ] || [ "$GITHUB_REF_NAME" != "$DEFAULT_BRANCH" ]; then
+            echo "error: a release is cut from $DEFAULT_BRANCH, not from $GITHUB_REF_TYPE $GITHUB_REF_NAME." >&2
+            exit 1
+          fi
+          case "$BUMP" in
+            patch | minor | major | [0-9]*.[0-9]*.[0-9]*) ;;
+            *)
+              echo "error: bump is patch, minor, major, or an exact version, not '$BUMP'." >&2
+              exit 1
+              ;;
+          esac
+          if [ -n "$PACKAGES" ]; then
+            echo "error: packages belongs to the publish half. Leave it empty to cut a release." >&2
+            exit 1
+          fi
+
+  # Bump, commit, tag, push. The publish half then runs against that tag.
+  cut:
+    if: inputs.bump != ''
+    needs: [gate, preflight]
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      # The release commit and its tag.
+      contents: write
+      # Starting the publish run below.
+      actions: write
+    steps:
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # master (2026-08-05)
+        with:
+          toolchain: stable
+
+      # Pinned, since it is the tool that decides what a release is. Built
+      # here, so the one job holding a write token runs no third party but
+      # the toolchain.
+      - name: Install cargo-release
+        run: cargo install cargo-release --locked --version 1.1.5
+
+      # This job pushes, so the write token has to reach the git config.
+      # Nothing before this step is handed it.
+      - name: Checkout
+        uses: actions/checkout@v7.0.1
+        with:
+          fetch-depth: 0
+
+      # `release.toml` decides what a release is, here as on a laptop: which
+      # crates move, the tag's name, and that nothing is published from the
+      # machine that cuts it.
+      - name: Cut the release
+        env:
+          BUMP: ${{ inputs.bump }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          cargo release "$BUMP" --execute --no-confirm
+
+      # A tag pushed with `github.token` does not fire the `push` trigger.
+      # `workflow_dispatch` is exempt from that, so the publish half is
+      # started by name.
+      - name: Start the publish run on the new tag
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          version="$(cargo metadata --no-deps --format-version 1 \
+            | jq -r '.packages[] | select(.name == "qbrs") | .version')"
+          # The tag was pushed moments ago and the API can still 404 on it.
+          for attempt in 1 2 3 4 5; do
+            [ "$attempt" -eq 1 ] || sleep "$((attempt * 5))"
+            gh workflow run release.yaml --ref "v$version" && exit 0
+          done
+          echo "error: could not start the publish run on v$version." >&2
+          exit 1
+
   publish:
-    needs: gate
+    if: inputs.bump == ''
+    needs: [gate, preflight]
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:
@@ -66,16 +169,14 @@ jobs:
 
       # The tag names the version; the manifest is what gets published. A
       # mistyped tag would otherwise publish something other than what it
-      # says, and crates.io keeps whatever it is handed. The ref type is
-      # checked too, since a branch can be named like a tag. This is what
-      # holds a recovery run to the tag.
-      - name: Check the ref is the version tag
+      # says, and crates.io keeps whatever it is handed. `preflight` has
+      # already checked that the ref is a tag.
+      - name: Check the tag names the version in the tree
         run: |
           tree="$(cargo metadata --no-deps --format-version 1 \
             | jq -r '.packages[] | select(.name == "qbrs") | .version')"
-          if [ "$GITHUB_REF_TYPE" != "tag" ] || [ "v$tree" != "$GITHUB_REF_NAME" ]; then
-            echo "error: $GITHUB_REF_TYPE $GITHUB_REF_NAME is not the tag v$tree." >&2
-            echo "       Run this from the version tag." >&2
+          if [ "$GITHUB_REF_NAME" != "v$tree" ]; then
+            echo "error: tag $GITHUB_REF_NAME does not name the workspace version v$tree." >&2
             exit 1
           fi
 

@@ -73,23 +73,38 @@ the child process outlives the test binary.
 
 ## Releasing
 
-`./scripts/release.sh <patch|minor|major|<exact-version>>`, from a clean `main` in sync with
-origin. It runs CI's fmt and clippy gates, then the whole test suite through `cargo test`
-rather than nextest. It shows a `cargo-release` dry run and asks for one confirmation
-before the real run. That run bumps all four publishable crates together (`release.toml`:
-`shared-version = true`), commits, tags and pushes. `tests/compile-bench`,
-`tests/dialect-exec`, `tests/embedded-pg`, and `examples` inherit the workspace version, so
-they are bumped too. They carry `publish = false`, so CI's `cargo publish --workspace` never
-uploads them.
+A release is a `v*` tag, and `.github/workflows/release.yaml` owns both halves of making
+one. Its `gate` job runs `ci.yaml` itself (`workflow_call`, so the two cannot drift), and
+both halves wait on it. Dispatched from `main` with a `bump` of `patch`, `minor`, `major` or
+an exact version, the `cut` job bumps all four publishable crates together (`release.toml`:
+`shared-version = true`), commits, tags and pushes. Reached by that tag, the `publish` job
+uploads. `tests/compile-bench`, `tests/dialect-exec`, `tests/embedded-pg`, and `examples`
+inherit the workspace version, so they are bumped too. They carry `publish = false`, so
+`cargo publish --workspace` never uploads them.
 
-It stops at the tag. `.github/workflows/release.yaml` reacts to a `v*` tag, re-runs CI's
-gate from `ci.yaml` itself (`workflow_call`, so the two cannot drift), checks that the ref
-is the tag naming the version the manifest carries, and publishes. It authenticates by OIDC
-through crates.io Trusted Publishing, so no crates.io credential exists on a laptop or in a
-repo secret; the token it fetches lives for the job. Trusted Publishing is registered per
-crate, so all four carry their own registration naming this repository and `release.yaml`.
-One missing registration is a publish that dies partway. Renaming that workflow file breaks
-publishing until every registration is updated.
+A `preflight` job refuses everything that can be refused without reading the tree: a cut
+from anything but the default branch, a publish from anything but a tag, a `bump` that is
+not a level or a version, and a `packages` value on a cut. `publish` then checks the one
+thing that needs the tree, that the tag names the version the manifest carries. The gate
+runs its course whatever `preflight` says, so a refused dispatch holds the release slot
+until it finishes.
+
+A tag pushed with `github.token` does not fire the `push` trigger, which is GitHub refusing
+to let a workflow start another. So `cut` starts the publish half by name, through
+`workflow_dispatch`, which GitHub exempts from that rule. A run started this way is a
+second run against the tag, not a continuation, so it re-runs the gate.
+
+`./scripts/release.sh <patch|minor|major|<exact-version>>` cuts the same tag from a laptop,
+from a clean `main` in sync with origin. It runs CI's fmt and clippy gates, then the whole
+test suite through `cargo test` rather than nextest. It shows a `cargo-release` dry run and
+asks for one confirmation before the real run. It stops at the tag, and the tag push fires
+`publish` on its own, since a person's credential is not `github.token`.
+
+The publish half authenticates by OIDC through crates.io Trusted Publishing, so no crates.io
+credential exists on a laptop or in a repo secret; the token it fetches lives for the job.
+Trusted Publishing is registered per crate, so all four carry their own registration naming
+this repository and `release.yaml`. One missing registration is a publish that dies partway.
+Renaming that workflow file breaks publishing until every registration is updated.
 
 `cargo publish --workspace` orders the four by dependency, waits on the index between them,
 and packages all four before uploading any. So a failure almost always lands before anything
@@ -97,18 +112,20 @@ is published. What it cannot do is resume, since a version already on crates.io 
 rather than a skip. Where an upload dies partway, dispatch the workflow against the tag
 (`gh workflow run release.yaml --ref v<version> -f packages="..."`, or the Tags tab of the
 Actions "Use workflow from" dropdown) with `packages` set to the ones that did not land, in
-dependency order. Re-running the failed run instead replays the push, which carries no
-input. The workflow rejects any ref but the version tag. A branch named like a tag is
-rejected too. Packaging one crate works there, because the sibling on crates.io is the
-version being released rather than the one before it.
+dependency order. Leave `bump` empty there, since it is what tells the two halves apart.
+Re-running the failed run instead replays the inputs it was started with, which are not the
+ones recovery needs. Packaging one crate works on that path, because the sibling on
+crates.io is the version being released rather than the one before it.
 
 Where only the release creation failed, there is no door back: both recovery paths run the
 publish step first, and it errors on a version crates.io already has. Create the release by
 hand with `gh release create v<version> --verify-tag --generate-notes`.
 
-One release runs at a time. A run cancelled before it started has published nothing, so
-re-dispatch its tag. A run cancelled during the publish step may have published some of the
-four, so read crates.io before re-dispatching.
+One release runs at a time, and the two halves share that one slot, so a cut queues its own
+publish behind itself. Waiting runs queue in order (`queue: max`) rather than replacing each
+other, so a second cut dispatched meanwhile does not drop that publish. A run cancelled
+before it started has published nothing, so re-dispatch its tag. A run cancelled during the
+publish step may have published some of the four, so read crates.io before re-dispatching.
 
 Packaging a crate at a version crates.io already has is what makes `cargo package -p qbrs`
 fail with the last release's API rather than the tree's: a dependent's

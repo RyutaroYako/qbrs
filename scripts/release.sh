@@ -5,7 +5,8 @@
 #
 # It does not publish. `.github/workflows/release.yaml` reacts to the tag and
 # does that, authenticating to crates.io by OIDC, so no crates.io credential
-# has to exist on a laptop.
+# has to exist on a laptop. That workflow can cut the tag too, dispatched from
+# `main` with a `bump`, which is the same release without a laptop.
 #
 # Prerequisite: on `main`, clean working tree, up to date with origin/main.
 #
@@ -25,7 +26,7 @@ cd "$(git rev-parse --show-toplevel)"
 
 if ! command -v cargo-release >/dev/null 2>&1; then
     echo "==> cargo-release not found; installing with 'cargo install cargo-release --locked'"
-    cargo install cargo-release --locked
+    cargo install cargo-release --locked --version 1.1.5
 fi
 
 BRANCH="$(git branch --show-current)"
