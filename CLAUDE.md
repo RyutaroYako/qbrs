@@ -76,18 +76,30 @@ the child process outlives the test binary.
 `./scripts/release.sh <patch|minor|major|<exact-version>>`, from a clean `main` in sync with
 origin. It runs the same fmt/clippy/test gate CI does, shows a `cargo-release` dry run, and
 asks for one confirmation before the real run. That run bumps all four publishable crates
-together (`release.toml`: `shared-version = true`), tags, pushes, and publishes
-`qbrs-core`/`qbrs-macros` before `qbrs`/`qbrs-sqlx`, waiting on crates.io's index between them.
+together (`release.toml`: `shared-version = true`), commits, tags and pushes.
 `tests/compile-bench`, `tests/dialect-exec`, `tests/embedded-pg`, and `examples` carry
-`publish = false` already, so cargo-release leaves them alone. Requires `cargo login` (or
-`CARGO_REGISTRY_TOKEN`) with publish rights on all four crates.
+`publish = false` already, so cargo-release leaves them alone.
+
+It stops at the tag. `.github/workflows/release.yaml` reacts to a `v*` tag, re-runs CI's
+gate from `ci.yaml` itself (`workflow_call`, so the two cannot drift), checks that the tag
+names the version the manifest carries, and publishes. It authenticates by OIDC through
+crates.io Trusted Publishing, so no crates.io credential exists on a laptop or in a repo
+secret; the token it fetches lives for the job. Registration on the crates.io side names
+this repository and `release.yaml`, so renaming that file breaks publishing until the
+registration is updated.
+
+`cargo publish --workspace` orders the four by dependency, waits on the index between them,
+and packages all four before uploading any. So a failure almost always lands before anything
+is published. What it cannot do is resume, since a version already on crates.io is an error
+rather than a skip. Where an upload dies partway, re-run the workflow from the tag with its
+`packages` input set to the ones that did not land, in dependency order.
 
 Packaging a crate at a version crates.io already has is what makes `cargo package -p qbrs`
 fail with the last release's API rather than the tree's: a dependent's
 `qbrs-core = "<current>"` resolves to the published copy instead of the sibling being
-packaged beside it. That is why the dry run passes `--no-verify` and why the four are never
-packaged one at a time. The real run bumps first, so the new version exists nowhere but
-locally and they verify against each other.
+packaged beside it. It never comes up in a release, because the version is bumped before
+anything is packaged and the four are packaged together. It is why packaging one crate on
+its own, to check something by hand between releases, cannot succeed.
 
 ## Workspace layout
 

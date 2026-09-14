@@ -4,6 +4,9 @@ on:
   push:
     branches: [main]
   pull_request:
+  # `release.yaml` runs this same job on the tag it is about to publish, so
+  # the gate a release passes is the gate every commit passes, from one file.
+  workflow_call:
 
 concurrency:
   # A superseded PR run should cancel, which is what this exists for. A push

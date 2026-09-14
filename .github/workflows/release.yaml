@@ -1,0 +1,103 @@
+name: Release
+
+# A tag is the release. `scripts/release.sh` cuts one from a green `main`
+# after bumping the version, and this reacts to it: nothing here decides what
+# to publish, only whether the thing already decided is fit to go.
+#
+# `workflow_dispatch` is the recovery door. `cargo publish --workspace`
+# packages and verifies all four crates before uploading any, so a failure
+# almost always lands before anything is published. What it cannot do is
+# resume: a version already on crates.io is an error rather than a skip. So
+# where an upload dies partway, re-run this from the tag with `packages` set
+# to the ones that did not land, in dependency order.
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      packages:
+        description: "Crates to publish, space separated, in dependency order. Empty publishes the whole workspace."
+        required: false
+        default: ""
+
+# Publishing cannot be undone, so a second run never overlaps a first. Not
+# `cancel-in-progress`: a run killed between two uploads is the one state
+# this is here to avoid.
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  # The same gate CI runs, from the same file, so the two cannot drift. A tag
+  # is cut from a green `main`, so this is belt and braces: cheap next to a
+  # publish that cannot be taken back.
+  gate:
+    uses: ./.github/workflows/ci.yaml
+
+  publish:
+    needs: gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      # crates.io Trusted Publishing: the OIDC claim is what authenticates,
+      # so no crates.io token is stored anywhere. The action's post step
+      # revokes the short-lived one it fetched.
+      id-token: write
+      # The GitHub release below.
+      contents: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7.0.1
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # master (2026-08-05)
+        with:
+          toolchain: stable
+
+      # The tag names the version; the manifest is what gets published. A
+      # mistyped tag would otherwise publish something other than what it
+      # says, and crates.io keeps whatever it is handed.
+      - name: Check the tag names the version in the tree
+        if: github.event_name == 'push'
+        run: |
+          tree="$(cargo metadata --no-deps --format-version 1 \
+            | jq -r '.packages[] | select(.name == "qbrs") | .version')"
+          if [ "v$tree" != "$GITHUB_REF_NAME" ]; then
+            echo "error: tag $GITHUB_REF_NAME does not name the workspace version v$tree." >&2
+            exit 1
+          fi
+
+      - name: Authenticate with crates.io
+        id: auth
+        uses: rust-lang/crates-io-auth-action@c6f97d42243bad5fab37ca0427f495c86d5b1a18 # v1.0.5
+
+      # One command for all four: cargo orders them by dependency, waits on
+      # the index between them, and verifies each against the siblings being
+      # published beside it rather than against the last release.
+      - name: Publish to crates.io
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
+          # Through the environment, not interpolated into the script: an
+          # input that reaches a shell as text is a shell it can rewrite.
+          PACKAGES: ${{ inputs.packages }}
+        run: |
+          if [ -n "$PACKAGES" ]; then
+            # Word splitting is the point: the input is a list.
+            # shellcheck disable=SC2086
+            for package in $PACKAGES; do
+              cargo publish -p "$package" --locked
+            done
+          else
+            cargo publish --workspace --locked
+          fi
+
+      # After the upload, so a release never points at a version crates.io
+      # does not have.
+      - name: Create the GitHub release
+        if: github.event_name == 'push'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" --verify-tag --generate-notes

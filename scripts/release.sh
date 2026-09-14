@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
-# Releases qbrs's four publishable crates (qbrs-core, qbrs-macros, qbrs,
-# qbrs-sqlx) together, in dependency order, via cargo-release. See
-# release.toml at the workspace root for the shared config: one version
-# across all four crates, one tag, crates.io publishing included.
+# Cuts a release of qbrs's four publishable crates (qbrs-core, qbrs-macros,
+# qbrs, qbrs-sqlx): one version across all four, one tag, pushed. See
+# release.toml at the workspace root for the shared config.
 #
-# Prerequisites:
-#   - `cargo login` already run (or CARGO_REGISTRY_TOKEN set) with publish
-#     rights on all four crates.
-#   - On `main`, clean working tree, up to date with origin/main.
+# It does not publish. `.github/workflows/release.yaml` reacts to the tag and
+# does that, authenticating to crates.io by OIDC, so no crates.io credential
+# has to exist on a laptop.
+#
+# Prerequisite: on `main`, clean working tree, up to date with origin/main.
 #
 # Usage:
 #   ./scripts/release.sh <patch|minor|major|<exact-version>>
@@ -26,11 +26,6 @@ cd "$(git rev-parse --show-toplevel)"
 if ! command -v cargo-release >/dev/null 2>&1; then
     echo "==> cargo-release not found; installing with 'cargo install cargo-release --locked'"
     cargo install cargo-release --locked
-fi
-
-if [ -z "${CARGO_REGISTRY_TOKEN:-}" ] && ! grep -q '^\[registries\.\|^\[registry\]' "${CARGO_HOME:-$HOME/.cargo}/credentials.toml" 2>/dev/null; then
-    echo "error: no crates.io credentials found. Run 'cargo login' first, or set CARGO_REGISTRY_TOKEN." >&2
-    exit 1
 fi
 
 BRANCH="$(git branch --show-current)"
@@ -56,18 +51,12 @@ cargo fmt --all -- --check
 cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
 cargo test --workspace --locked --all-features
 
-# `--no-verify`, and only here: a dry run leaves the version numbers alone,
-# so it packages each crate at the version already on crates.io, and a
-# dependent's `qbrs-core = "<current>"` then resolves to that published copy
-# instead of the sibling being packaged beside it, failing on every API added
-# since. The real run below bumps first, so the new version exists nowhere but
-# locally and the four verify against each other.
 echo
 echo "==> cargo-release dry run for '$LEVEL' (nothing is touched yet):"
-cargo release "$LEVEL" --no-verify
+cargo release "$LEVEL"
 
 echo
-read -r -p "Proceed with the release plan above (bump, tag, push, publish to crates.io)? [y/N] " reply
+read -r -p "Proceed with the release plan above (bump, tag, push)? [y/N] " reply
 case "$reply" in
     y|Y|yes|YES) ;;
     *)
@@ -77,3 +66,7 @@ case "$reply" in
 esac
 
 cargo release "$LEVEL" --execute
+
+echo
+echo "==> Tag pushed. crates.io publishing runs from .github/workflows/release.yaml:"
+echo "    https://github.com/RyutaroYako/qbrs/actions/workflows/release.yaml"
