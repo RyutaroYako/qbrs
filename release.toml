@@ -1,11 +1,11 @@
 # Workspace config for `cargo-release` (https://github.com/crate-ci/cargo-release).
 # Run via ./scripts/release.sh, never `cargo release` directly. The script
-# runs the same checks CI gates on before ever touching a version number.
+# runs the fmt, clippy and test gates before ever touching a version number.
 #
 # `tests/compile-bench`, `tests/dialect-exec`, `tests/embedded-pg`, and
-# `examples` all carry `publish = false` in their own Cargo.toml, so
-# cargo-release skips them on its own; only qbrs-core, qbrs-macros, qbrs, and
-# qbrs-sqlx are ever bumped or published here.
+# `examples` all carry `publish = false` in their own Cargo.toml. Their
+# versions still move with the workspace, since they inherit it. Only
+# qbrs-core, qbrs-macros, qbrs, and qbrs-sqlx are ever published.
 
 # All four crates share one version number (`workspace.package.version`),
 # so they bump and get tagged together rather than drifting independently.
@@ -22,5 +22,8 @@ tag-name = "v{{version}}"
 tag-message = "Release {{version}}"
 pre-release-commit-message = "Release {{version}}"
 
-publish = true
+# CI publishes. This script's job ends at the tag, and the tag is what the
+# release workflow reacts to, so a crates.io credential never has to exist on
+# a laptop.
+publish = false
 push = true

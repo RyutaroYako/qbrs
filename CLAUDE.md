@@ -74,20 +74,49 @@ the child process outlives the test binary.
 ## Releasing
 
 `./scripts/release.sh <patch|minor|major|<exact-version>>`, from a clean `main` in sync with
-origin. It runs the same fmt/clippy/test gate CI does, shows a `cargo-release` dry run, and
-asks for one confirmation before the real run. That run bumps all four publishable crates
-together (`release.toml`: `shared-version = true`), tags, pushes, and publishes
-`qbrs-core`/`qbrs-macros` before `qbrs`/`qbrs-sqlx`, waiting on crates.io's index between them.
-`tests/compile-bench`, `tests/dialect-exec`, `tests/embedded-pg`, and `examples` carry
-`publish = false` already, so cargo-release leaves them alone. Requires `cargo login` (or
-`CARGO_REGISTRY_TOKEN`) with publish rights on all four crates.
+origin. It runs CI's fmt and clippy gates, then the whole test suite through `cargo test`
+rather than nextest. It shows a `cargo-release` dry run and asks for one confirmation
+before the real run. That run bumps all four publishable crates together (`release.toml`:
+`shared-version = true`), commits, tags and pushes. `tests/compile-bench`,
+`tests/dialect-exec`, `tests/embedded-pg`, and `examples` inherit the workspace version, so
+they are bumped too. They carry `publish = false`, so CI's `cargo publish --workspace` never
+uploads them.
+
+It stops at the tag. `.github/workflows/release.yaml` reacts to a `v*` tag, re-runs CI's
+gate from `ci.yaml` itself (`workflow_call`, so the two cannot drift), checks that the ref
+is the tag naming the version the manifest carries, and publishes. It authenticates by OIDC
+through crates.io Trusted Publishing, so no crates.io credential exists on a laptop or in a
+repo secret; the token it fetches lives for the job. Trusted Publishing is registered per
+crate, so all four carry their own registration naming this repository and `release.yaml`.
+One missing registration is a publish that dies partway. Renaming that workflow file breaks
+publishing until every registration is updated.
+
+`cargo publish --workspace` orders the four by dependency, waits on the index between them,
+and packages all four before uploading any. So a failure almost always lands before anything
+is published. What it cannot do is resume, since a version already on crates.io is an error
+rather than a skip. Where an upload dies partway, dispatch the workflow against the tag
+(`gh workflow run release.yaml --ref v<version> -f packages="..."`, or the Tags tab of the
+Actions "Use workflow from" dropdown) with `packages` set to the ones that did not land, in
+dependency order. Re-running the failed run instead replays the push, which carries no
+input. The workflow rejects any ref but the version tag. A branch named like a tag is
+rejected too. Packaging one crate works there, because the sibling on crates.io is the
+version being released rather than the one before it.
+
+Where only the release creation failed, there is no door back: both recovery paths run the
+publish step first, and it errors on a version crates.io already has. Create the release by
+hand with `gh release create v<version> --verify-tag --generate-notes`.
+
+One release runs at a time. A run cancelled before it started has published nothing, so
+re-dispatch its tag. A run cancelled during the publish step may have published some of the
+four, so read crates.io before re-dispatching.
 
 Packaging a crate at a version crates.io already has is what makes `cargo package -p qbrs`
 fail with the last release's API rather than the tree's: a dependent's
 `qbrs-core = "<current>"` resolves to the published copy instead of the sibling being
-packaged beside it. That is why the dry run passes `--no-verify` and why the four are never
-packaged one at a time. The real run bumps first, so the new version exists nowhere but
-locally and they verify against each other.
+packaged beside it. It never comes up in a release, because the version is bumped before
+anything is packaged and the four are packaged together. It is why packaging `qbrs` or
+`qbrs-sqlx` on its own, to check something by hand between releases, cannot succeed.
+`qbrs-core` and `qbrs-macros` depend on no sibling, so those two package alone fine.
 
 ## Workspace layout
 
