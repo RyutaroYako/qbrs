@@ -83,7 +83,7 @@ they are bumped too. They carry `publish = false`, so cargo-release never publis
 
 It stops at the tag. `.github/workflows/release.yaml` reacts to a `v*` tag, re-runs CI's
 gate from `ci.yaml` itself (`workflow_call`, so the two cannot drift), checks that the ref
-names the version the manifest carries, and publishes. It authenticates by OIDC through
+is the tag naming the version the manifest carries, and publishes. It authenticates by OIDC through
 crates.io Trusted Publishing, so no crates.io credential exists on a laptop or in a repo
 secret; the token it fetches lives for the job. Trusted Publishing is registered per crate,
 so all four carry their own registration naming this repository and `release.yaml`. One
@@ -97,7 +97,8 @@ rather than a skip. Where an upload dies partway, dispatch the workflow against 
 (`gh workflow run release.yaml --ref v<version> -f packages="..."`, or the Tags tab of the
 Actions "Use workflow from" dropdown) with `packages` set to the ones that did not land, in
 dependency order. Re-running the failed run instead replays the push, which carries no
-input. The workflow rejects any ref that does not name the version. Packaging one crate
+input. The workflow rejects any ref but the version tag, a branch named like one
+included. Packaging one crate
 works there, because the sibling on crates.io is the version being released rather than the
 one before it.
 

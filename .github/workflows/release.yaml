@@ -50,8 +50,14 @@ jobs:
       # The GitHub release below.
       contents: write
     steps:
+      # `cargo publish` runs this workspace's build scripts and proc macros.
+      # Nothing here pushes, and the release below authenticates by `GH_TOKEN`,
+      # so the job's write token has no reason to sit in the git config while
+      # that code runs.
       - name: Checkout
         uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # master (2026-08-05)
@@ -60,14 +66,15 @@ jobs:
 
       # The tag names the version; the manifest is what gets published. A
       # mistyped tag would otherwise publish something other than what it
-      # says, and crates.io keeps whatever it is handed. This is also what
-      # holds a recovery run to the tag, since any other ref fails here.
-      - name: Check the ref names the version in the tree
+      # says, and crates.io keeps whatever it is handed. The ref type is
+      # checked too, since a branch can be named like a tag. This is what
+      # holds a recovery run to the tag.
+      - name: Check the ref is the version tag
         run: |
           tree="$(cargo metadata --no-deps --format-version 1 \
             | jq -r '.packages[] | select(.name == "qbrs") | .version')"
-          if [ "v$tree" != "$GITHUB_REF_NAME" ]; then
-            echo "error: ref $GITHUB_REF_NAME does not name the workspace version v$tree." >&2
+          if [ "$GITHUB_REF_TYPE" != "tag" ] || [ "v$tree" != "$GITHUB_REF_NAME" ]; then
+            echo "error: $GITHUB_REF_TYPE $GITHUB_REF_NAME is not the tag v$tree." >&2
             echo "       Run this from the version tag." >&2
             exit 1
           fi
