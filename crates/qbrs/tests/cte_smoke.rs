@@ -196,3 +196,29 @@ fn all_row_is_the_row_type_select_all_decodes_to_from_a_cte() {
         Postgres,
     );
 }
+
+with! {
+    struct ranked_orders { id: Integer, rank_by_total: BigInt }
+}
+
+#[test]
+fn a_rank_is_filtered_through_a_cte_that_selects_it_under_its_column_name() {
+    label!(rank_by_total);
+    let ranked = select((
+        orders::id,
+        qbrs::window::row_number()
+            .over(qbrs::window::window().order_by(orders::total.desc()))
+            .label(label::rank_by_total),
+    ))
+    .from(orders::Table);
+
+    let (sql, _params) = select(ranked_orders::id)
+        .from(qbrs::cte::with(ranked_orders::Table, &ranked))
+        .filter(ranked_orders::rank_by_total.lte(3i64))
+        .to_sql(Postgres);
+    assert_eq!(
+        sql,
+        "WITH \"ranked_orders\" (\"id\", \"rank_by_total\") AS (SELECT \"orders\".\"id\", row_number() OVER (ORDER BY \"orders\".\"total\" DESC) AS \"rank_by_total\" FROM \"orders\") \
+         SELECT \"ranked_orders\".\"id\" FROM \"ranked_orders\" WHERE (\"ranked_orders\".\"rank_by_total\" <= $1)"
+    );
+}

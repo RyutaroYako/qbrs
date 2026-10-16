@@ -702,6 +702,27 @@ async fn a_labelled_row_number_over_a_partition_yields_one_row_per_order() {
 }
 
 #[tokio::test]
+async fn a_window_comparison_in_order_by_sorts_the_top_ranked_row_first() {
+    let pool = seeded().await;
+    let sorted = run(
+        &pool,
+        select((orders::total,))
+            .from(orders::Table)
+            .order_by(
+                row_number()
+                    .over(window().order_by(orders::total.desc()))
+                    .gt(1i64)
+                    .asc(),
+            )
+            .to_sql(Sqlite),
+    )
+    .await;
+    let totals: Vec<i64> = sorted.iter().map(|row| row.get(0)).collect();
+    assert_eq!(totals[0], 2000);
+    assert_eq!(totals.len(), 3);
+}
+
+#[tokio::test]
 async fn a_sql_fragment_filters_by_the_value_bound_into_its_slot() {
     let pool = seeded().await;
     let raw = run(

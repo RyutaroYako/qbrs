@@ -242,8 +242,10 @@ Design constraints worth knowing before adopting:
   direction, the reverse of what a `row::Field` lookup can check: `GROUP BY`
   naming a column that isn't selected is perfectly valid SQL, so checking
   membership the other way round would enforce a rule that doesn't exist. An
-  aggregate or window function in `WHERE` or `RETURNING` is likewise accepted
-  by the builder and rejected by the database. Aggregates take a bare column,
+  aggregate in `WHERE`, `GROUP BY` or `RETURNING`, or a window function
+  anywhere but the selection and `ORDER BY`, is likewise accepted by the
+  builder and rejected by the database. A rank is filtered through a CTE that
+  selects it. Aggregates take a bare column,
   so `sum(price * qty)` and `count(DISTINCT x)` need `sql!{}`. So does an
   `ORDER BY` inside a `string_agg`: SQLite reached that only in 3.44, past
   the 3.39 this crate targets, and MySQL spells it elsewhere in the call.

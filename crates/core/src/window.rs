@@ -5,9 +5,16 @@
 //! method is `.over()`, so `.over()` can't be reached from an arbitrary
 //! expression that would render nonsense SQL.
 //!
-//! **Known limitation**: only the ranking functions. An aggregate used as a
+//! **Known limitations**: only the ranking functions. An aggregate used as a
 //! window function (`sum(col) OVER (..)`) needs `.over()` on the aggregate
 //! itself, which is a different builder shape from `WindowFunc`.
+//!
+//! A window function belongs in the selection or in `ORDER BY`. Inside
+//! `.filter(..)`, `.having(..)` or `.group_by(..)` it still compiles, and the
+//! database rejects the statement, since windows are computed after those
+//! clauses. Catching it would need every expression to carry whether it holds
+//! a window, a tag no other clause needs. Filtering on a rank goes through a
+//! CTE: select the rank under a `label!`, then filter the CTE's column.
 
 use std::marker::PhantomData;
 

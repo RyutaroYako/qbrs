@@ -102,16 +102,17 @@ fn bare_over_with_no_partition_or_order_renders_empty_parens() {
 }
 
 #[test]
-fn a_window_function_composes_with_gt_like_any_other_expression() {
+fn a_window_function_compared_with_gt_sorts_like_any_other_expression() {
     let q = select((employees::department,))
         .from(employees::Table)
-        .having(
+        .order_by(
             row_number()
                 .over(window().order_by(employees::salary.desc()))
-                .gt(1i64),
+                .gt(1i64)
+                .asc(),
         );
     assert_eq!(
         q.to_sql(Postgres).0,
-        "SELECT \"employees\".\"department\" FROM \"employees\" HAVING (row_number() OVER (ORDER BY \"employees\".\"salary\" DESC) > $1)"
+        "SELECT \"employees\".\"department\" FROM \"employees\" ORDER BY (row_number() OVER (ORDER BY \"employees\".\"salary\" DESC) > $1) ASC"
     );
 }
