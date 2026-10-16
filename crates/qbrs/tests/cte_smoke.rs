@@ -1,8 +1,6 @@
-//! `with!{}` + `cte::with()`: `WITH name (cols..) AS (..) SELECT .. FROM name ..`.
-//! Lives here rather than in `qbrs-core` because `with!` is a proc macro, for
-//! the same reason `#[derive(Table)]` is: it synthesizes identifiers.
-
 use qbrs::prelude::*;
+use qbrs::select::Selection;
+use std::marker::PhantomData;
 
 #[derive(Table)]
 #[table(name = "orders")]
@@ -22,7 +20,7 @@ with! {
 }
 
 #[test]
-fn with_binds_a_named_cte_usable_as_a_real_table() {
+fn with_binds_a_named_cte_that_is_selected_and_filtered_like_a_real_table() {
     let inner = select((orders::id, orders::total))
         .from(orders::Table)
         .filter(orders::total.gt(1000i64));
@@ -44,7 +42,7 @@ fn with_binds_a_named_cte_usable_as_a_real_table() {
 }
 
 #[test]
-fn multiple_independent_ctes_render_comma_separated() {
+fn two_independent_ctes_share_one_with_clause_separated_by_a_comma() {
     let big = select((orders::id, orders::total))
         .from(orders::Table)
         .filter(orders::total.gt(1000i64));
@@ -67,10 +65,6 @@ fn multiple_independent_ctes_render_comma_separated() {
     );
 }
 
-/// A CTE body is rendered to a `Fragment` before the host query numbers
-/// anything, so its binds reach the statement through `splice_into`. Two
-/// bodies binding the same value therefore have to meet in the host's
-/// parameter list, not in either fragment.
 #[test]
 fn two_cte_bodies_binding_the_same_value_share_one_parameter() {
     let big = select((orders::id, orders::total))
@@ -93,9 +87,7 @@ fn two_cte_bodies_binding_the_same_value_share_one_parameter() {
 }
 
 #[test]
-fn a_cte_column_is_read_by_key_and_by_accessor() {
-    // `with!` now generates the same accessor traits `#[derive(Table)]` does,
-    // so a CTE column is read exactly like a real one.
+fn a_cte_column_is_read_by_key_and_by_accessor_like_a_table_column() {
     use qbrs::row::{Row, RowCons, RowNil};
     let row = Row::new(RowCons::<big_orders::columns::total, _, _>::new(
         2500i64, RowNil,
@@ -119,12 +111,7 @@ struct Employees {
 }
 
 #[test]
-fn a_cte_of_the_same_table_stands_in_for_a_self_join() {
-    // qbrs has no table aliasing (see README's Known limitations), so a
-    // literal `FROM "employees" AS e JOIN "employees" AS m` can't be
-    // written. Binding a `with!{}` pseudo-table to a plain `SELECT` over the
-    // *same* table gets the same result: each employee row paired with its
-    // own manager's row, fully type-checked.
+fn a_cte_over_the_same_table_stands_in_for_an_aliased_self_join() {
     let manager_rows = select((employees::id, employees::name)).from(employees::Table);
 
     let (sql, _params) = select((employees::name, managers::name))
@@ -146,11 +133,8 @@ with! {
     struct raised { id: Integer, total: BigInt }
 }
 
-/// The shape the write-then-read round-trip collapses into: the `UPDATE`
-/// runs as the CTE body and the outer `SELECT` reads its rows, joined to
-/// whatever the written row itself doesn't hold.
 #[test]
-fn a_write_statement_binds_as_a_cte_body_and_the_query_reads_its_rows() {
+fn an_update_returning_binds_as_a_cte_body_whose_rows_the_outer_select_joins() {
     let bump = qbrs::update::update(orders::Table)
         .set_to(orders::total, 2000i64)
         .filter(orders::id.eq(1))
@@ -173,11 +157,8 @@ fn a_write_statement_binds_as_a_cte_body_and_the_query_reads_its_rows() {
     );
 }
 
-/// A CTE body's placeholders are numbered by the statement it lands in, so a
-/// write body's binds count from where the host query has got to. That is the
-/// same rule a `SELECT` body follows, and the reason a body is a `Fragment`.
 #[test]
-fn a_write_body_is_numbered_by_the_statement_it_lands_in() {
+fn a_write_cte_body_numbers_its_binds_before_the_outer_querys() {
     let bump = qbrs::insert::insert(orders::Table)
         .values(OrdersInsert::builder().total(500i64).build())
         .returning((orders::id, orders::total));
@@ -201,12 +182,17 @@ fn a_write_body_is_numbered_by_the_statement_it_lands_in() {
 }
 
 #[test]
-fn a_cte_names_its_row_the_way_a_table_does() {
-    // `with!` generates `AllRow` for the same reason `#[derive(Table)]`
-    // does: a stored query over `select(All)` names a row rather than
-    // spelling a `RowCons` chain.
-    fn total(row: big_orders::AllRow) -> i64 {
-        *row.get(big_orders::total)
+fn all_row_is_the_row_type_select_all_decodes_to_from_a_cte() {
+    fn output_of<D, Scope, Sel, Idx>(_: &Select<D, Scope, Sel>, _: D) -> PhantomData<Sel::Output>
+    where
+        Sel: Selection<Scope, Idx>,
+    {
+        PhantomData
     }
-    let _ = total;
+
+    let body = select((orders::id, orders::total)).from(orders::Table);
+    let _: PhantomData<big_orders::AllRow> = output_of(
+        &select(big_orders::All).from(qbrs::cte::with(big_orders::Table, &body)),
+        Postgres,
+    );
 }

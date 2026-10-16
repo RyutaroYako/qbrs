@@ -1,18 +1,14 @@
-//! The column types a database has and Rust doesn't, executed end to end:
-//! rendered, bound, and decoded back into the type the schema declared.
-//! Runs under `--all-features`; each type is behind the feature that names
-//! the crate it decodes to.
 #![cfg(all(feature = "chrono", feature = "uuid", feature = "decimal"))]
 
 mod common;
 
-// Spelled through imports, not fully qualified: a schema's field types are
-// the caller's to name however they name types, and the derive must not
-// re-resolve them in a module of its own.
+// Fully qualifying the field types below would stop this file from checking
+// that the derive takes a type the caller named through its own `use`.
 use chrono::{DateTime, Utc};
 use qbrs::prelude::*;
 use qbrs_sqlx::prelude::*;
 use rust_decimal::Decimal;
+use sqlx::PgPool;
 use uuid::Uuid;
 
 #[derive(Table)]
@@ -26,18 +22,21 @@ struct Events {
     amount: Decimal,
 }
 
-/// The DTO an API handler would return, with its field types reached the
-/// way anyone reaches them: through `use`. The derive generates a module of
-/// its own, which is not the caller's scope.
-#[derive(Debug, FromRow)]
-#[allow(dead_code)]
+#[derive(Debug, FromRow, PartialEq)]
 struct EventDto {
     happened_at: DateTime<Utc>,
     amount: Decimal,
 }
 
+struct Event {
+    id: Uuid,
+    happened_at: DateTime<Utc>,
+    on_day: chrono::NaiveDate,
+    amount: Decimal,
+}
+
 #[tokio::test]
-async fn timestamp_uuid_and_numeric_columns_survive_a_round_trip() {
+async fn timestamp_date_uuid_and_numeric_columns_bind_and_decode_as_the_schema_declares() {
     let (pool, guard) = common::test_pool("qbrs_column_types").await;
 
     sqlx::query("DROP TABLE IF EXISTS events")
@@ -56,78 +55,108 @@ async fn timestamp_uuid_and_numeric_columns_survive_a_round_trip() {
     .await
     .expect("create events");
 
-    let id = uuid::Uuid::from_u128(0x0192_3f7c_dead_beef_0000_0000_0000_0001);
-    let happened_at = chrono::DateTime::from_timestamp(1_700_000_000, 0).expect("a timestamp");
-    let on_day = chrono::NaiveDate::from_ymd_opt(2024, 5, 17).expect("a date");
-    let amount = "12.34".parse::<rust_decimal::Decimal>().expect("a decimal");
+    let event = Event {
+        id: Uuid::from_u128(0x0192_3f7c_dead_beef_0000_0000_0000_0001),
+        happened_at: DateTime::from_timestamp(1_700_000_000, 0).expect("a timestamp"),
+        on_day: chrono::NaiveDate::from_ymd_opt(2024, 5, 17).expect("a date"),
+        amount: "12.34".parse().expect("a decimal"),
+    };
 
+    insert_returning_all_decodes_each_column_as_its_declared_type(&pool, &event).await;
+    timestamp_and_numeric_values_bind_as_comparison_operands(&pool, &event).await;
+    timestamp_and_numeric_columns_fill_a_from_row_struct(&pool, &event).await;
+    min_and_max_decode_a_timestamp_and_a_numeric_as_their_own_types(&pool, &event).await;
+    sum_of_a_numeric_decodes_as_a_decimal_and_avg_as_a_float(&pool, &event).await;
+    an_imported_uuid_is_the_marker_in_a_with_declaration_and_a_sql_fragment(&pool, &event).await;
+
+    common::shutdown(pool, guard).await;
+}
+
+async fn insert_returning_all_decodes_each_column_as_its_declared_type(
+    pool: &PgPool,
+    event: &Event,
+) {
     let inserted = insert(events::Table)
         .values(
             EventsInsert::builder()
-                .id(id)
-                .happened_at(happened_at)
-                .amount(amount)
-                .on_day(on_day)
+                .id(event.id)
+                .happened_at(event.happened_at)
+                .amount(event.amount)
+                .on_day(event.on_day)
                 .build(),
         )
         .returning(events::All)
-        .load_one(&pool)
+        .load_one(pool)
         .await
         .expect("insert an event")
         .expect("RETURNING gave a row");
 
-    assert_eq!(inserted.get(events::id), &id);
-    assert_eq!(inserted.get(events::happened_at), &happened_at);
-    assert_eq!(inserted.get(events::on_day), &Some(on_day));
-    assert_eq!(inserted.get(events::amount), &amount);
+    assert_eq!(inserted.get(events::id), &event.id);
+    assert_eq!(inserted.get(events::happened_at), &event.happened_at);
+    assert_eq!(inserted.get(events::on_day), &Some(event.on_day));
+    assert_eq!(inserted.get(events::amount), &event.amount);
+}
 
-    // And they are ordinary values to the builder: comparable, bindable.
-    let found: Vec<uuid::Uuid> = select(events::id)
+async fn timestamp_and_numeric_values_bind_as_comparison_operands(pool: &PgPool, event: &Event) {
+    let found: Vec<Uuid> = select(events::id)
         .from(events::Table)
-        .filter(events::happened_at.lte(happened_at))
-        .filter(events::amount.gt("1.00".parse::<rust_decimal::Decimal>().unwrap()))
-        .load(&pool)
+        .filter(events::happened_at.lte(event.happened_at))
+        .filter(events::amount.gt("1.00".parse::<Decimal>().expect("a decimal")))
+        .load(pool)
         .await
         .expect("select by timestamp and amount");
-    assert_eq!(found, vec![id]);
+    assert_eq!(found, vec![event.id]);
+}
 
-    // The same columns into a DTO, and ordered: `min`/`max` are the two
-    // aggregates a timestamp and a money column want.
+async fn timestamp_and_numeric_columns_fill_a_from_row_struct(pool: &PgPool, event: &Event) {
     let dtos: Vec<EventDto> = select((events::happened_at, events::amount))
         .from(events::Table)
-        .load(&pool)
+        .load(pool)
         .await
         .expect("select into a DTO")
         .into_structs();
-    assert_eq!(dtos.len(), 1);
+    assert_eq!(
+        dtos,
+        vec![EventDto {
+            happened_at: event.happened_at,
+            amount: event.amount,
+        }]
+    );
+}
 
+async fn min_and_max_decode_a_timestamp_and_a_numeric_as_their_own_types(
+    pool: &PgPool,
+    event: &Event,
+) {
     let (earliest, largest): (Option<DateTime<Utc>>, Option<Decimal>) =
         select((min(events::happened_at), max(events::amount)))
             .from(events::Table)
-            .load_one(&pool)
+            .load_one(pool)
             .await
             .expect("min and max")
             .expect("one row")
             .into_tuple();
-    assert_eq!(earliest, Some(happened_at));
-    assert_eq!(largest, Some(amount));
+    assert_eq!(earliest, Some(event.happened_at));
+    assert_eq!(largest, Some(event.amount));
+}
 
-    // A money column totals as money and averages as a float, which is what
-    // the row declares in each case.
-    let (total, mean): (Option<rust_decimal::Decimal>, Option<f64>) =
+async fn sum_of_a_numeric_decodes_as_a_decimal_and_avg_as_a_float(pool: &PgPool, event: &Event) {
+    let (total, mean): (Option<Decimal>, Option<f64>) =
         select((sum(events::amount), avg(events::amount)))
             .from(events::Table)
-            .load_one(&pool)
+            .load_one(pool)
             .await
             .expect("aggregate a numeric column")
             .expect("one row")
             .into_tuple();
-    assert_eq!(total, Some(amount));
+    assert_eq!(total, Some(event.amount));
     assert_eq!(mean, Some(12.34));
+}
 
-    // The marker position takes the same `Uuid` this file imported from the
-    // `uuid` crate: it *is* the marker, so `use uuid::Uuid` shadows nothing
-    // and neither `sql!{}` nor `with!{}` has to be told a longer name.
+async fn an_imported_uuid_is_the_marker_in_a_with_declaration_and_a_sql_fragment(
+    pool: &PgPool,
+    event: &Event,
+) {
     with! {
         struct recent { id: Uuid }
     }
@@ -136,11 +165,9 @@ async fn timestamp_uuid_and_numeric_columns_survive_a_round_trip() {
             recent::Table,
             &select((events::id,)).from(events::Table),
         ))
-        .filter(recent::id.eq(qbrs::sql!(Uuid, "?", id)))
-        .load(&pool)
+        .filter(recent::id.eq(qbrs::sql!(Uuid, "?", event.id)))
+        .load(pool)
         .await
         .expect("a uuid in a CTE declaration and in a sql! fragment");
-    assert_eq!(ids, vec![id]);
-
-    common::shutdown(pool, guard).await;
+    assert_eq!(ids, vec![event.id]);
 }

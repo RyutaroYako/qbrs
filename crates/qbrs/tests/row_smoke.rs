@@ -1,9 +1,5 @@
-//! Rows keyed by column: what `.get()` resolves to, what a label renders
-//! as, and what survives a column being added to a selection.
-
-// Naming a row type spells out its key list, which is what
-// `clippy::type_complexity` counts. That is the same reason `qbrs-core`
-// allows it crate-wide.
+// Aliasing each row type to quiet `clippy::type_complexity` would only rename
+// the key list it spells, which is the shape these tests pin down.
 #![allow(clippy::type_complexity)]
 
 use qbrs::prelude::*;
@@ -31,8 +27,7 @@ struct Orders {
     total: i64,
 }
 
-/// Stands in for a decoded row; `.load()` builds the same shape.
-fn user_order_row()
+fn decoded_user_order_row()
 -> Row<RowCons<users::columns::email, String, RowCons<orders::columns::total, Option<i64>, RowNil>>>
 {
     Row::new(RowCons::new(
@@ -41,8 +36,6 @@ fn user_order_row()
     ))
 }
 
-/// Pins a query's decoded row type to a value written out by hand: passing
-/// a row of any other shape is a compile error.
 fn decodes_to<D, Scope, Sel, Idx>(_query: &Select<D, Scope, Sel>, _row: Sel::Output)
 where
     Sel: Selection<Scope, Idx>,
@@ -78,9 +71,7 @@ fn all_selects_every_column_and_takes_its_nullability_from_the_join() {
 }
 
 #[test]
-fn a_sql_fragment_decodes_as_the_type_it_declares() {
-    // No `.decodes_as(..)` restating it: the author wrote the type in the
-    // `sql!` itself, and a slot holding a column doesn't change that.
+fn a_sql_fragment_with_a_column_slot_decodes_as_its_declared_type_without_decodes_as() {
     label!(biggest);
     let query = select((
         users::email,
@@ -109,17 +100,13 @@ fn a_sql_fragment_decodes_as_the_type_it_declares() {
 
 #[test]
 fn a_field_is_read_by_the_value_that_selected_it() {
-    let row = user_order_row();
+    let row = decoded_user_order_row();
     assert_eq!(row.get(users::email), "ada@example.com");
     assert_eq!(row.get(orders::total), &Some(1000));
 }
 
-/// A nested selection contributes its fields to the one row, so a caller
-/// reading the result cannot tell how the list was assembled. That is what
-/// makes naming a selection once and reusing it worth anything: the two
-/// spellings produce the same SQL and the same row type.
 #[test]
-fn a_nested_selection_keys_its_row_the_way_a_flat_one_does() {
+fn a_nested_selection_produces_the_same_sql_and_row_type_as_its_flat_spelling() {
     const CORE: (Column<users::columns::id>, Column<users::columns::email>) =
         (users::id, users::email);
 
@@ -137,9 +124,7 @@ fn a_nested_selection_keys_its_row_the_way_a_flat_one_does() {
 }
 
 #[test]
-fn two_same_typed_columns_of_one_table_stay_distinct() {
-    // `users::email` and `users::display_name` are both text columns, so a
-    // positional tuple would let them be transposed silently.
+fn two_text_columns_of_one_table_are_read_by_key_whatever_their_position() {
     let row = Row::new(RowCons::<users::columns::display_name, _, _>::new(
         Some("Ada".to_string()),
         RowCons::<users::columns::email, _, _>::new("ada@example.com".to_string(), RowNil),
@@ -149,35 +134,30 @@ fn two_same_typed_columns_of_one_table_stay_distinct() {
 }
 
 #[test]
-fn derive_generates_a_per_column_accessor() {
-    let row = user_order_row();
+fn derive_generates_a_per_column_accessor_on_a_decoded_row() {
+    let row = decoded_user_order_row();
     assert_eq!(row.email(), "ada@example.com");
     assert_eq!(row.total(), &Some(1000));
 }
 
-/// Width subtyping: this accepts any row that carries `users::email`,
-/// whatever else it holds. `Idx` is the inferred lookup index every
-/// `Field`/`Find` bound carries; callers never write it.
 fn masked<Idx, R: users::HasEmail<Idx, Value = String>>(row: &R) -> String {
     format!("{}***", &row.email()[..1])
 }
 
 #[test]
 fn a_helper_can_require_one_column_and_ignore_the_rest() {
-    assert_eq!(masked(&user_order_row()), "a***");
+    assert_eq!(masked(&decoded_user_order_row()), "a***");
 }
 
 #[test]
 fn into_tuple_recovers_the_positional_view() {
-    let (email, total): (String, Option<i64>) = user_order_row().into_tuple();
+    let (email, total): (String, Option<i64>) = decoded_user_order_row().into_tuple();
     assert_eq!(email, "ada@example.com");
     assert_eq!(total, Some(1000));
 }
 
-/// The positional view stops where `row::Prepend`'s impls do, so the 32nd
-/// field is the one that says whether the chain reaches the declared cap.
 #[test]
-fn into_tuple_reaches_the_thirty_second_field() {
+fn into_tuple_reaches_the_thirty_second_field_which_is_the_arity_cap() {
     type Cell<Tail> = RowCons<users::columns::id, i64, Tail>;
     type Cells2<Tail> = Cell<Cell<Tail>>;
     type Cells4<Tail> = Cells2<Cells2<Tail>>;
@@ -208,15 +188,19 @@ fn into_tuple_reaches_the_thirty_second_field() {
 }
 
 #[test]
-fn an_untupled_selection_stays_a_bare_value() {
-    let (sql, _) = select(users::email).from(users::Table).to_sql(Postgres);
-    assert_eq!(sql, "SELECT \"users\".\"email\" FROM \"users\"");
+fn an_untupled_selection_decodes_to_a_bare_value_rather_than_a_row() {
+    let query = select(users::email).from(users::Table);
+    assert_eq!(
+        query.to_sql(Postgres).0,
+        "SELECT \"users\".\"email\" FROM \"users\""
+    );
+    decodes_to(&query, "ada@example.com".to_string());
 }
 
 qbrs::label!(within_user, overall);
 
 #[test]
-fn a_label_renders_as_and_keys_the_row() {
+fn a_label_renders_as_an_as_alias_and_keys_the_row() {
     let (sql, _) = select((
         users::email,
         row_number()
@@ -254,8 +238,6 @@ fn an_unlabelled_expression_is_keyed_by_the_function_that_made_it() {
     assert_eq!(row.count(), &3);
 }
 
-/// A plain domain struct: no column paths, no query shape, nothing that ties
-/// it to the query that fills it.
 #[derive(Debug, PartialEq, FromRow)]
 struct UserSummary {
     email: String,
@@ -265,8 +247,6 @@ struct UserSummary {
 
 #[test]
 fn from_row_matches_fields_by_name_ignoring_order_and_extras() {
-    // Selected as (id, total, email, display_name); the struct declares a
-    // different order and doesn't want `id` at all.
     let row = Row::new(RowCons::<users::columns::id, _, _>::new(
         7i64,
         RowCons::<orders::columns::total, _, _>::new(
@@ -296,7 +276,7 @@ struct Ranked {
 }
 
 #[test]
-fn a_declared_label_is_matched_by_its_name() {
+fn from_row_matches_a_declared_label_by_its_name() {
     let row = Row::new(RowCons::<users::columns::email, _, _>::new(
         "ada@example.com".to_string(),
         RowCons::<label::within_user, _, _>::new(1i64, RowNil),
@@ -312,16 +292,13 @@ fn a_declared_label_is_matched_by_its_name() {
 
 #[test]
 fn take_moves_one_field_and_keeps_the_rest() {
-    let row = user_order_row();
+    let row = decoded_user_order_row();
     let (email, row) = row.take(users::email);
     let (total, _) = row.take(orders::total);
     assert_eq!(email, "ada@example.com");
     assert_eq!(total, Some(1000));
 }
 
-/// A row carries names, so another crate can walk it under its own bounds
-/// (`serde::Serialize`, `Display`, whatever), which is what `qbrs-core`
-/// cannot offer itself, having no dependencies.
 trait ToPairs {
     fn to_pairs(&self, out: &mut Vec<(&'static str, String)>);
 }
@@ -336,9 +313,9 @@ impl<K: qbrs::row::Named, V: std::fmt::Debug, T: ToPairs> ToPairs for RowCons<K,
 }
 
 #[test]
-fn a_row_can_be_walked_by_a_downstream_trait() {
+fn a_row_can_be_walked_by_column_name_from_a_downstream_trait() {
     let mut out = Vec::new();
-    user_order_row().fields().to_pairs(&mut out);
+    decoded_user_order_row().fields().to_pairs(&mut out);
     assert_eq!(
         out,
         vec![
@@ -376,7 +353,7 @@ fn counting_a_distinct_query_counts_its_distinct_rows() {
 }
 
 #[test]
-fn a_count_drops_the_paging_the_page_needed() {
+fn a_count_drops_the_ordering_and_paging_of_the_page_it_counts() {
     let base = select((users::email,))
         .from(users::Table)
         .filter(users::active.eq(true));
@@ -392,10 +369,8 @@ fn a_count_drops_the_paging_the_page_needed() {
 }
 
 #[test]
-fn a_named_expression_over_a_column_states_what_it_decodes_to() {
+fn an_expression_over_a_column_is_selectable_under_a_label_once_decodes_as_names_its_type() {
     qbrs::label!(flagged);
-    // `.decodes_as()` is the difference between a type the builder guessed from
-    // whatever built the expression and one the caller stands behind.
     let (sql, _) = select((
         users::id,
         users::active
@@ -409,22 +384,17 @@ fn a_named_expression_over_a_column_states_what_it_decodes_to() {
 }
 
 #[test]
-fn a_window_function_is_read_back_by_the_value_that_selected_it() {
+fn a_window_function_is_read_back_by_the_bare_function_without_its_window() {
     use qbrs::window::{row_number, window};
 
-    let row = select((
+    let (sql, _) = select((
         users::email,
         row_number().over(window().order_by(users::id.asc())),
     ))
     .from(users::Table)
     .to_sql(Postgres);
-    assert!(
-        row.0
-            .contains("row_number() OVER (ORDER BY \"users\".\"id\" ASC)")
-    );
+    assert!(sql.contains("row_number() OVER (ORDER BY \"users\".\"id\" ASC)"));
 
-    // The key is the function, so reading it back doesn't re-spell a window
-    // the lookup ignores.
     fn read(r: Row<RowCons<qbrs::window::RowNumber, i64, RowNil>>) -> i64 {
         *r.get(row_number())
     }

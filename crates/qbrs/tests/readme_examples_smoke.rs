@@ -1,10 +1,3 @@
-//! Guards against README doc-drift: the generated-SQL comment shown in
-//! README.md's "Quick example" section is asserted here against the actual
-//! renderer, so a future change to rendering that silently breaks the
-//! README's claim fails CI instead of just looking wrong to whoever reads
-//! the docs next. Every other feature's example code lives in `examples/`
-//! instead of the README, where it's compiled and run against real Postgres.
-
 use qbrs::Table;
 use qbrs::dialect::Postgres;
 use qbrs::expr::ExprMethods;
@@ -33,7 +26,7 @@ struct Orders {
 }
 
 #[test]
-fn readme_quick_example_matches_actual_output() {
+fn the_readme_quick_example_renders_the_sql_its_comment_shows() {
     let (sql, _params) = select((users::email, orders::total))
         .from(users::Table)
         .left_join(orders::Table, orders::user_id.eq(users::id))

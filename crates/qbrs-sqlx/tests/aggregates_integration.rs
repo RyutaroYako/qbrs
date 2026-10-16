@@ -1,13 +1,9 @@
-//! Every aggregate helper run by a real Postgres. String assertions
-//! elsewhere say the SQL looks right; only this says Postgres has a
-//! function of that name taking arguments of those types, and returning
-//! what the helper claims it decodes to.
-
 mod common;
 
 use qbrs::expr::{avg, count, count_of, max, min, string_agg, sum};
 use qbrs::prelude::*;
 use qbrs_sqlx::prelude::*;
+use sqlx::PgPool;
 
 #[derive(Table)]
 #[table(name = "line_items")]
@@ -21,11 +17,10 @@ struct LineItems {
     quantity: i64,
 }
 
-/// One group's counting aggregates, in the order they are selected.
-type Counts = (i64, i64, i64, i64, Option<i64>, Option<i64>, Option<f64>);
+type CountingAggregatesRow = (i64, i64, i64, i64, Option<i64>, Option<i64>, Option<f64>);
 
 #[tokio::test]
-async fn every_aggregate_helper_is_a_function_postgres_has() {
+async fn every_aggregate_helper_is_a_function_postgres_has_and_decodes_as_declared() {
     let (pool, guard) = common::test_pool("qbrs_aggregates").await;
 
     sqlx::query("DROP TABLE IF EXISTS line_items")
@@ -60,7 +55,17 @@ async fn every_aggregate_helper_is_a_function_postgres_has() {
         .await
         .expect("insert line items");
 
-    let rows: Vec<Counts> = select((
+    count_counts_rows_while_count_of_counts_a_columns_non_null_values(&pool).await;
+    a_string_agg_separator_is_bound_as_data_rather_than_spliced_as_sql(&pool).await;
+    string_agg_joins_a_text_column_with_its_separator(&pool).await;
+    string_agg_over_a_column_null_in_every_row_is_null_rather_than_empty(&pool).await;
+    max_over_a_text_column_decodes_to_the_greatest_string(&pool).await;
+
+    common::shutdown(pool, guard).await;
+}
+
+async fn count_counts_rows_while_count_of_counts_a_columns_non_null_values(pool: &PgPool) {
+    let rows: Vec<CountingAggregatesRow> = select((
         line_items::order_id,
         count(),
         count_of(line_items::quantity),
@@ -71,61 +76,63 @@ async fn every_aggregate_helper_is_a_function_postgres_has() {
     ))
     .from(line_items::Table)
     .group_by(line_items::order_id)
-    .load(&pool)
+    .load(pool)
     .await
     .expect("the counting aggregates")
     .into_tuples();
-    // `count()` counts rows, `count_of` a column's non-NULL values. That
-    // is the different question the all-NULL `note` column answers.
     assert_eq!(
         rows,
         vec![(1, 3, 3, 0, Some(10), Some(2), Some(10.0 / 3.0))]
     );
+}
 
-    // A separator Postgres would read as syntax if it were written out
-    // instead of bound, and does read that way under
-    // `standard_conforming_strings = off`, which a session can set. What
-    // comes back says which of the two the renderer did.
-    let injected: Option<String> = select(string_agg(line_items::label, r"') FROM x -- \"))
+async fn a_string_agg_separator_is_bound_as_data_rather_than_spliced_as_sql(pool: &PgPool) {
+    // A plain separator would come back the same whether it was bound or
+    // spliced. This one is SQL syntax, including under
+    // `standard_conforming_strings = off`, so only binding returns it intact.
+    let separator = r"') FROM x -- \";
+    let injected: Option<String> = select(string_agg(line_items::label, separator))
         .from(line_items::Table)
-        .load_one(&pool)
+        .load_one(pool)
         .await
         .expect("a separator that is only ever data")
         .expect("one row");
     let joined = injected.expect("three labels run together");
-    let mut parts: Vec<&str> = joined.split(r"') FROM x -- \").collect();
+    let mut parts: Vec<&str> = joined.split(separator).collect();
     parts.sort_unstable();
     assert_eq!(parts, vec!["bolt", "nut", "washer"]);
+}
 
+async fn string_agg_joins_a_text_column_with_its_separator(pool: &PgPool) {
     let labels: Vec<Option<String>> = select(string_agg(line_items::label, ", "))
         .from(line_items::Table)
         .group_by(line_items::order_id)
-        .load(&pool)
+        .load(pool)
         .await
         .expect("string_agg over a text column");
-    // `string_agg` has no ORDER BY of its own here, so the group's order is
-    // the scan's; the parts are what this checks, not their order.
     let joined = labels.into_iter().next().flatten().expect("one group");
+    // Comparing the joined string as a whole would depend on scan order,
+    // since this `string_agg` has no `ORDER BY` of its own.
     let mut parts: Vec<&str> = joined.split(", ").collect();
     parts.sort_unstable();
     assert_eq!(parts, vec!["bolt", "nut", "washer"]);
+}
 
-    // Over a column that is NULL in every row, `string_agg` is NULL rather
-    // than the empty string, which is why it decodes to an `Option`.
+async fn string_agg_over_a_column_null_in_every_row_is_null_rather_than_empty(pool: &PgPool) {
     let notes: Vec<Option<String>> = select(string_agg(line_items::note, ", "))
         .from(line_items::Table)
-        .load(&pool)
+        .load(pool)
         .await
         .expect("string_agg over a nullable column");
     assert_eq!(notes, vec![None]);
+}
 
+async fn max_over_a_text_column_decodes_to_the_greatest_string(pool: &PgPool) {
     let widest: Option<String> = select(max(line_items::label))
         .from(line_items::Table)
-        .load_one(&pool)
+        .load_one(pool)
         .await
         .expect("max over text")
         .expect("one row");
     assert_eq!(widest.as_deref(), Some("washer"));
-
-    common::shutdown(pool, guard).await;
 }

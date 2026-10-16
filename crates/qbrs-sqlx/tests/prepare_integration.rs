@@ -1,8 +1,3 @@
-//! `prepare!{}` executed against a real Postgres: one rendered query,
-//! reused across multiple `.load(executor, params)` calls with different values.
-//! See `postgres_integration.rs` for the DB-setup rationale (in-process
-//! WASM Postgres vs. an external `DATABASE_URL`).
-
 mod common;
 
 use qbrs::dialect::Postgres;
@@ -11,6 +6,7 @@ use qbrs::select::select;
 use qbrs::statement::Statement;
 use qbrs::{Table, prepare};
 use qbrs_sqlx::{LoadExt, PreparedExt, StreamExt as _};
+use sqlx::PgPool;
 
 #[derive(Table)]
 #[table(name = "users_prepare_test")]
@@ -25,8 +21,14 @@ prepare! {
     struct ByEmail { email: Text }
 }
 
+fn by_email(email: &str) -> ByEmail {
+    ByEmail {
+        email: email.to_string(),
+    }
+}
+
 #[tokio::test]
-async fn prepared_query_reused_across_different_params() {
+async fn a_prepared_query_is_rendered_once_and_run_with_whatever_params_each_call_brings() {
     let (pool, guard) = common::test_pool("qbrs_test_prepare").await;
 
     sqlx::query("DROP TABLE IF EXISTS users_prepare_test")
@@ -50,49 +52,52 @@ async fn prepared_query_reused_across_different_params() {
         .load(&pool)
         .await
         .expect("seed users");
-    assert_eq!(ids.len(), 2);
+    let [ada_id, dan_id] = ids[..] else {
+        panic!("expected two ids, got {ids:?}");
+    };
 
+    one_prepared_query_loads_a_different_row_for_each_params_value(&pool, ada_id, dan_id).await;
+    a_placeholder_named_in_two_clauses_binds_as_one_parameter(&pool, ada_id).await;
+    a_prepared_query_streams_with_the_params_given_at_the_call(&pool, dan_id).await;
+
+    sqlx::query("DROP TABLE users_prepare_test")
+        .execute(&pool)
+        .await
+        .expect("cleanup");
+    common::shutdown(pool, guard).await;
+}
+
+async fn one_prepared_query_loads_a_different_row_for_each_params_value(
+    pool: &PgPool,
+    ada_id: i64,
+    dan_id: i64,
+) {
     let query = select(users::id)
         .from(users::Table)
         .filter(users::email.eq(ByEmail::email()))
         .prepare::<ByEmail, _>(Postgres);
 
     let ada: Vec<i64> = query
-        .load(
-            &pool,
-            ByEmail {
-                email: "ada@example.com".to_string(),
-            },
-        )
+        .load(pool, by_email("ada@example.com"))
         .await
         .expect("load for ada");
-    assert_eq!(ada, vec![ids[0]]);
+    assert_eq!(ada, vec![ada_id]);
 
-    // Same `query` value, no re-render, just a different `params`.
     let dan: Vec<i64> = query
-        .load(
-            &pool,
-            ByEmail {
-                email: "dan@example.com".to_string(),
-            },
-        )
+        .load(pool, by_email("dan@example.com"))
         .await
         .expect("load for dan");
-    assert_eq!(dan, vec![ids[1]]);
+    assert_eq!(dan, vec![dan_id]);
+}
 
-    // A placeholder named from two clauses is one parameter in the rendered
-    // statement, so `resolve` has one slot to fill where the query has two
-    // occurrences. Postgres says whether the numbering and the substituted
-    // list still line up.
+async fn a_placeholder_named_in_two_clauses_binds_as_one_parameter(pool: &PgPool, ada_id: i64) {
     let twice = select(users::id)
         .from(users::Table)
         .filter(users::email.eq(ByEmail::email()))
         .filter(users::email.gte(ByEmail::email()))
         .prepare::<ByEmail, _>(Postgres);
     let (sql, params) = twice
-        .resolve(ByEmail {
-            email: "ada@example.com".to_string(),
-        })
+        .resolve(by_email("ada@example.com"))
         .expect("every placeholder resolved");
     assert!(
         sql.ends_with(
@@ -103,36 +108,24 @@ async fn prepared_query_reused_across_different_params() {
     assert_eq!(params.len(), 1);
 
     let ada_again: Vec<i64> = twice
-        .load(
-            &pool,
-            ByEmail {
-                email: "ada@example.com".to_string(),
-            },
-        )
+        .load(pool, by_email("ada@example.com"))
         .await
         .expect("load through a placeholder named twice");
-    assert_eq!(ada_again, vec![ids[0]]);
+    assert_eq!(ada_again, vec![ada_id]);
+}
 
-    // A prepared query streams with the params that arrive at the call,
-    // which is the shape a reusable export has.
+async fn a_prepared_query_streams_with_the_params_given_at_the_call(pool: &PgPool, dan_id: i64) {
+    let query = select(users::id)
+        .from(users::Table)
+        .filter(users::email.eq(ByEmail::email()))
+        .prepare::<ByEmail, _>(Postgres);
     let mut streamed = query
-        .stream(
-            &pool,
-            ByEmail {
-                email: "dan@example.com".to_string(),
-            },
-        )
+        .stream(pool, by_email("dan@example.com"))
         .expect("open the prepared stream");
     let mut streamed_ids = Vec::new();
     while let Some(id) = streamed.next().await {
         streamed_ids.push(id.expect("decode a streamed row"));
     }
     drop(streamed);
-    assert_eq!(streamed_ids, vec![ids[1]]);
-
-    sqlx::query("DROP TABLE users_prepare_test")
-        .execute(&pool)
-        .await
-        .expect("cleanup");
-    common::shutdown(pool, guard).await;
+    assert_eq!(streamed_ids, vec![dan_id]);
 }

@@ -1,9 +1,3 @@
-//! `JSON`/`JSONB` columns end to end: declared as `serde_json::Value`,
-//! bound, and decoded back. Which of Postgres's two JSON types a column is
-//! is the schema's business, so only a database says one marker carries
-//! values to and from both. A database is also the only thing that says what
-//! it does *not* carry, which is why the `json` column here is never
-//! compared or ordered by: `=` and `ORDER BY` are `jsonb`'s alone.
 #![cfg(feature = "json")]
 
 mod common;
@@ -11,6 +5,7 @@ mod common;
 use qbrs::prelude::*;
 use qbrs_sqlx::prelude::*;
 use serde_json::json;
+use sqlx::PgPool;
 
 #[derive(Table)]
 #[table(name = "documents")]
@@ -18,13 +13,12 @@ use serde_json::json;
 struct Documents {
     #[column(primary_key, generated)]
     id: i64,
-    /// `jsonb`, the one the issue named.
     body: serde_json::Value,
-    /// `json`, the other spelling, and nullable.
+    // Comparing or ordering by `draft` fails in Postgres: it is a `json`
+    // column, and `=` and `ORDER BY` exist only for `jsonb`.
     draft: Option<serde_json::Value>,
 }
 
-/// The DTO a handler returns, filled by field name.
 #[derive(qbrs::FromRow, Debug, PartialEq)]
 struct Doc {
     body: serde_json::Value,
@@ -32,7 +26,7 @@ struct Doc {
 }
 
 #[tokio::test]
-async fn a_json_column_binds_and_decodes_as_the_document_it_holds() {
+async fn jsonb_and_json_columns_bind_and_decode_as_the_documents_they_hold() {
     let (pool, guard) = common::test_pool("qbrs_json").await;
 
     sqlx::query("DROP TABLE IF EXISTS documents")
@@ -64,8 +58,17 @@ async fn a_json_column_binds_and_decodes_as_the_document_it_holds() {
         .expect("insert a document")
         .expect("one row");
 
-    // An omitted nullable JSON column is a NULL of that type, not an
-    // untyped one, and stays apart from a JSON `null` inside a document.
+    a_sql_null_json_column_reads_back_apart_from_a_json_null_document(&pool, &body).await;
+    an_update_replaces_a_json_document_whole(&pool, id).await;
+    a_sql_fragment_reads_inside_a_document_with_the_column_and_key_bound_as_slots(&pool).await;
+
+    common::shutdown(pool, guard).await;
+}
+
+async fn a_sql_null_json_column_reads_back_apart_from_a_json_null_document(
+    pool: &PgPool,
+    first_body: &serde_json::Value,
+) {
     qbrs::insert::insert(documents::Table)
         .values(
             DocumentsInsert::builder()
@@ -73,14 +76,14 @@ async fn a_json_column_binds_and_decodes_as_the_document_it_holds() {
                 .draft(None::<serde_json::Value>)
                 .build(),
         )
-        .execute(&pool)
+        .execute(pool)
         .await
         .expect("insert a JSON null beside a SQL NULL");
 
     let docs: Vec<Doc> = select(documents::All)
         .from(documents::Table)
         .order_by(documents::id.asc())
-        .load(&pool)
+        .load(pool)
         .await
         .expect("read the documents back")
         .into_structs();
@@ -88,7 +91,7 @@ async fn a_json_column_binds_and_decodes_as_the_document_it_holds() {
         docs,
         vec![
             Doc {
-                body: body.clone(),
+                body: first_body.clone(),
                 draft: Some(json!({ "wip": true })),
             },
             Doc {
@@ -97,8 +100,9 @@ async fn a_json_column_binds_and_decodes_as_the_document_it_holds() {
             },
         ]
     );
+}
 
-    // `UPDATE .. SET <json column> = <document>` replaces the whole value.
+async fn an_update_replaces_a_json_document_whole(pool: &PgPool, id: i64) {
     let changed = qbrs::update::update(documents::Table)
         .set(
             qbrs::update::Assignments::from_row(DocumentsUpdate {
@@ -108,24 +112,23 @@ async fn a_json_column_binds_and_decodes_as_the_document_it_holds() {
             .expect("body is set"),
         )
         .filter(documents::id.eq(id))
-        .execute(&pool)
+        .execute(pool)
         .await
         .expect("update the document");
     assert_eq!(changed, 1);
     let replaced: serde_json::Value = select(documents::body)
         .from(documents::Table)
         .filter(documents::id.eq(id))
-        .load_one(&pool)
+        .load_one(pool)
         .await
         .expect("read the updated document")
         .expect("one row");
     assert_eq!(replaced, json!({ "kind": "allow" }));
+}
 
-    // Looking *inside* a document is an operator, and those are deferred.
-    // The escape hatch takes the column and the value as slots, so both
-    // are still checked and bound. Postgres's `?` existence operator is
-    // the one that cannot be written there, since a `?` in a `sql!{}` text
-    // is a slot; its function spelling is what `raw.rs` points at.
+async fn a_sql_fragment_reads_inside_a_document_with_the_column_and_key_bound_as_slots(
+    pool: &PgPool,
+) {
     let kinds: Vec<String> = select(qbrs::sql!(
         qbrs::expr::Text,
         "(? ->> ?)",
@@ -133,16 +136,16 @@ async fn a_json_column_binds_and_decodes_as_the_document_it_holds() {
         "kind"
     ))
     .from(documents::Table)
+    // Postgres's `body ? 'kind'` cannot be written in `sql!{}` text, where a
+    // `?` is a slot, so the existence test takes its function spelling.
     .filter(qbrs::sql!(
         qbrs::expr::Bool,
         "jsonb_exists(?, ?)",
         documents::body,
         "kind"
     ))
-    .load(&pool)
+    .load(pool)
     .await
     .expect("read a key through the escape hatch");
     assert_eq!(kinds, vec!["allow".to_string()]);
-
-    common::shutdown(pool, guard).await;
 }

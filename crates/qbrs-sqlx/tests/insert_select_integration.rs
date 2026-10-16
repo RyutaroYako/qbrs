@@ -1,9 +1,3 @@
-//! `INSERT INTO t (..) SELECT ..` against a real Postgres: the archival
-//! copy the builder exists for. Only a database says the header and the
-//! query's columns line up, that a `GENERATED ALWAYS` key the header leaves
-//! out is filled rather than refused, and that the rows land where they
-//! were sent.
-
 mod common;
 
 use qbrs::prelude::*;
@@ -19,9 +13,6 @@ struct Tickets {
     closed: bool,
 }
 
-/// The archive keeps an identity of its own. A generated column is not in
-/// the header, so the query fills the rest and the database fills this,
-/// which is what `GENERATED ALWAYS AS IDENTITY` insists on.
 #[derive(Table)]
 #[table(name = "archived_tickets")]
 #[allow(dead_code)]
@@ -33,7 +24,7 @@ struct ArchivedTickets {
 }
 
 #[tokio::test]
-async fn a_query_fills_the_target_and_leaves_the_rows_it_did_not_match() {
+async fn insert_select_copies_only_matching_rows_and_returns_the_generated_keys_postgres_filled() {
     let (pool, guard) = common::test_pool("qbrs_insert_select").await;
 
     for ddl in [
@@ -71,8 +62,6 @@ async fn a_query_fills_the_target_and_leaves_the_rows_it_did_not_match() {
         .await
         .expect("seed tickets");
 
-    // The bound value inside the source query has to be numbered by the
-    // statement it lands in, not by the query on its own.
     let closed_ones = select((tickets::subject, tickets::closed))
         .from(tickets::Table)
         .filter(tickets::closed.eq(true));
@@ -95,7 +84,6 @@ async fn a_query_fills_the_target_and_leaves_the_rows_it_did_not_match() {
         vec!["stuck door", "dead battery"]
     );
 
-    // `RETURNING` is the same clause here as on any other write.
     let second_pass: Vec<i64> = qbrs::insert::insert(archived_tickets::Table)
         .select(
             &select((tickets::subject, tickets::closed))

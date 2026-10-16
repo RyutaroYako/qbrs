@@ -1,10 +1,3 @@
-//! A `sql!{}` expression carrying a bind, selected *and* grouped by *and*
-//! ordered by in one statement. Postgres decides this one: its `GROUP BY`
-//! check matches expressions syntactically, so two occurrences of the same
-//! expression carrying differently-numbered placeholders are two different
-//! expressions to it, and the statement is rejected with 42803. Only a real
-//! server says whether the rendered SQL is one expression or three.
-
 mod common;
 
 use qbrs::prelude::*;
@@ -20,7 +13,8 @@ struct Readings {
 }
 
 #[tokio::test]
-async fn an_expression_carrying_a_bind_can_be_selected_and_grouped_by() {
+async fn an_expression_carrying_binds_is_one_expression_to_postgres_when_selected_grouped_and_ordered_by()
+ {
     let (pool, guard) = common::test_pool("qbrs_reused_bind").await;
 
     sqlx::query("DROP TABLE IF EXISTS readings")
