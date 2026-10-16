@@ -1,0 +1,37 @@
+//! Deliberately broken: a schema crate's own `ColumnList` impl that states
+//! `users::All`'s row with its two fields' types swapped, under an index type
+//! of its own. Shows that the seal refuses the impl, so `select(users::All)`
+//! cannot decode transposed. Copy into `tests/compile-bench/examples/` and run:
+//!   cargo build -p compile-bench --example forged_column_list
+use qbrs::expr::Column;
+use qbrs::prelude::*;
+use qbrs::row::RowCons;
+use qbrs::scope::{Cons, Here, Nil, NotNull, TableSlot};
+use qbrs::select::ColumnList;
+
+#[derive(Table)]
+#[table(name = "users")]
+#[allow(dead_code)]
+struct Users {
+    #[column(primary_key)]
+    id: i32,
+    name: String,
+}
+
+struct ForgedIdx;
+
+type UsersScope = Cons<TableSlot<users::Table, NotNull>, Nil>;
+type UsersColumns = Cons<Column<users::columns::id>, Cons<Column<users::columns::name>, Nil>>;
+
+impl ColumnList<UsersScope, ForgedIdx> for UsersColumns {
+    type Fields<T> = RowCons<users::columns::id, String, RowCons<users::columns::name, i32, T>>;
+    fn push_items(out: &mut Vec<qbrs::render::SelectItem>) {
+        <Self as ColumnList<UsersScope, Here>>::push_items(out);
+    }
+}
+
+fn main() {
+    let _ = select(users::All)
+        .from(users::Table)
+        .to_sql::<ForgedIdx>(Postgres);
+}

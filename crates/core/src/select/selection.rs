@@ -236,17 +236,25 @@ pub trait AllColumns: SelectableSealed {
     type Columns;
 }
 
-/// Sealed though nothing outside this crate implements it: `ColumnList`
-/// states the row and pushes the items separately, so a hand-written impl
-/// could transpose them. A plain private supertrait suffices, since no
-/// caller marker appears among its parameters.
+/// Sealed on the trait's own parameters, for the reason `scope::proof` gives,
+/// rather than on `Self` alone: `Idx` is free, so a schema crate's own index
+/// type would license an impl stating a row that transposes the items.
 mod column_list {
-    pub trait Sealed {}
-    impl Sealed for crate::scope::Nil {}
-    impl<C: crate::expr::ColumnKey, Tail> Sealed for crate::scope::Cons<crate::expr::Column<C>, Tail> {}
+    use super::{ColumnList, RowField};
+    use crate::expr::{Column, ColumnKey};
+    use crate::scope::{Cons, Nil};
+
+    pub trait Sealed<Scope, Idx> {}
+    impl<Scope, Idx> Sealed<Scope, Idx> for Nil {}
+    impl<C: ColumnKey, Tail, Scope, Idx> Sealed<Scope, Idx> for Cons<Column<C>, Tail>
+    where
+        Column<C>: RowField<Scope, Idx>,
+        Tail: ColumnList<Scope, Idx>,
+    {
+    }
 }
 
-pub trait ColumnList<Scope, Idx>: column_list::Sealed {
+pub trait ColumnList<Scope, Idx>: column_list::Sealed<Scope, Idx> {
     type Fields<Tail>;
     fn push_items(out: &mut Vec<SelectItem>);
 }
