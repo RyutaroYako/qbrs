@@ -16,9 +16,9 @@ pub trait Statement: private::Sealed {
     type Dialect: Dialect;
     type Table: Table;
 
-    /// Renders into whatever sink the statement is going into: a
-    /// `QuerySink` when it is the statement, a `FragmentSink` when it is a
-    /// CTE body whose placeholders the host query will number.
+    /// Takes `&mut dyn Sink` rather than a `QuerySink`: as a CTE body the
+    /// statement renders into a `FragmentSink`, whose binds the host query
+    /// numbers.
     #[doc(hidden)]
     fn render_into(&self, sink: &mut dyn Sink);
 

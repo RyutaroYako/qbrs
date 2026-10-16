@@ -51,8 +51,8 @@ impl<D, Scope, Sel> Select<D, Scope, Sel> {
 pub trait CannotFilterAfterErase {}
 
 impl<D, Output> DynSelect<D, Output> {
-    /// Always a compile error. See `CannotFilterAfterErase`. Present so the
-    /// error is that one, rather than `Iterator::filter`'s.
+    /// Kept though it never compiles: without it, `.filter(..)` on an
+    /// erased query resolves to `Iterator::filter` and reports iterators.
     #[doc(hidden)]
     pub fn filter<T: CannotFilterAfterErase>(self, _cond: T) -> Self {
         self

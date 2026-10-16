@@ -13,10 +13,9 @@
 //! it nullable?" question is a lookup in it. Reading that module first makes
 //! the rest of the crate follow.
 
-// Every builder struct carries a `PhantomData<fn() -> (D, Scope, ...)>`
-// marker tuple of compile-time-only type tags. That's a deliberate,
-// repeated pattern rather than a complexity smell, and there's no simpler
-// form to factor it into, so the lint is suppressed crate-wide.
+// Allowed crate-wide rather than answered with type aliases: every builder
+// carries its own `PhantomData<fn() -> (D, Scope, ..)>` of type tags, so an
+// alias would rename each one once and simplify nothing.
 #![allow(clippy::type_complexity)]
 
 pub mod cte;
@@ -39,9 +38,7 @@ mod tests {
     use crate::expr::Value;
 
     #[test]
-    fn a_value_names_the_sql_type_it_came_from() {
-        // `qbrs-sqlx` reports this name when a column type is enabled here
-        // and not there, so every variant that can exist has to have one.
+    fn every_value_names_the_sql_type_qbrs_sqlx_reports_when_that_type_is_not_enabled_there() {
         assert_eq!(Value::I64(1).type_name(), "BigInt");
         assert_eq!(Value::NullText.type_name(), "Text");
         #[cfg(feature = "chrono")]

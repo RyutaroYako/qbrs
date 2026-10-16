@@ -62,8 +62,6 @@ impl<K, V, Tail> RowCons<K, V, Tail> {
         }
     }
 
-    /// This cell's value and the rest, by value: what a walk that consumes
-    /// the chain needs (`insert::InsertValues`).
     #[doc(hidden)]
     pub fn into_cell(self) -> (V, Tail) {
         (self.value, self.tail)
@@ -71,12 +69,10 @@ impl<K, V, Tail> RowCons<K, V, Tail> {
 }
 
 mod field {
-    /// Carries the trait's own parameters and is implemented only for the
-    /// honest pairs, for the reason `scope::proof` explains: a column
-    /// marker is the caller's own type, so neither a seal on `Self` alone
-    /// nor a private proof *type* (which projection reaches) is enough.
-    /// Either would let a schema crate prove its column is in a row that
-    /// doesn't hold it.
+    /// Carries the trait's own parameters rather than sealing `Self` alone
+    /// or hiding a proof type, for the reason `scope::proof` gives: either
+    /// would let a schema crate prove its column is in a row that doesn't
+    /// hold it.
     pub trait Sealed<K, Idx> {}
 }
 
@@ -134,18 +130,14 @@ where
     }
 }
 
-/// An identifier spelled one `char` per cell, so two keys declared in
-/// different crates can be compared by the *name* they share rather than by
-/// being the same type. `char` is one of the three types stable const
-/// generics accept.
+/// One `char` per cell rather than one `&'static str` parameter, which
+/// stable const generics do not accept.
 #[doc(hidden)]
 pub struct NameChar<const C: char, Rest>(PhantomData<Rest>);
 
-/// End of a `NameChar` chain.
 #[doc(hidden)]
 pub struct NameEnd;
 
-/// Builds a `NameChar` chain from character literals.
 #[doc(hidden)]
 #[macro_export]
 macro_rules! type_name {
@@ -165,9 +157,9 @@ pub trait Named: named::Sealed {
 }
 
 pub(crate) mod named {
-    /// Sealed the way `scope::BaseTable` is: a name is written by a macro
-    /// (`#[derive(Table)]`, `with!`, `label!`, or `expr_key!`), so the
-    /// spelling in `Named::NAME` and the one in the SQL cannot disagree.
+    /// Sealed rather than open, the way `scope::BaseTable` is: only a macro
+    /// (`#[derive(Table)]`, `with!`, `label!`, `expr_key!`) writes a name, so
+    /// the spelling in `Named::NAME` and the one in the SQL cannot disagree.
     pub trait Sealed {}
 }
 
@@ -202,7 +194,7 @@ pub trait FieldValue {
 }
 
 mod take_named {
-    /// The same shape as `field::Sealed`, and for the same reason.
+    /// Carries the trait's parameters, for the reason `field::Sealed` does.
     pub trait Sealed<F, Idx> {}
 }
 
@@ -257,12 +249,11 @@ where
 }
 
 mod same_name {
-    /// Sealed with the same bounds the one honest impl has: `Self` is a
-    /// column marker local to whoever derived the schema and `Other` is
-    /// free, so without this a schema crate could write
-    /// `impl SameNameAs<a::columns::one> for b::columns::two {}` and splice
-    /// a `UNION` branch or a CTE body in transposed, which is the failure
-    /// `SameShape` is here to stop.
+    /// Sealed with the one honest impl's bounds rather than left open:
+    /// `Self` is a schema's own column marker and `Other` is free, so a
+    /// schema crate could write
+    /// `impl SameNameAs<a::columns::one> for b::columns::two {}` and splice a
+    /// `UNION` branch or a CTE body in transposed.
     pub trait Sealed<Other> {}
 
     impl<A, B> Sealed<B> for A
@@ -304,10 +295,9 @@ where
 )]
 pub trait SameShape<Other> {}
 
-// Walked cell by cell rather than compared as tuples: the positional view
-// stops at 32 fields, and two selections agree or don't regardless of how
-// wide they are. No `do_not_recommend` on the cons impl: it is what keeps
-// the `SameNameAs` obligation the one that gets reported.
+// Walked cell by cell rather than compared as tuples, since the positional
+// view stops at 32 fields. The cons impl has no `do_not_recommend`, which
+// keeps the `SameNameAs` obligation the one that gets reported.
 impl SameShape<RowNil> for RowNil {}
 
 impl<K1, K2, V, Tail1, Tail2> SameShape<RowCons<K2, V, Tail2>> for RowCons<K1, V, Tail1>
@@ -345,10 +335,11 @@ impl<K, Inner> RowKey for Labeled<K, Inner> {
 }
 
 mod column_names {
-    /// Sealed to the two shapes a row has: `CteShape::Row` is bounded by
-    /// `ColumnNames`, so an open impl would let a `WITH` header be spelled
-    /// by something that is not the row `SameShape` checked. A local type
-    /// in that position is also what makes `SameShape` itself forgeable.
+    /// Sealed to the two shapes a row has rather than left open:
+    /// `CteShape::Row` is bounded by `ColumnNames`, so an open impl would let
+    /// a `WITH` header be spelled by something other than the row
+    /// `SameShape` checked, and a local type there makes `SameShape`
+    /// forgeable.
     pub trait Sealed {}
 }
 
@@ -357,8 +348,8 @@ mod column_names {
 /// body was checked against. Implemented here only, for `RowNil` and
 /// `RowCons`.
 pub trait ColumnNames: column_names::Sealed {
-    /// One `push` per field, so the list is built without an allocation per
-    /// level of the chain.
+    /// Pushes into one buffer rather than returning a `Vec` per level of the
+    /// chain, which would allocate once per field.
     #[doc(hidden)]
     fn push_names(out: &mut Vec<&'static str>);
 
@@ -447,9 +438,9 @@ impl<L> Row<L> {
         (value, Row::new(rest))
     }
 
-    /// Reads a field by naming its key type rather than passing the value
-    /// that selected it. This is what the generated accessors use, since a
-    /// built-in expression key is never spelled at a call site.
+    /// The generated accessors read through this rather than `get`: a
+    /// built-in expression key is never spelled at a call site, so there is
+    /// no value to pass.
     #[doc(hidden)]
     pub fn peek_key<K, Idx>(&self) -> &<L as Field<K, Idx>>::Value
     where
@@ -458,9 +449,9 @@ impl<L> Row<L> {
         self.0.peek()
     }
 
-    /// `take` by key type rather than by the value that selected it. This
-    /// is what a `#[from_row(from = ..)]` field uses, since identity is the
-    /// one lookup that stays unambiguous when two columns share a name.
+    /// A `#[from_row(from = ..)]` field reads through this rather than
+    /// `take_named`: identity is the one lookup that stays unambiguous when
+    /// two columns share a name.
     #[doc(hidden)]
     pub fn take_key<K, Idx>(self) -> (<L as Field<K, Idx>>::Value, Row<<L as Field<K, Idx>>::Rest>)
     where
@@ -668,9 +659,6 @@ impl<L> IntoStructs for Vec<Row<L>> {
     }
 }
 
-/// Declares an expression's own row key and the `row.<name>()` accessor that
-/// reads it, so a selection using one needs nothing declared at the call
-/// site.
 macro_rules! expr_key {
     ($key:ident, $accessor:ident, $method:ident, $doc:literal, $($ch:literal),+) => {
         #[doc = $doc]

@@ -19,9 +19,8 @@ pub trait UpdateRow: private::Sealed {
 }
 
 mod private {
-    /// `sets()` names columns of `Table` by string; `#[derive(Table)]` is
-    /// what guarantees they exist, so it is the only thing that can produce
-    /// an `UpdateRow`.
+    /// Sealed rather than open: `sets()` names columns by string, and only
+    /// `#[derive(Table)]` guarantees they exist.
     pub trait Sealed {}
 }
 
@@ -38,9 +37,9 @@ pub struct Assignments<T> {
     _marker: PhantomData<fn() -> T>,
 }
 
-// Hand-written for the reason `Expr`'s are: a derive would ask the phantom
-// table marker to be `Clone`/`Debug`, and a schema's marker is a bare unit
-// struct, so the derived impls would apply to no table at all.
+// Hand-written, not derived: a derive would ask the phantom table marker to
+// be `Clone`/`Debug`, which a schema's bare unit-struct marker is not, so the
+// derived impls would apply to no table at all.
 impl<T> Clone for Assignments<T> {
     fn clone(&self) -> Self {
         Assignments {
@@ -93,10 +92,9 @@ impl<T: Table> Assignments<T> {
     }
 }
 
-/// A column assigned twice is not a statement any database accepts, and
-/// layering a computed assignment over a request's is exactly when it
-/// happens, so the later one replaces the earlier. Shared with the
-/// `ON CONFLICT DO UPDATE` list, which is built the same way.
+/// Replaces an earlier assignment to the same column rather than appending:
+/// a `SET` naming one column twice is not a statement any database accepts,
+/// and layering a computed assignment over a request's is when it happens.
 pub(crate) fn push_set(
     sets: &mut Vec<(&'static str, ExprKind)>,
     name: &'static str,
@@ -107,13 +105,10 @@ pub(crate) fn push_set(
 }
 
 impl<T> Assignments<T> {
-    /// The list itself, for the one other statement that renders a `SET`.
     pub(crate) fn into_sets(self) -> Vec<(&'static str, ExprKind)> {
         self.sets
     }
 
-    /// `col = $n, col = $n`: the one renderer for a `SET` list, shared by
-    /// `UPDATE` and `ON CONFLICT DO UPDATE`.
     pub(crate) fn render_into<D: Dialect>(&self, sink: &mut dyn Sink) {
         for (i, (col, value)) in self.sets.iter().enumerate() {
             if i > 0 {
