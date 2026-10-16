@@ -43,6 +43,9 @@ with! {
     struct big_orders { user_id: BigInt, total: Nullable<BigInt> }
 }
 
+const PARTIAL_UNIQUE_INDEX_FOR_CONFLICT_TARGETS: &str =
+    "CREATE UNIQUE INDEX users_named ON users (display_name) WHERE display_name IS NOT NULL";
+
 async fn schema() -> SqlitePool {
     let pool = SqlitePool::connect("sqlite::memory:")
         .await
@@ -51,15 +54,47 @@ async fn schema() -> SqlitePool {
         "CREATE TABLE users (id INTEGER PRIMARY KEY AUTOINCREMENT, email TEXT NOT NULL UNIQUE, display_name TEXT)",
         "CREATE TABLE orders (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER NOT NULL, total INTEGER NOT NULL)",
         "CREATE TABLE archived_orders (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER NOT NULL, total INTEGER NOT NULL)",
-        // A partial unique index, so a conflict target carrying an index
-        // predicate has something to be inferred against.
-        "CREATE UNIQUE INDEX users_named ON users (display_name) WHERE display_name IS NOT NULL",
+        PARTIAL_UNIQUE_INDEX_FOR_CONFLICT_TARGETS,
     ] {
         sqlx::query(sqlx::AssertSqlSafe(ddl))
             .execute(&pool)
             .await
             .expect("create schema");
     }
+    pool
+}
+
+async fn insert_named_ada_with_orders_of_100_and_2000_and_unnamed_dan_with_30(
+    pool: &SqlitePool,
+) -> Vec<sqlx::sqlite::SqliteRow> {
+    run(
+        pool,
+        insert(users::Table)
+            .values(
+                UsersInsert::builder()
+                    .email("ada@example.com")
+                    .display_name("Ada")
+                    .build(),
+            )
+            .values(UsersInsert::builder().email("dan@example.com").build())
+            .to_sql(Sqlite),
+    )
+    .await;
+    run(
+        pool,
+        insert(orders::Table)
+            .values(OrdersInsert::builder().user_id(1).total(100).build())
+            .values(OrdersInsert::builder().user_id(1).total(2000).build())
+            .values(OrdersInsert::builder().user_id(2).total(30).build())
+            .returning(orders::id)
+            .to_sql(Sqlite),
+    )
+    .await
+}
+
+async fn seeded() -> SqlitePool {
+    let pool = schema().await;
+    insert_named_ada_with_orders_of_100_and_2000_and_unnamed_dan_with_30(&pool).await;
     pool
 }
 
@@ -83,9 +118,9 @@ async fn run(
             Value::NullBool => q.bind(None::<bool>),
             Value::NullBytes => q.bind(None::<Vec<u8>>),
             Value::Placeholder(name) => panic!("unresolved placeholder {name}"),
-            // The feature-gated column types decode through their own
-            // crates. This SQLite battery doesn't pull those in, and they
-            // aren't there at all unless those features are on.
+            // Not removable: the feature-gated variants exist whenever another
+            // crate in the build enables those features, and this battery
+            // binds none of them.
             #[allow(unreachable_patterns)]
             other => panic!("no SQLite binding for {other:?}"),
         };
@@ -95,36 +130,32 @@ async fn run(
         .unwrap_or_else(|e| panic!("sqlite rejected `{sql}`: {e}"))
 }
 
+async fn display_name_of(pool: &SqlitePool, email: &str) -> Option<String> {
+    let rows = run(
+        pool,
+        select(users::display_name)
+            .from(users::Table)
+            .filter(users::email.eq(email.to_string()))
+            .to_sql(Sqlite),
+    )
+    .await;
+    rows[0].get(0)
+}
+
+async fn single_i64(pool: &SqlitePool, statement: (String, Vec<Value>)) -> i64 {
+    run(pool, statement).await[0].get::<i64, _>(0)
+}
+
 #[tokio::test]
-async fn sqlite_executes_every_rendered_statement_shape() {
+async fn a_multi_row_insert_returns_one_id_per_row() {
     let pool = schema().await;
-
-    run(
-        &pool,
-        insert(users::Table)
-            .values(
-                UsersInsert::builder()
-                    .email("ada@example.com")
-                    .display_name("Ada")
-                    .build(),
-            )
-            .values(UsersInsert::builder().email("dan@example.com").build())
-            .to_sql(Sqlite),
-    )
-    .await;
-
-    let ids = run(
-        &pool,
-        insert(orders::Table)
-            .values(OrdersInsert::builder().user_id(1).total(100).build())
-            .values(OrdersInsert::builder().user_id(1).total(2000).build())
-            .values(OrdersInsert::builder().user_id(2).total(30).build())
-            .returning(orders::id)
-            .to_sql(Sqlite),
-    )
-    .await;
+    let ids = insert_named_ada_with_orders_of_100_and_2000_and_unnamed_dan_with_30(&pool).await;
     assert_eq!(ids.len(), 3);
+}
 
+#[tokio::test]
+async fn on_conflict_do_update_assigns_the_update_row_to_the_conflicting_row() {
+    let pool = seeded().await;
     run(
         &pool,
         insert(users::Table)
@@ -145,7 +176,15 @@ async fn sqlite_executes_every_rendered_statement_shape() {
             .to_sql(Sqlite),
     )
     .await;
+    assert_eq!(
+        display_name_of(&pool, "ada@example.com").await.as_deref(),
+        Some("Ada Lovelace")
+    );
+}
 
+#[tokio::test]
+async fn on_conflict_do_update_reads_the_proposed_row_through_excluded() {
+    let pool = seeded().await;
     run(
         &pool,
         insert(users::Table)
@@ -162,7 +201,15 @@ async fn sqlite_executes_every_rendered_statement_shape() {
             .to_sql(Sqlite),
     )
     .await;
+    assert_eq!(
+        display_name_of(&pool, "ada@example.com").await.as_deref(),
+        Some("Ada A.")
+    );
+}
 
+#[tokio::test]
+async fn a_do_update_whose_filter_rejects_the_conflicting_row_leaves_it_unchanged() {
+    let pool = seeded().await;
     run(
         &pool,
         insert(users::Table)
@@ -180,363 +227,15 @@ async fn sqlite_executes_every_rendered_statement_shape() {
             .to_sql(Sqlite),
     )
     .await;
+    assert_eq!(
+        display_name_of(&pool, "ada@example.com").await.as_deref(),
+        Some("Ada")
+    );
+}
 
-    run(
-        &pool,
-        update(users::Table)
-            .set(
-                Assignments::from_row(UsersUpdate {
-                    display_name: Some(None),
-                    ..Default::default()
-                })
-                .expect("display_name is set"),
-            )
-            .filter(users::email.eq("dan@example.com"))
-            .to_sql(Sqlite),
-    )
-    .await;
-
-    let joined = run(
-        &pool,
-        select((users::email, orders::total))
-            .from(users::Table)
-            .left_join(orders::Table, orders::user_id.eq(users::id))
-            .filter(users::email.eq("ada@example.com"))
-            .order_by(orders::total.desc())
-            .limit(10)
-            .to_sql(Sqlite),
-    )
-    .await;
-    assert_eq!(joined.len(), 2);
-
-    let grouped = run(
-        &pool,
-        select((orders::user_id, sum(orders::total), count()))
-            .from(orders::Table)
-            .group_by(orders::user_id)
-            .having(sum(orders::total).gt(50i64))
-            .to_sql(Sqlite),
-    )
-    .await;
-    // Only user 1 clears the HAVING threshold.
-    assert_eq!(grouped.len(), 1);
-
-    // A bare OFFSET: SQLite has no `OFFSET` without a `LIMIT`, so the
-    // dialect fills one in.
-    let offset_only = run(
-        &pool,
-        select(users::email)
-            .from(users::Table)
-            .order_by(users::id.asc())
-            .offset(1)
-            .to_sql(Sqlite),
-    )
-    .await;
-    assert_eq!(offset_only.len(), 1);
-
-    // Branches that carry their own `ORDER BY`/`LIMIT`, or a `WITH`: each
-    // binds to the branch, not to the compound, which is what the derived
-    // table around every SQLite branch is for.
-    let paged_union = run(
-        &pool,
-        select((users::email,))
-            .from(users::Table)
-            .order_by(users::id.asc())
-            .limit(1)
-            .union(&select((users::email,)).from(users::Table))
-            .to_sql(Sqlite),
-    )
-    .await;
-    assert_eq!(paged_union.len(), 2);
-
-    let ordered_union = run(
-        &pool,
-        select((users::email,))
-            .from(users::Table)
-            .order_by(users::id.asc())
-            .union(&select((users::email,)).from(users::Table))
-            .to_sql(Sqlite),
-    )
-    .await;
-    assert_eq!(ordered_union.len(), 2);
-
-    let cte_branch = run(
-        &pool,
-        select((big_orders::user_id,))
-            .from(users::Table)
-            .inner_join(
-                with(
-                    big_orders::Table,
-                    &select((orders::user_id, sum(orders::total)))
-                        .from(orders::Table)
-                        .group_by(orders::user_id),
-                ),
-                big_orders::user_id.eq(users::id),
-            )
-            .union(&select((orders::user_id,)).from(orders::Table))
-            .to_sql(Sqlite),
-    )
-    .await;
-    assert!(!cte_branch.is_empty());
-
-    let union = run(
-        &pool,
-        select((users::email,))
-            .from(users::Table)
-            .filter(users::email.eq("ada@example.com"))
-            .union(
-                &select((users::email,))
-                    .from(users::Table)
-                    .filter(users::email.eq("dan@example.com")),
-            )
-            .to_sql(Sqlite),
-    )
-    .await;
-    assert_eq!(union.len(), 2);
-
-    let totals = select((orders::user_id, sum(orders::total)))
-        .from(orders::Table)
-        .group_by(orders::user_id);
-    let cte = run(
-        &pool,
-        select((users::email, big_orders::total))
-            .from(users::Table)
-            .inner_join(
-                with(big_orders::Table, &totals),
-                big_orders::user_id.eq(users::id),
-            )
-            .to_sql(Sqlite),
-    )
-    .await;
-    assert_eq!(cte.len(), 2);
-
-    let exists_q = select(users::email).from(users::Table);
-    let correlated = exists_q
-        .correlated(orders::Table, orders::id)
-        .filter(orders::user_id.eq(users::id))
-        .exists();
-    let rows = run(&pool, exists_q.filter(correlated).to_sql(Sqlite)).await;
-    assert_eq!(rows.len(), 2);
-
-    // `IN (<subquery>)`: only user 1 (ada) has an order over 50.
-    let big_spenders = select(orders::user_id)
-        .from(orders::Table)
-        .filter(orders::total.gt(50i64));
-    let contains_rows = run(
-        &pool,
-        select(users::email)
-            .from(users::Table)
-            .filter(big_spenders.contains(users::id))
-            .to_sql(Sqlite),
-    )
-    .await;
-    assert_eq!(contains_rows.len(), 1);
-
-    let not_contains_rows = run(
-        &pool,
-        select(users::email)
-            .from(users::Table)
-            .filter(big_spenders.not_contains(users::id))
-            .to_sql(Sqlite),
-    )
-    .await;
-    assert_eq!(not_contains_rows.len(), 1);
-
-    qbrs::label!(rank_in_user);
-
-    let ranked = run(
-        &pool,
-        select((
-            orders::user_id,
-            row_number()
-                .over(
-                    window()
-                        .partition_by(orders::user_id)
-                        .order_by(orders::total.desc()),
-                )
-                .label(label::rank_in_user),
-        ))
-        .from(orders::Table)
-        .to_sql(Sqlite),
-    )
-    .await;
-    assert_eq!(ranked.len(), 3);
-
-    let right = run(
-        &pool,
-        select((users::email, orders::total))
-            .from(orders::Table)
-            .right_join(users::Table, orders::user_id.eq(users::id))
-            .to_sql(Sqlite),
-    )
-    .await;
-    assert_eq!(right.len(), 3);
-
-    let raw = run(
-        &pool,
-        select((users::email,))
-            .from(users::Table)
-            .filter(sql!(Bool, "length(email) > ?", 3i64))
-            .to_sql(Sqlite),
-    )
-    .await;
-    assert_eq!(raw.len(), 2);
-
-    let distinct = run(
-        &pool,
-        select((users::email,))
-            .from(users::Table)
-            .inner_join(orders::Table, orders::user_id.eq(users::id))
-            .distinct()
-            .to_sql(Sqlite),
-    )
-    .await;
-    assert_eq!(distinct.len(), 2);
-
-    // `.order_by_selected(..)` is what a `SELECT DISTINCT` needs its sort
-    // key to satisfy. It is checked against the selection at compile time,
-    // rather than only discovered when the database rejects it.
-    let distinct_sorted = run(
-        &pool,
-        select((users::email, users::display_name))
-            .from(users::Table)
-            .distinct()
-            .order_by_selected(users::email, SortDir::Asc)
-            .to_sql(Sqlite),
-    )
-    .await;
-    assert_eq!(distinct_sorted.len(), 2);
-
-    let bulk = run(
-        &pool,
-        insert(orders::Table)
-            .values_all((10..13).map(|n| OrdersInsert::builder().user_id(1).total(n).build()))
-            .expect("three rows")
-            .returning(orders::id)
-            .to_sql(Sqlite),
-    )
-    .await;
-    assert_eq!(bulk.len(), 3);
-
-    let deleted = run(
-        &pool,
-        delete(orders::Table)
-            .filter(orders::total.lt(50i64))
-            .returning(orders::id)
-            .to_sql(Sqlite),
-    )
-    .await;
-    assert_eq!(deleted.len(), 4);
-
-    let remaining = run(&pool, select(count()).from(orders::Table).to_sql(Sqlite)).await;
-    assert_eq!(remaining[0].get::<i64, _>(0), 2);
-
-    // `count_sql` is its own rendering: the query wrapped in a total, with
-    // its paging dropped. It is therefore executed here rather than only
-    // asserted as a string.
-    let total = run(
-        &pool,
-        select((orders::id,))
-            .from(orders::Table)
-            .filter(orders::total.gt(0i64))
-            .order_by(orders::id.desc())
-            .limit(1)
-            .count_sql(Sqlite),
-    )
-    .await;
-    assert_eq!(total[0].get::<i64, _>(0), 2);
-
-    let grouped_total = run(
-        &pool,
-        select((orders::user_id, count()))
-            .from(orders::Table)
-            .group_by(orders::user_id)
-            .having_all(vec![predicate(count().gte(1i64))])
-            .count_sql(Sqlite),
-    )
-    .await;
-    assert_eq!(grouped_total[0].get::<i64, _>(0), 1);
-
-    let full = run(
-        &pool,
-        select((users::email, orders::total))
-            .from(users::Table)
-            .full_join(orders::Table, orders::user_id.eq(users::id))
-            .to_sql(Sqlite),
-    )
-    .await;
-    assert!(!full.is_empty());
-
-    let intersected = run(
-        &pool,
-        select((users::email,))
-            .from(users::Table)
-            .intersect(
-                &select((users::email,))
-                    .from(users::Table)
-                    .filter(users::email.like("ada%")),
-            )
-            .to_sql(Sqlite),
-    )
-    .await;
-    assert_eq!(intersected.len(), 1);
-
-    let excepted = run(
-        &pool,
-        select((users::email,))
-            .from(users::Table)
-            .except(
-                &select((users::email,))
-                    .from(users::Table)
-                    .filter(users::email.like("ada%")),
-            )
-            .to_sql(Sqlite),
-    )
-    .await;
-    assert_eq!(excepted.len(), 1);
-
-    let erased = run(
-        &pool,
-        select((users::email,))
-            .from(users::Table)
-            .erase()
-            .limit(1)
-            .to_sql(Sqlite),
-    )
-    .await;
-    assert_eq!(erased.len(), 1);
-
-    // The expression arms a single `.filter()` never reaches: `AND`/`OR`
-    // between two conditions, `NOT`, `IS NULL`, `!=`, `<=`, and the
-    // `TRUE`/`FALSE` an empty `all_of`/`any_of` folds to.
-    let combined = run(
-        &pool,
-        select((users::email,))
-            .from(users::Table)
-            .filter(
-                users::display_name
-                    .is_not_null()
-                    .and(users::email.ne("nobody@example.com"))
-                    .or(users::id.lte(0i64)),
-            )
-            .filter(!users::display_name.is_null())
-            .filter(all_of(Vec::<Expr<Nil, Bool>>::new()))
-            .filter(any_of([users::id.gte(1i64)]))
-            .to_sql(Sqlite),
-    )
-    .await;
-    assert!(!combined.is_empty());
-
-    // `UPDATE .. SET <column> = <expression>` and `ON CONFLICT DO NOTHING`.
-    run(
-        &pool,
-        qbrs::update::update(users::Table)
-            .set_to(users::email, sql!(Text, "lower(?)", users::email))
-            .filter(users::id.eq(1i64))
-            .to_sql(Sqlite),
-    )
-    .await;
-
+#[tokio::test]
+async fn on_conflict_do_nothing_skips_the_conflicting_row() {
+    let pool = seeded().await;
     run(
         &pool,
         insert(users::Table)
@@ -545,12 +244,15 @@ async fn sqlite_executes_every_rendered_statement_shape() {
             .to_sql(Sqlite),
     )
     .await;
+    assert_eq!(
+        display_name_of(&pool, "ada@example.com").await.as_deref(),
+        Some("Ada")
+    );
+}
 
-    // A conflict target that names a partial unique index. SQLite rejects
-    // a target it cannot infer an index from, so reaching this one at all
-    // is what says the predicate rendered where SQLite reads it. The row
-    // it conflicts with is inserted here rather than borrowed from 400
-    // lines up, so what the `RETURNING` says is about this shape.
+#[tokio::test]
+async fn sqlite_infers_a_partial_unique_index_from_a_conflict_target_carrying_its_predicate() {
+    let pool = schema().await;
     let seeded = run(
         &pool,
         insert(users::Table)
@@ -587,99 +289,232 @@ async fn sqlite_executes_every_rendered_statement_shape() {
         dropped.is_empty(),
         "the partial index should have dropped the row"
     );
+}
 
-    // `count(<column>)` counts non-NULLs, unlike `count(*)`.
-    let counted = run(
+#[tokio::test]
+async fn an_update_sets_a_nullable_column_to_null() {
+    let pool = seeded().await;
+    run(
         &pool,
-        select((count(), count_of(users::display_name)))
-            .from(users::Table)
+        update(users::Table)
+            .set(
+                Assignments::from_row(UsersUpdate {
+                    display_name: Some(None),
+                    ..Default::default()
+                })
+                .expect("display_name is set"),
+            )
+            .filter(users::email.eq("ada@example.com"))
             .to_sql(Sqlite),
     )
     .await;
-    assert!(counted[0].get::<i64, _>(0) >= counted[0].get::<i64, _>(1));
+    assert_eq!(display_name_of(&pool, "ada@example.com").await, None);
+}
 
-    // A set operation's own total.
-    let union_total = run(
+#[tokio::test]
+async fn an_update_assigns_an_expression_the_database_computes() {
+    let pool = seeded().await;
+    run(
         &pool,
-        select((users::email,))
-            .from(users::Table)
-            .union(
-                &select((users::email,))
-                    .from(users::Table)
-                    .filter(users::email.like("ada%")),
-            )
-            .count_sql(Sqlite),
+        update(users::Table)
+            .set_to(users::display_name, sql!(Text, "upper(?)", users::email))
+            .filter(users::id.eq(1i64))
+            .to_sql(Sqlite),
     )
     .await;
-    assert!(union_total[0].get::<i64, _>(0) >= 1);
+    assert_eq!(
+        display_name_of(&pool, "ada@example.com").await.as_deref(),
+        Some("ADA@EXAMPLE.COM")
+    );
+}
 
-    // `ORDER BY <ordinal>` + paging on a set operation is the one place
-    // SQLite's derived-table branch wrapping and its ordinal ordering meet.
-    let paged_union = run(
+#[tokio::test]
+async fn a_left_join_with_order_by_and_limit_returns_each_matching_order() {
+    let pool = seeded().await;
+    let joined = run(
         &pool,
-        select((users::email,))
+        select((users::email, orders::total))
             .from(users::Table)
-            .union_all(
-                &select((users::email,))
-                    .from(users::Table)
-                    .filter(users::email.like("ada%")),
-            )
-            .order_by_column(users::email, SortDir::Desc)
-            .limit(2)
+            .left_join(orders::Table, orders::user_id.eq(users::id))
+            .filter(users::email.eq("ada@example.com"))
+            .order_by(orders::total.desc())
+            .limit(10)
+            .to_sql(Sqlite),
+    )
+    .await;
+    assert_eq!(joined.len(), 2);
+}
+
+#[tokio::test]
+async fn a_right_join_keeps_every_row_of_the_joined_table() {
+    let pool = seeded().await;
+    let right = run(
+        &pool,
+        select((users::email, orders::total))
+            .from(orders::Table)
+            .right_join(users::Table, orders::user_id.eq(users::id))
+            .to_sql(Sqlite),
+    )
+    .await;
+    assert_eq!(right.len(), 3);
+}
+
+#[tokio::test]
+async fn a_full_join_returns_every_matched_pair() {
+    let pool = seeded().await;
+    let full = run(
+        &pool,
+        select((users::email, orders::total))
+            .from(users::Table)
+            .full_join(orders::Table, orders::user_id.eq(users::id))
+            .to_sql(Sqlite),
+    )
+    .await;
+    assert_eq!(full.len(), 3);
+}
+
+#[tokio::test]
+async fn having_keeps_only_the_groups_past_its_threshold() {
+    let pool = seeded().await;
+    let grouped = run(
+        &pool,
+        select((orders::user_id, sum(orders::total), count()))
+            .from(orders::Table)
+            .group_by(orders::user_id)
+            .having(sum(orders::total).gt(50i64))
+            .to_sql(Sqlite),
+    )
+    .await;
+    assert_eq!(grouped.len(), 1, "only Ada's orders sum past 50");
+}
+
+#[tokio::test]
+async fn a_bare_offset_runs_because_the_dialect_supplies_the_limit_sqlite_requires() {
+    let pool = seeded().await;
+    let offset_only = run(
+        &pool,
+        select(users::email)
+            .from(users::Table)
+            .order_by(users::id.asc())
             .offset(1)
             .to_sql(Sqlite),
     )
     .await;
-    assert_eq!(paged_union.len(), 2);
+    assert_eq!(offset_only.len(), 1);
+}
 
-    // A separator SQLite would read as syntax if it were written out
-    // instead of bound, so the returned string says which of the two it is.
-    let names = run(
-        &pool,
-        select((string_agg(users::email, r"')--"),))
-            .from(users::Table)
-            .filter(users::email.like("%@example.com"))
-            .to_sql(Sqlite),
-    )
-    .await;
-    let emails = run(
+#[tokio::test]
+async fn a_union_branch_applies_its_own_limit_rather_than_the_compounds() {
+    let pool = seeded().await;
+    let paged_union = run(
         &pool,
         select((users::email,))
             .from(users::Table)
-            .filter(users::email.like("%@example.com"))
-            .order_by(users::email.asc())
+            .order_by(users::id.asc())
+            .limit(1)
+            .union(&select((users::email,)).from(users::Table))
             .to_sql(Sqlite),
     )
     .await;
-    let expected: Vec<String> = emails.iter().map(|row| row.get(0)).collect();
-    let joined: Option<String> = names[0].get(0);
-    let joined = joined.expect("the users run together");
-    let mut parts: Vec<&str> = joined.split("')--").collect();
-    parts.sort_unstable();
-    assert_eq!(
-        parts,
-        expected.iter().map(String::as_str).collect::<Vec<_>>()
-    );
+    assert_eq!(paged_union.len(), 2);
+}
 
-    // The aggregates that render a `CAST`, and a `NOT EXISTS`.
-    let stats = run(
+#[tokio::test]
+async fn a_union_branch_may_carry_its_own_order_by() {
+    let pool = seeded().await;
+    let ordered_union = run(
         &pool,
-        select((avg(orders::total), min(orders::total), max(orders::total)))
-            .from(orders::Table)
-            .filter(
-                select((orders::id,))
-                    .from(orders::Table)
-                    .filter(orders::total.lt(0i64))
-                    .not_exists(),
+        select((users::email,))
+            .from(users::Table)
+            .order_by(users::id.asc())
+            .union(&select((users::email,)).from(users::Table))
+            .to_sql(Sqlite),
+    )
+    .await;
+    assert_eq!(ordered_union.len(), 2);
+}
+
+#[tokio::test]
+async fn a_union_branch_may_carry_its_own_with_clause() {
+    let pool = seeded().await;
+    let cte_branch = run(
+        &pool,
+        select((big_orders::user_id,))
+            .from(users::Table)
+            .inner_join(
+                with(
+                    big_orders::Table,
+                    &select((orders::user_id, sum(orders::total)))
+                        .from(orders::Table)
+                        .group_by(orders::user_id),
+                ),
+                big_orders::user_id.eq(users::id),
+            )
+            .union(&select((orders::user_id,)).from(orders::Table))
+            .to_sql(Sqlite),
+    )
+    .await;
+    assert!(!cte_branch.is_empty());
+}
+
+#[tokio::test]
+async fn a_union_returns_the_rows_of_both_filtered_branches() {
+    let pool = seeded().await;
+    let union = run(
+        &pool,
+        select((users::email,))
+            .from(users::Table)
+            .filter(users::email.eq("ada@example.com"))
+            .union(
+                &select((users::email,))
+                    .from(users::Table)
+                    .filter(users::email.eq("dan@example.com")),
             )
             .to_sql(Sqlite),
     )
     .await;
-    assert_eq!(stats.len(), 1);
+    assert_eq!(union.len(), 2);
+}
 
-    // A mixed chain: SQLite reads compound operators left to right and
-    // Postgres binds `INTERSECT` tighter, so the rendered nesting is what
-    // makes the two agree with the builder.
+#[tokio::test]
+async fn intersect_keeps_only_the_rows_both_branches_return() {
+    let pool = seeded().await;
+    let intersected = run(
+        &pool,
+        select((users::email,))
+            .from(users::Table)
+            .intersect(
+                &select((users::email,))
+                    .from(users::Table)
+                    .filter(users::email.like("ada%")),
+            )
+            .to_sql(Sqlite),
+    )
+    .await;
+    assert_eq!(intersected.len(), 1);
+}
+
+#[tokio::test]
+async fn except_drops_the_rows_the_second_branch_returns() {
+    let pool = seeded().await;
+    let excepted = run(
+        &pool,
+        select((users::email,))
+            .from(users::Table)
+            .except(
+                &select((users::email,))
+                    .from(users::Table)
+                    .filter(users::email.like("ada%")),
+            )
+            .to_sql(Sqlite),
+    )
+    .await;
+    assert_eq!(excepted.len(), 1);
+}
+
+#[tokio::test]
+async fn a_union_then_intersect_chain_applies_the_union_first_as_the_builder_folds_it() {
+    let pool = seeded().await;
     let mixed = run(
         &pool,
         select((users::email,))
@@ -698,10 +533,363 @@ async fn sqlite_executes_every_rendered_statement_shape() {
     )
     .await;
     assert_eq!(mixed.len(), 1);
+}
 
-    // `INSERT INTO t (..) SELECT ..` into a table of its own, so the rows
-    // it copies can be counted rather than the statement merely parsed.
-    // The source query's bind is numbered by the statement it lands in.
+#[tokio::test]
+async fn a_set_operation_orders_by_ordinal_and_pages_its_combined_rows() {
+    let pool = seeded().await;
+    let paged_union = run(
+        &pool,
+        select((users::email,))
+            .from(users::Table)
+            .union_all(
+                &select((users::email,))
+                    .from(users::Table)
+                    .filter(users::email.like("ada%")),
+            )
+            .order_by_column(users::email, SortDir::Desc)
+            .limit(2)
+            .offset(1)
+            .to_sql(Sqlite),
+    )
+    .await;
+    assert_eq!(paged_union.len(), 2);
+}
+
+#[tokio::test]
+async fn a_cte_joins_into_the_outer_query_like_a_table() {
+    let pool = seeded().await;
+    let totals = select((orders::user_id, sum(orders::total)))
+        .from(orders::Table)
+        .group_by(orders::user_id);
+    let cte = run(
+        &pool,
+        select((users::email, big_orders::total))
+            .from(users::Table)
+            .inner_join(
+                with(big_orders::Table, &totals),
+                big_orders::user_id.eq(users::id),
+            )
+            .to_sql(Sqlite),
+    )
+    .await;
+    assert_eq!(cte.len(), 2);
+}
+
+#[tokio::test]
+async fn a_correlated_exists_keeps_the_users_with_an_order() {
+    let pool = seeded().await;
+    let exists_q = select(users::email).from(users::Table);
+    let correlated = exists_q
+        .correlated(orders::Table, orders::id)
+        .filter(orders::user_id.eq(users::id))
+        .exists();
+    let rows = run(&pool, exists_q.filter(correlated).to_sql(Sqlite)).await;
+    assert_eq!(rows.len(), 2);
+}
+
+#[tokio::test]
+async fn not_exists_keeps_every_row_when_the_subquery_finds_none() {
+    let pool = seeded().await;
+    let rows = run(
+        &pool,
+        select(users::email)
+            .from(users::Table)
+            .filter(
+                select((orders::id,))
+                    .from(orders::Table)
+                    .filter(orders::total.lt(0i64))
+                    .not_exists(),
+            )
+            .to_sql(Sqlite),
+    )
+    .await;
+    assert_eq!(rows.len(), 2);
+}
+
+#[tokio::test]
+async fn in_subquery_keeps_only_the_users_the_subquery_selects() {
+    let pool = seeded().await;
+    let big_spenders = select(orders::user_id)
+        .from(orders::Table)
+        .filter(orders::total.gt(50i64));
+    let contains_rows = run(
+        &pool,
+        select(users::email)
+            .from(users::Table)
+            .filter(big_spenders.contains(users::id))
+            .to_sql(Sqlite),
+    )
+    .await;
+    assert_eq!(contains_rows.len(), 1, "only Ada has an order over 50");
+}
+
+#[tokio::test]
+async fn not_in_subquery_keeps_only_the_users_the_subquery_does_not_select() {
+    let pool = seeded().await;
+    let big_spenders = select(orders::user_id)
+        .from(orders::Table)
+        .filter(orders::total.gt(50i64));
+    let not_contains_rows = run(
+        &pool,
+        select(users::email)
+            .from(users::Table)
+            .filter(big_spenders.not_contains(users::id))
+            .to_sql(Sqlite),
+    )
+    .await;
+    assert_eq!(not_contains_rows.len(), 1, "only Dan has no order over 50");
+}
+
+#[tokio::test]
+async fn a_labelled_row_number_over_a_partition_yields_one_row_per_order() {
+    let pool = seeded().await;
+    qbrs::label!(rank_in_user);
+    let ranked = run(
+        &pool,
+        select((
+            orders::user_id,
+            row_number()
+                .over(
+                    window()
+                        .partition_by(orders::user_id)
+                        .order_by(orders::total.desc()),
+                )
+                .label(label::rank_in_user),
+        ))
+        .from(orders::Table)
+        .to_sql(Sqlite),
+    )
+    .await;
+    assert_eq!(ranked.len(), 3);
+}
+
+#[tokio::test]
+async fn a_sql_fragment_binds_its_value_as_a_parameter() {
+    let pool = seeded().await;
+    let raw = run(
+        &pool,
+        select((users::email,))
+            .from(users::Table)
+            .filter(sql!(Bool, "length(email) > ?", 3i64))
+            .to_sql(Sqlite),
+    )
+    .await;
+    assert_eq!(raw.len(), 2);
+}
+
+#[tokio::test]
+async fn distinct_collapses_the_rows_a_join_repeats() {
+    let pool = seeded().await;
+    let distinct = run(
+        &pool,
+        select((users::email,))
+            .from(users::Table)
+            .inner_join(orders::Table, orders::user_id.eq(users::id))
+            .distinct()
+            .to_sql(Sqlite),
+    )
+    .await;
+    assert_eq!(distinct.len(), 2);
+}
+
+#[tokio::test]
+async fn select_distinct_sorts_by_a_key_taken_from_its_selection() {
+    let pool = seeded().await;
+    let distinct_sorted = run(
+        &pool,
+        select((users::email, users::display_name))
+            .from(users::Table)
+            .distinct()
+            .order_by_selected(users::email, SortDir::Asc)
+            .to_sql(Sqlite),
+    )
+    .await;
+    assert_eq!(distinct_sorted.len(), 2);
+}
+
+#[tokio::test]
+async fn values_all_inserts_every_row_in_one_statement() {
+    let pool = seeded().await;
+    let bulk = run(
+        &pool,
+        insert(orders::Table)
+            .values_all((10..13).map(|n| OrdersInsert::builder().user_id(1).total(n).build()))
+            .expect("three rows")
+            .returning(orders::id)
+            .to_sql(Sqlite),
+    )
+    .await;
+    assert_eq!(bulk.len(), 3);
+}
+
+#[tokio::test]
+async fn a_delete_returns_each_removed_row_and_leaves_the_rest() {
+    let pool = seeded().await;
+    let deleted = run(
+        &pool,
+        delete(orders::Table)
+            .filter(orders::total.lt(50i64))
+            .returning(orders::id)
+            .to_sql(Sqlite),
+    )
+    .await;
+    assert_eq!(deleted.len(), 1);
+
+    let remaining = single_i64(&pool, select(count()).from(orders::Table).to_sql(Sqlite)).await;
+    assert_eq!(remaining, 2);
+}
+
+#[tokio::test]
+async fn count_sql_counts_every_matching_row_whatever_the_limit() {
+    let pool = seeded().await;
+    let total = single_i64(
+        &pool,
+        select((orders::id,))
+            .from(orders::Table)
+            .filter(orders::total.gt(0i64))
+            .order_by(orders::id.desc())
+            .limit(1)
+            .count_sql(Sqlite),
+    )
+    .await;
+    assert_eq!(total, 3);
+}
+
+#[tokio::test]
+async fn count_sql_of_a_grouped_query_counts_its_groups() {
+    let pool = seeded().await;
+    let grouped_total = single_i64(
+        &pool,
+        select((orders::user_id, count()))
+            .from(orders::Table)
+            .group_by(orders::user_id)
+            .having_all(vec![predicate(count().gte(1i64))])
+            .count_sql(Sqlite),
+    )
+    .await;
+    assert_eq!(grouped_total, 2);
+}
+
+#[tokio::test]
+async fn count_sql_of_a_set_operation_counts_its_combined_rows() {
+    let pool = seeded().await;
+    let union_total = single_i64(
+        &pool,
+        select((users::email,))
+            .from(users::Table)
+            .union(
+                &select((users::email,))
+                    .from(users::Table)
+                    .filter(users::email.like("ada%")),
+            )
+            .count_sql(Sqlite),
+    )
+    .await;
+    assert_eq!(union_total, 2);
+}
+
+#[tokio::test]
+async fn an_erased_select_applies_a_limit_given_after_erasure() {
+    let pool = seeded().await;
+    let erased = run(
+        &pool,
+        select((users::email,))
+            .from(users::Table)
+            .erase()
+            .limit(1)
+            .to_sql(Sqlite),
+    )
+    .await;
+    assert_eq!(erased.len(), 1);
+}
+
+#[tokio::test]
+async fn and_or_not_null_checks_comparisons_and_empty_folds_render_conditions_sqlite_accepts() {
+    let pool = seeded().await;
+    let combined = run(
+        &pool,
+        select((users::email,))
+            .from(users::Table)
+            .filter(
+                users::display_name
+                    .is_not_null()
+                    .and(users::email.ne("nobody@example.com"))
+                    .or(users::id.lte(0i64)),
+            )
+            .filter(!users::display_name.is_null())
+            .filter(all_of(Vec::<Expr<Nil, Bool>>::new()))
+            .filter(any_of([users::id.gte(1i64)]))
+            .to_sql(Sqlite),
+    )
+    .await;
+    assert!(!combined.is_empty());
+}
+
+#[tokio::test]
+async fn count_of_a_column_skips_the_nulls_that_count_counts() {
+    let pool = seeded().await;
+    let counted = run(
+        &pool,
+        select((count(), count_of(users::display_name)))
+            .from(users::Table)
+            .to_sql(Sqlite),
+    )
+    .await;
+    assert_eq!(
+        (counted[0].get::<i64, _>(0), counted[0].get::<i64, _>(1)),
+        (2, 1)
+    );
+}
+
+#[tokio::test]
+async fn avg_min_and_max_render_casts_sqlite_accepts() {
+    let pool = seeded().await;
+    let stats = run(
+        &pool,
+        select((avg(orders::total), min(orders::total), max(orders::total)))
+            .from(orders::Table)
+            .to_sql(Sqlite),
+    )
+    .await;
+    assert_eq!(stats.len(), 1);
+}
+
+#[tokio::test]
+async fn string_agg_keeps_a_separator_that_reads_as_sql_syntax_intact() {
+    let pool = seeded().await;
+    let separator_resembling_sql_syntax = r"')--";
+    let names = run(
+        &pool,
+        select((string_agg(users::email, separator_resembling_sql_syntax),))
+            .from(users::Table)
+            .filter(users::email.like("%@example.com"))
+            .to_sql(Sqlite),
+    )
+    .await;
+    let emails = run(
+        &pool,
+        select((users::email,))
+            .from(users::Table)
+            .filter(users::email.like("%@example.com"))
+            .order_by(users::email.asc())
+            .to_sql(Sqlite),
+    )
+    .await;
+    let expected: Vec<String> = emails.iter().map(|row| row.get(0)).collect();
+    let joined: Option<String> = names[0].get(0);
+    let joined = joined.expect("the users run together");
+    let mut parts: Vec<&str> = joined.split(separator_resembling_sql_syntax).collect();
+    parts.sort_unstable();
+    assert_eq!(
+        parts,
+        expected.iter().map(String::as_str).collect::<Vec<_>>()
+    );
+}
+
+#[tokio::test]
+async fn insert_select_copies_only_the_rows_its_filtered_query_returns() {
+    let pool = seeded().await;
     run(
         &pool,
         insert(archived_orders::Table)
@@ -720,43 +908,66 @@ async fn sqlite_executes_every_rendered_statement_shape() {
             .to_sql(Sqlite),
     )
     .await;
+    assert_eq!(archived.len(), 2);
     assert!(
         archived.iter().all(|row| row.get::<i64, _>(0) > 50),
         "only the orders over 50 should have been copied"
     );
+}
 
-    // A `SELECT` with no `FROM`. SQLite has it too, and binds its
-    // arguments positionally as it does anywhere else. Both output shapes:
-    // a one-tuple, and the bare selection the example uses.
-    let computed = run(
+#[tokio::test]
+async fn a_tuple_select_without_from_binds_its_arguments_positionally() {
+    let pool = schema().await;
+    let computed = single_i64(
         &pool,
         select((sql!(BigInt, "(? + ?)", 2i64, 3i64),)).to_sql(Sqlite),
     )
     .await;
-    assert_eq!(computed[0].get::<i64, _>(0), 5);
+    assert_eq!(computed, 5);
+}
 
-    let bare = run(
+#[tokio::test]
+async fn a_bare_select_without_from_binds_its_arguments_positionally() {
+    let pool = schema().await;
+    let bare = single_i64(
         &pool,
         select(sql!(BigInt, "(? * ?)", 6i64, 7i64)).to_sql(Sqlite),
     )
     .await;
-    assert_eq!(bare[0].get::<i64, _>(0), 42);
+    assert_eq!(bare, 42);
+}
 
+#[tokio::test]
+async fn is_in_keeps_a_row_whose_value_is_listed() {
+    let pool = seeded().await;
     let in_list = run(
         &pool,
         select((users::email,))
             .from(users::Table)
             .filter(users::email.is_in(["ada@example.com".to_string()]))
+            .to_sql(Sqlite),
+    )
+    .await;
+    assert_eq!(in_list.len(), 1);
+}
+
+#[tokio::test]
+async fn an_empty_is_in_list_matches_no_row() {
+    let pool = seeded().await;
+    let in_list = run(
+        &pool,
+        select((users::email,))
+            .from(users::Table)
             .filter(users::id.is_in(Vec::<i64>::new()))
             .to_sql(Sqlite),
     )
     .await;
     assert!(in_list.is_empty());
+}
 
-    // One bind-carrying fragment in three clauses. Under Sqlite each `?` is
-    // its own parameter, so the statement carries the bind three times and
-    // it is SQLite, not a string assertion, that says the three still line
-    // up with the values handed to it.
+#[tokio::test]
+async fn a_fragment_repeated_in_three_clauses_carries_its_binds_once_per_clause() {
+    let pool = seeded().await;
     let bucket = sql!(BigInt, "((? / ?) * ?)", orders::total, 1000i64, 1000i64);
     let buckets = run(
         &pool,
@@ -767,5 +978,5 @@ async fn sqlite_executes_every_rendered_statement_shape() {
             .to_sql(Sqlite),
     )
     .await;
-    assert!(!buckets.is_empty());
+    assert_eq!(buckets.len(), 2, "totals of 30 and 100 share bucket 0");
 }
