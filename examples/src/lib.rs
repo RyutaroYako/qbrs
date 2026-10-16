@@ -68,7 +68,7 @@ pub async fn setup_db() -> (sqlx::PgPool, Db) {
     (pool, db)
 }
 
-/// Seeds a small, fixed dataset used by every example: three users (one
+/// Seeds a small, fixed dataset that most examples start from: three users (one
 /// inactive, one with no orders) and a handful of orders. That is enough to
 /// make filters/joins/nullability actually demonstrate something.
 pub async fn seed(pool: &sqlx::PgPool) {

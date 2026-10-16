@@ -56,8 +56,8 @@ jobs:
       - name: Cache cargo/target
         uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
-          # Not saved from a PR: the key comes from Cargo.lock, not the branch, so a PR's
-          # save is one every other PR then restores.
+          # Not saved from a PR: no other branch can restore a PR's cache, and its saves count
+          # against the repository's cache quota, evicting the `main` cache every PR restores.
           save-if: ${{ github.ref == 'refs/heads/main' }}
 
       # No `restore-keys`: a template from an older `pglite-rs` can be a PostgreSQL major

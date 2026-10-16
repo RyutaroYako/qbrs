@@ -316,9 +316,6 @@ fn distinct_renders_select_distinct_ahead_of_the_selection() {
 
 #[test]
 fn order_by_selected_sorts_a_distinct_query_by_one_of_its_selected_columns() {
-    // `.order_by_selected(..)` rather than `.order_by(..)`, which accepts any
-    // column in scope: Postgres rejects a `SELECT DISTINCT` sort key outside
-    // the selection.
     let (sql, _params) = select((users::id, users::name))
         .from(users::Table)
         .distinct()

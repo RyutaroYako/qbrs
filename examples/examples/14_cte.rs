@@ -18,7 +18,8 @@ use qbrs_sqlx::prelude::*;
 with! {
     struct big_spenders {
         user_id: BigInt,
-        // Not `BigInt`: a sum over zero rows is NULL, whatever the column says.
+        // Not `BigInt`: `sum(..)` is typed `Nullable<BigInt>`, since it is NULL over
+        // zero rows, and the body must match this row.
         total: Nullable<BigInt>,
     }
 }

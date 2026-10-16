@@ -738,9 +738,6 @@ fn expand_with(decl: CteDecl) -> TokenStream2 {
                 #(#keys)*
             }
 
-            // The impls stay out of `columns`, unlike `#[derive(Table)]`'s: a declared
-            // type is written in the caller's scope, which `use super::*` reaches from
-            // here but not from a nested module.
             #(#key_impls)*
             #(#consts)*
             #(#accessors)*
@@ -970,8 +967,8 @@ fn gen_insert_struct(
                 }
             }
         } else {
-            // Not covered by `name(None)`, which leaves the default standing as `None` does at
-            // every setter, so an explicit NULL needs a setter of its own.
+            // Not covered by `name(None)`, which on a defaulted column means the default, so an
+            // explicit NULL needs a setter of its own.
             let null_setter = format_ident!("{}_null", name);
             quote! {
                 pub fn #name(

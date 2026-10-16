@@ -701,7 +701,7 @@ fn render_values_clause<D: Dialect, R: InsertRow>(
 
     // Not an empty `()` column list, which two of the three dialects reject.
     // `INSERT_NO_COLUMNS` spells the one row SQL can express here, which is
-    // why `values`/`values_all` take `Insertable`.
+    // why the bulk paths take `Insertable`.
     if header.is_empty() {
         sink.text(D::INSERT_NO_COLUMNS);
         if let Some(clause) = on_conflict {

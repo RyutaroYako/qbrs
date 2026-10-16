@@ -98,7 +98,7 @@ macro_rules! row_of {
 }
 
 // The macros name these through `$crate` rather than writing `qbrs_core::..`, which
-// resolves only in a caller that imports `qbrs_core` under that name.
+// resolves only in a caller that depends on `qbrs_core` under that name.
 #[doc(hidden)]
 pub mod __private {
     pub use qbrs_core::expr::{BigInt, Column, ColumnKey};

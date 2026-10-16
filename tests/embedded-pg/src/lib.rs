@@ -86,7 +86,8 @@ async fn template() -> PathBuf {
 
 // No lock is needed: renaming onto a directory that already holds a template fails rather
 // than replacing it, so the first run to finish wins and the rest discard their staged copy.
-// `initdb` runs in `staged`, so the shared path never holds half a template.
+// `initdb` runs in `staged`, so the shared path never holds a template `initdb` has not
+// finished.
 fn publish(staged: &Path, template: &Path) {
     if std::fs::rename(staged, template).is_ok() {
         return;

@@ -37,7 +37,7 @@ async fn main() {
         sql!(Nullable<BigInt>, "max(?)", orders::total).label(label::biggest),
     ))
     .from(users::Table)
-    .inner_join(orders::Table, orders::user_id.eq(users::id))
+    .left_join(orders::Table, orders::user_id.eq(users::id))
     .group_by(users::email)
     .load(&pool)
     .await
@@ -45,4 +45,8 @@ async fn main() {
     .into_tuples();
 
     println!("largest order per user: {per_user:?}");
+    assert!(
+        per_user.contains(&("dan@example.com".to_string(), None)),
+        "Dan has no orders, so his max is NULL"
+    );
 }

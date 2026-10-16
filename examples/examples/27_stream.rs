@@ -53,9 +53,6 @@ async fn main() {
     if !in_hand.is_empty() {
         flushes += 1;
     }
-    // Dropped before the next query rather than at the end of `main`: the
-    // stream holds its connection until it is dropped.
-    drop(rows);
 
     println!("wrote {written} rows in {flushes} flushes, holding at most {BATCH_SIZE}");
     assert_eq!(written, 200);
