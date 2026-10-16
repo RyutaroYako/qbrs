@@ -1,6 +1,3 @@
-//! Hand-written `InsertRow`/`UpdateRow` impls (standing in for the derive
-//! macro) to validate INSERT/UPDATE/DELETE end-to-end.
-
 use qbrs_core::delete::delete;
 use qbrs_core::dialect::Postgres;
 use qbrs_core::expr::Integer;
@@ -12,6 +9,8 @@ use qbrs_core::scope::Table as TableTrait;
 use qbrs_core::statement::Statement;
 use qbrs_core::update::{Assignments, NothingToSet, UpdateRow, update};
 
+// Written out by hand rather than with `#[derive(Table)]`, so that these tests
+// exercise `qbrs-core` with no dependency on `qbrs-macros`.
 pub struct UsersMarker;
 impl TableTrait for UsersMarker {
     const NAME: &'static str = "users";
@@ -79,6 +78,8 @@ mod users {
         impl qbrs_core::expr::Writable for created_at {}
         impl ColumnKey for created_at {
             type Table = UsersMarker;
+            // `Text` rather than `Timestamptz`, which needs the `chrono`
+            // feature a plain `cargo test -p qbrs-core` leaves off.
             type Sql = Text;
         }
         impl qbrs_core::row::NamedSealed for created_at {}
@@ -94,19 +95,12 @@ mod users {
     pub const display_name: Column<columns::display_name> = Column::new();
 }
 
-// What #[derive(Table)] will generate for:
-//   #[column(primary_key, generated)] id: i64
-//   #[column(not_null)]               email: String
-//   #[column(nullable)]               display_name: Option<String>
-//   #[column(not_null, default)]      created_at: String   (kept as String to avoid a chrono dep here)
 struct UsersInsert {
     email: String,
     display_name: Option<String>,
     created_at: Defaultable<String>,
 }
 
-/// Stands in for the type-state builder `#[derive(Table)]` emits; this file
-/// hand-writes the schema so `qbrs-core` can be tested without the macros.
 struct UsersInsertBuilder;
 
 impl UsersInsert {
@@ -194,7 +188,7 @@ impl UpdateRow for UsersUpdate {
 }
 
 #[test]
-fn a_set_list_can_be_expressions_alone() {
+fn an_update_set_list_can_be_expressions_alone_with_no_row() {
     let (sql, params) = update(users::Table)
         .set(Assignments::set_to(
             users::email,
@@ -234,7 +228,7 @@ fn set_to_assigns_an_expression_and_appends_to_the_row() {
 }
 
 #[test]
-fn insert_omits_default_as_the_default_keyword() {
+fn an_insert_writes_an_omitted_defaultable_column_as_default() {
     let (sql, params) = insert(users::Table)
         .values(UsersInsert::builder().email("a@example.com").build())
         .to_sql(Postgres);
@@ -249,7 +243,7 @@ fn insert_omits_default_as_the_default_keyword() {
 }
 
 #[test]
-fn insert_bulk_and_returning() {
+fn a_multi_row_insert_lists_each_row_and_returning_follows_the_last() {
     let (sql, _params) = insert(users::Table)
         .values(UsersInsert::builder().email("a@example.com").build())
         .values(UsersInsert::builder().email("b@example.com").build())
@@ -285,7 +279,7 @@ fn an_update_that_sets_nothing_is_an_error_not_a_panic() {
 }
 
 #[test]
-fn update_only_touches_set_fields() {
+fn an_update_sets_only_the_fields_its_row_has_some_for() {
     let (sql, params) = update(users::Table)
         .set(
             Assignments::from_row(UsersUpdate {
@@ -307,7 +301,7 @@ fn update_only_touches_set_fields() {
 }
 
 #[test]
-fn upsert_do_nothing_renders_conflict_target() {
+fn on_conflict_do_nothing_names_its_conflict_column() {
     let (sql, params) = insert(users::Table)
         .values(UsersInsert::builder().email("a@example.com").build())
         .on_conflict_do_nothing(users::email)
@@ -339,11 +333,8 @@ fn an_upsert_assigns_the_row_the_insert_proposed() {
     assert_eq!(params.len(), 2);
 }
 
-/// The proposed row is an ordinary expression over the target's columns, so
-/// the two compose. That is the assignment a counter upsert is written with,
-/// and the one passing the same Rust value to both halves can't say.
 #[test]
-fn the_proposed_row_composes_with_the_conflicting_one() {
+fn a_counter_upsert_adds_the_proposed_row_to_the_conflicting_one() {
     let (sql, _) = insert(users::Table)
         .values(UsersInsert::builder().email("a@example.com").build())
         .on_conflict_do_update(
@@ -360,11 +351,8 @@ fn the_proposed_row_composes_with_the_conflicting_one() {
     );
 }
 
-/// The action's `WHERE` narrows which conflicting rows the update touches;
-/// the target's picks which index the conflict is inferred against. Both in
-/// one statement, so their positions can't be confused.
 #[test]
-fn a_do_update_where_renders_after_the_set_list() {
+fn the_target_where_precedes_do_update_and_the_action_where_follows_its_set_list() {
     let (sql, _) = insert(users::Table)
         .values(UsersInsert::builder().email("a@example.com").build())
         .on_conflict_do_update(
@@ -443,7 +431,7 @@ fn a_partial_index_target_of_several_columns_renders_do_nothing_after_the_predic
 }
 
 #[test]
-fn upsert_do_update_reuses_update_row_and_supports_returning() {
+fn on_conflict_do_update_takes_an_update_row_and_returning_follows_it() {
     let (sql, params) = insert(users::Table)
         .values(UsersInsert::builder().email("a@example.com").build())
         .on_conflict_do_update(
@@ -472,7 +460,7 @@ fn upsert_do_update_reuses_update_row_and_supports_returning() {
 }
 
 #[test]
-fn delete_renders_where() {
+fn a_delete_renders_its_filter_as_where_with_the_value_bound() {
     let (sql, params) = delete(users::Table)
         .filter(users::id.eq(1))
         .to_sql(Postgres);

@@ -1,12 +1,16 @@
-//! Hand-written schema (standing in for the not-yet-built derive macro) to
-//! validate the `Select` builder end-to-end before wiring up codegen.
+use std::marker::PhantomData;
 
 use qbrs_core::dialect::Postgres;
 use qbrs_core::expr::{Bool, ExprMethods, all_of, any_of};
+use qbrs_core::row::{Row, RowCons, RowNil};
 use qbrs_core::scope::Table as TableTrait;
-use qbrs_core::select::{OrderExt, Predicate, grouping, predicate, select, sort_key};
+use qbrs_core::select::{
+    OrderExt, Predicate, Select, Selection, grouping, predicate, select, sort_key,
+};
 use qbrs_core::sql;
 
+// Written out by hand rather than with `#[derive(Table)]`, so that these tests
+// exercise `qbrs-core` with no dependency on `qbrs-macros`.
 pub struct UsersMarker;
 impl TableTrait for UsersMarker {
     const NAME: &'static str = "users";
@@ -99,6 +103,7 @@ mod users {
 mod orders {
     use super::OrdersMarker;
     use qbrs_core::expr::{Column, Integer};
+    use qbrs_core::scope::Nullable;
 
     pub const Table: OrdersMarker = OrdersMarker;
     #[allow(non_camel_case_types)]
@@ -133,11 +138,37 @@ mod orders {
             const NAME: &'static str = "total";
         }
         impl qbrs_core::row::Spelled for total {}
+        #[derive(Clone, Copy)]
+        pub struct discount;
+        impl qbrs_core::expr::WritableSealed for discount {}
+        impl qbrs_core::expr::Writable for discount {}
+        impl ColumnKey for discount {
+            type Table = OrdersMarker;
+            type Sql = Nullable<Integer>;
+        }
+        impl qbrs_core::row::NamedSealed for discount {}
+        impl qbrs_core::row::Named for discount {
+            type Name = qbrs_core::type_name!('d', 'i', 's', 'c', 'o', 'u', 'n', 't');
+            const NAME: &'static str = "discount";
+        }
+        impl qbrs_core::row::Spelled for discount {}
     }
 
     pub const user_id: Column<columns::user_id> = Column::new();
     pub const total: Column<columns::total> = Column::new();
+    pub const discount: Column<columns::discount> = Column::new();
 }
+
+fn decoded_row<D, Scope, Sel: Selection<Scope, Idx>, Idx>(
+    _query: &Select<D, Scope, Sel>,
+) -> PhantomData<Sel::Output> {
+    PhantomData
+}
+
+type IdAndTotal<Total> =
+    Row<RowCons<users::columns::id, i32, RowCons<orders::columns::total, Total, RowNil>>>;
+type NameAndTotal<Name, Total> =
+    Row<RowCons<users::columns::name, Name, RowCons<orders::columns::total, Total, RowNil>>>;
 
 #[test]
 fn all_of_and_predicate_all_fold_the_same_way_filter_does() {
@@ -155,8 +186,10 @@ fn all_of_and_predicate_all_fold_the_same_way_filter_does() {
          WHERE ((\"users\".\"id\" > $1) AND (\"users\".\"id\" < $2)) \
          AND ((\"users\".\"active\" = $3) AND (\"users\".\"id\" <= $4))"
     );
+}
 
-    // Empty: "all of nothing" matches everything, "any of nothing" nothing.
+#[test]
+fn predicate_all_of_an_empty_list_renders_true() {
     let (all_empty, _) = select((users::id,))
         .from(users::Table)
         .filter(Predicate::all_of(Vec::new()))
@@ -210,7 +243,7 @@ fn a_runtime_length_sort_and_grouping_go_in_as_discharged_keys() {
 }
 
 #[test]
-fn a_page_size_can_be_a_placeholder() {
+fn a_placeholder_limit_binds_while_a_literal_offset_is_written_out() {
     let (sql, params) = select((users::id,))
         .from(users::Table)
         .limit(qbrs_core::expr::placeholder::<qbrs_core::expr::BigInt>(
@@ -268,7 +301,7 @@ fn any_of_folds_a_runtime_length_or_and_matches_nothing_when_empty() {
 }
 
 #[test]
-fn distinct_deduplicates_the_rows_a_join_repeats() {
+fn distinct_renders_select_distinct_ahead_of_the_selection() {
     let (sql, _params) = select((users::id, users::name))
         .from(users::Table)
         .inner_join(orders::Table, orders::user_id.eq(users::id))
@@ -282,11 +315,10 @@ fn distinct_deduplicates_the_rows_a_join_repeats() {
 }
 
 #[test]
-fn distinct_order_by_selected_checks_the_sort_key_against_the_selection() {
-    // Postgres requires a `SELECT DISTINCT`'s sort keys to be in its
-    // selection. `.order_by_selected(..)` is checked against `users::name`
-    // being one of the two selected columns, the same `row::Field` lookup
-    // `Row::get` uses.
+fn order_by_selected_sorts_a_distinct_query_by_one_of_its_selected_columns() {
+    // `.order_by_selected(..)` rather than `.order_by(..)`, which accepts any
+    // column in scope: Postgres rejects a `SELECT DISTINCT` sort key outside
+    // the selection.
     let (sql, _params) = select((users::id, users::name))
         .from(users::Table)
         .distinct()
@@ -312,10 +344,9 @@ fn order_by_selection_orders_a_single_untupled_column_with_no_key() {
 
 #[test]
 fn order_by_selected_renders_the_selected_item_rather_than_the_key_it_was_given() {
-    // A key names a field, not an expression: both of these window
-    // functions are keyed `RowNumber`, so a key rendered as written could
-    // sort by a frame the query never selected. The lookup's index reads
-    // the selected item instead.
+    // The `ORDER BY` repeats the selected `OVER (..)` rather than the bare
+    // `row_number()` passed in: both are keyed `RowNumber`, so a key rendered
+    // as written could sort by a frame the query never selected.
     use qbrs_core::window::{row_number, window};
     let (sql, _params) = select((
         row_number().over(window().partition_by(users::id)),
@@ -332,35 +363,8 @@ fn order_by_selected_renders_the_selected_item_rather_than_the_key_it_was_given(
     );
 }
 
-// Uncomment either to confirm it is (correctly) a compile error: a column
-// outside the selection has no field to find, and an unlabelled `sql!`
-// fragment has no name to find one by. Two anonymous expressions would
-// otherwise stand in for each other here the way they can't at `.get()`.
-//
-// #[test]
-// fn order_by_selected_rejects_an_unselected_column() {
-//     let _ = select((users::id, users::name))
-//         .from(users::Table)
-//         .order_by_selected(users::active, qbrs_core::select::SortDir::Asc)
-//         .to_sql(Postgres);
-// }
-//
-// #[test]
-// fn order_by_selected_rejects_an_unlabelled_expression() {
-//     let _ = select((sql!(qbrs_core::expr::Text, "upper(?)", users::name), users::id))
-//         .from(users::Table)
-//         .order_by_selected(
-//             sql!(qbrs_core::expr::Text, "lower(?)", users::name),
-//             qbrs_core::select::SortDir::Asc,
-//         )
-//         .to_sql(Postgres);
-// }
-
-/// A selection named once and used in two places, which is what a list
-/// endpoint and a detail endpoint over the same columns need. The tuple is
-/// one element of the longer list, the way a whole table is.
 #[test]
-fn a_named_selection_is_reused_as_one_element_of_a_longer_list() {
+fn a_named_selection_is_reused_bare_and_as_one_element_of_a_longer_or_nested_list() {
     const CORE: (
         qbrs_core::expr::Column<users::columns::id>,
         qbrs_core::expr::Column<users::columns::name>,
@@ -390,7 +394,7 @@ fn a_named_selection_is_reused_as_one_element_of_a_longer_list() {
 }
 
 #[test]
-fn basic_select_renders_expected_sql() {
+fn where_order_by_and_limit_render_in_keyword_order_and_only_the_filter_binds() {
     let q = select((users::id, users::name))
         .from(users::Table)
         .filter(users::active.eq(true))
@@ -406,14 +410,12 @@ fn basic_select_renders_expected_sql() {
 }
 
 #[test]
-fn left_join_renders_and_typechecks() {
-    // The join condition and the select-list both reference `orders`
-    // *after* it's been joined. This is the case that would fail to
-    // compile (Superset unsatisfied) if the join were forgotten.
+fn left_join_makes_the_joined_table_nullable_and_leaves_the_others_alone() {
     let q = select((users::id, orders::total))
         .from(users::Table)
         .left_join(orders::Table, orders::user_id.eq(users::id))
         .filter(users::active.eq(true));
+    let _: PhantomData<IdAndTotal<Option<i32>>> = decoded_row(&q);
 
     let (sql, params) = q.to_sql(Postgres);
     assert_eq!(
@@ -447,30 +449,15 @@ fn an_on_condition_takes_whatever_a_where_condition_takes() {
     assert_eq!(from_fragment, from_predicate);
 }
 
-// Uncomment to eyeball the compile error for a forgotten join (confirmed
-// working, kept out of the normal test run since it's meant to fail):
-//
-// #[test]
-// fn forgetting_the_join_is_a_compile_error() {
-//     let _q = select((users::id, orders::total))
-//         .from(users::Table)
-//         .filter(users::active.eq(true))
-//         .to_sql(Postgres); // the Superset check only fires here, at the terminal method
-// }
-
 #[test]
 fn right_join_flips_previously_joined_tables_to_nullable() {
-    // RIGHT JOIN: `users` (already in scope) must retroactively become
-    // nullable, while the newly-joined `orders` stays not-null. That is the
-    // mirror image of LEFT JOIN. Selecting `users::name` (Text, not
-    // Nullable<Text> in the schema) must still type-check and decode as
-    // `Option<String>` here purely because of the join kind.
     let q = select((users::name, orders::total))
         .from(orders::Table)
-        .right_join(users::Table, orders::user_id.eq(users::id))
-        .to_sql(Postgres);
+        .right_join(users::Table, orders::user_id.eq(users::id));
+    let _: PhantomData<NameAndTotal<String, Option<i32>>> = decoded_row(&q);
+
     assert_eq!(
-        q.0,
+        q.to_sql(Postgres).0,
         "SELECT \"users\".\"name\", \"orders\".\"total\" FROM \"orders\" RIGHT JOIN \"users\" ON (\"orders\".\"user_id\" = \"users\".\"id\")"
     );
 }
@@ -479,10 +466,11 @@ fn right_join_flips_previously_joined_tables_to_nullable() {
 fn full_join_makes_every_table_nullable() {
     let q = select((users::name, orders::total))
         .from(users::Table)
-        .full_join(orders::Table, orders::user_id.eq(users::id))
-        .to_sql(Postgres);
+        .full_join(orders::Table, orders::user_id.eq(users::id));
+    let _: PhantomData<NameAndTotal<Option<String>, Option<i32>>> = decoded_row(&q);
+
     assert_eq!(
-        q.0,
+        q.to_sql(Postgres).0,
         "SELECT \"users\".\"name\", \"orders\".\"total\" FROM \"users\" FULL JOIN \"orders\" ON (\"orders\".\"user_id\" = \"users\".\"id\")"
     );
 }
@@ -502,7 +490,7 @@ fn having_all_folds_a_runtime_length_collection() {
 }
 
 #[test]
-fn group_by_and_having_render() {
+fn having_follows_group_by_and_binds_its_value() {
     let q = select((users::active, qbrs_core::expr::count()))
         .from(users::Table)
         .group_by(users::active)
@@ -538,12 +526,11 @@ fn a_bind_carrying_expression_reused_across_clauses_keeps_one_placeholder() {
     assert_eq!(params, vec![qbrs_core::expr::Value::I32(10)]);
 }
 
-/// `1.0` and `1.00` are one value to `Decimal`'s `==` and two to a
-/// `numeric` column, which keeps the scale it was handed. Sharing one
-/// parameter between them would bind the first one twice.
 #[cfg(feature = "decimal")]
 #[test]
 fn two_decimals_of_the_same_value_and_different_scale_bind_separately() {
+    // Two parameters rather than one shared through `Decimal`'s `==`, which
+    // equates the two: a `numeric` column keeps the scale it is handed.
     use std::str::FromStr as _;
     let one_dp = rust_decimal::Decimal::from_str("1.0").expect("a decimal");
     let two_dp = rust_decimal::Decimal::from_str("1.00").expect("a decimal");
@@ -564,13 +551,11 @@ fn two_decimals_of_the_same_value_and_different_scale_bind_separately() {
     assert_eq!(params.len(), 2);
 }
 
-/// `{"x": 0.0}` and `{"x": -0.0}` are one value to `serde_json::Value`'s
-/// `==` and two documents to a column, which stores the sign it was handed.
-/// Both halves of the reuse index (the comparison and the hash it buckets by)
-/// have to read that the same way.
 #[cfg(feature = "json")]
 #[test]
 fn two_json_documents_that_compare_equal_and_render_apart_bind_separately() {
+    // Two parameters rather than one shared through `serde_json::Value`'s
+    // `==`, which equates the two: a column stores the sign it is handed.
     let positive: serde_json::Value = serde_json::json!({ "x": 0.0 });
     let negative: serde_json::Value = serde_json::json!({ "x": -0.0 });
     assert_eq!(positive, negative);
@@ -591,7 +576,7 @@ fn two_json_documents_that_compare_equal_and_render_apart_bind_separately() {
 }
 
 #[test]
-fn raw_sql_escape_hatch_renders_and_renumbers_params() {
+fn a_sql_fragment_value_is_numbered_in_sequence_with_the_filters_around_it() {
     let q = select((users::id,))
         .from(users::Table)
         .filter(qbrs_core::sql!(Bool, "lower(name) = ?", "dan"))
@@ -648,7 +633,7 @@ fn an_empty_in_list_renders_false_rather_than_invalid_sql() {
 }
 
 #[test]
-fn aggregates_render_as_function_calls_over_real_columns() {
+fn count_of_a_column_renders_count_over_that_qualified_column() {
     let q = select((users::id, qbrs_core::expr::count_of(orders::total)))
         .from(users::Table)
         .inner_join(orders::Table, orders::user_id.eq(users::id))
@@ -664,8 +649,6 @@ fn aggregates_render_as_function_calls_over_real_columns() {
 fn string_agg_puts_its_separator_where_each_dialect_takes_one() {
     use qbrs_core::dialect::{MySql, Sqlite};
     use qbrs_core::expr::string_agg;
-    // Postgres and SQLite take the separator as an ordinary argument, so it
-    // binds; MySQL's grammar rejects a parameter after `SEPARATOR`.
     let (sql, params) = select((users::id, string_agg(users::name, ", ")))
         .from::<Postgres, _>(users::Table)
         .group_by(users::id)
@@ -686,6 +669,8 @@ fn string_agg_puts_its_separator_where_each_dialect_takes_one() {
     );
     assert_eq!(params, vec![qbrs_core::expr::Value::Text(", ".into())]);
 
+    // Written out rather than bound like the other two: MySQL's grammar
+    // rejects a parameter after `SEPARATOR`.
     let (sql, params) = select((users::id, string_agg(users::name, ", ")))
         .from::<MySql, _>(users::Table)
         .group_by(users::id)
@@ -697,12 +682,10 @@ fn string_agg_puts_its_separator_where_each_dialect_takes_one() {
     assert!(params.is_empty());
 }
 
-/// The one dialect that writes the separator out is the one that has to
-/// escape it. Asserted as a string here because this crate does not execute
-/// MySQL; what Postgres and SQLite do with a separator like this is checked
-/// by running it, in `aggregates_integration` and `dialect-exec`.
 #[test]
 fn a_separator_written_out_for_mysql_is_escaped_the_way_mysql_reads_one() {
+    // A string assertion rather than an executed statement: nothing in this
+    // workspace runs MySQL.
     use qbrs_core::dialect::MySql;
     use qbrs_core::expr::string_agg;
     assert_eq!(
@@ -733,8 +716,8 @@ fn a_selection_naming_no_table_renders_a_select_with_no_from() {
 
 #[test]
 fn a_literal_question_mark_travels_as_a_bound_value() {
-    // There is no `??` escape: MySQL and SQLite write their own bind
-    // parameters as `?`, so a `?` left in the text would be read as one.
+    // Bound rather than escaped as `??` in the text: MySQL and SQLite read
+    // any `?` left in the text as a bind parameter of their own.
     let q = select((users::id,))
         .from(users::Table)
         .filter(qbrs_core::sql!(
@@ -752,21 +735,24 @@ fn a_literal_question_mark_travels_as_a_bound_value() {
 }
 
 #[test]
-fn a_nullable_column_compares_against_a_non_nullable_one() {
-    // `users::name` is Text, `orders::total` is Integer; the point is that
-    // a Nullable<S> and an S are comparable, both ways round.
+fn a_nullable_column_compares_against_a_non_nullable_one_both_ways_round() {
     let q = select((users::id,))
         .from(users::Table)
         .inner_join(orders::Table, orders::user_id.eq(users::id))
-        .filter(users::created_at.eq(orders::total));
+        .filter(users::created_at.eq(orders::discount))
+        .filter(orders::discount.eq(users::created_at));
     let (sql, _) = q.to_sql(Postgres);
-    assert!(sql.contains("\"users\".\"created_at\" = \"orders\".\"total\""));
+    assert!(
+        sql.ends_with(
+            "WHERE (\"users\".\"created_at\" = \"orders\".\"discount\") \
+             AND (\"orders\".\"discount\" = \"users\".\"created_at\")"
+        ),
+        "{sql}"
+    );
 }
 
 #[test]
-fn a_count_of_a_query_that_returns_one_row_is_one() {
-    // The selection decides this as much as `GROUP BY` does: a query that
-    // already aggregates returns one row, so counting it has to wrap it.
+fn counting_a_query_that_only_aggregates_wraps_it_so_its_one_row_counts_as_one() {
     let (sql, _) = select((qbrs_core::expr::count(),))
         .from(users::Table)
         .count_sql(Postgres);
@@ -774,8 +760,10 @@ fn a_count_of_a_query_that_returns_one_row_is_one() {
         sql,
         "SELECT count(*) FROM (SELECT count(*) FROM \"users\") AS \"qbrs_total\""
     );
+}
 
-    // A plain-column selection still counts without the wrap.
+#[test]
+fn counting_a_plain_column_query_replaces_its_selection_with_count_and_no_wrap() {
     let (plain, _) = select((users::id,)).from(users::Table).count_sql(Postgres);
     assert_eq!(plain, "SELECT count(*) FROM \"users\"");
 }

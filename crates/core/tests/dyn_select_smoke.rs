@@ -1,7 +1,3 @@
-//! `.erase()` has to be permissive enough to unify two differently-joined
-//! branches, and narrow enough to still reject a forgotten join. These
-//! check both halves.
-
 use qbrs_core::dialect::Postgres;
 use qbrs_core::expr::ExprMethods;
 use qbrs_core::scope::Table as TableTrait;
@@ -87,7 +83,7 @@ fn build(with_orders: bool) -> DynSelect<Postgres, i32> {
 }
 
 #[test]
-fn both_branches_unify_into_the_same_type() {
+fn a_query_with_and_without_a_join_erases_to_one_dyn_select_type() {
     let (sql_without, _) = build(false).to_sql(Postgres);
     assert_eq!(sql_without, "SELECT \"users\".\"id\" FROM \"users\"");
 
@@ -106,15 +102,3 @@ fn an_erased_query_still_counts_its_rows_without_its_page() {
         "SELECT count(*) FROM \"users\" INNER JOIN \"orders\" ON (\"orders\".\"user_id\" = \"users\".\"id\")"
     );
 }
-
-// The un-erased version of `build()` genuinely does not compile. It is kept
-// here, commented, as a record of exactly what `.erase()` buys:
-//
-// fn build_without_erase(with_orders: bool) -> impl std::fmt::Debug {
-//     let base = select((users::id,)).from(users::Table);
-//     if with_orders {
-//         base.inner_join(orders::Table, orders::user_id.eq(users::id)) // Select<Postgres, Cons<Orders,...>, _>
-//     } else {
-//         base // Select<Postgres, Cons<Users,Nil>, _> -- different type, `if`/`else` arms must match
-//     }
-// }

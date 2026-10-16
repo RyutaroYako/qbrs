@@ -1,6 +1,3 @@
-//! `prepare!{}`: named, typed placeholders resolved at `.execute()` time
-//! rather than baked in at query-build time.
-
 use qbrs_core::dialect::Postgres;
 use qbrs_core::expr::{ExprMethods, Text};
 use qbrs_core::prepare;
@@ -47,7 +44,7 @@ prepare! {
 }
 
 #[test]
-fn prepared_query_resolves_named_placeholder() {
+fn a_prepared_query_resolved_twice_keeps_its_sql_and_binds_each_params_value() {
     let query = select((users::email,))
         .from(users::Table)
         .filter(users::email.eq(ByEmail::email()))
@@ -67,9 +64,6 @@ fn prepared_query_resolves_named_placeholder() {
         vec![qbrs_core::expr::Value::Text("a@example.com".to_string())]
     );
 
-    // Same `Prepared` value, reused with a different `Params`. The SQL text
-    // (and its placeholder position) doesn't change, only the bound value
-    // does.
     let (sql2, params2) = query
         .resolve(ByEmail {
             email: "b@example.com".to_string(),
@@ -83,10 +77,9 @@ fn prepared_query_resolves_named_placeholder() {
 }
 
 #[test]
-fn missing_placeholder_is_a_typed_error_not_a_panic() {
-    // Hand-built with a name that doesn't match `ByEmail`'s field, bypassing
-    // the macro's by-construction guarantee on purpose, to prove the
-    // mismatch is a recoverable `Result::Err`, not a panic.
+fn a_placeholder_that_no_params_field_fills_is_an_error_naming_it() {
+    // Hand-built rather than taken from `ByEmail::email()`, which cannot name
+    // a field `ByEmail` lacks.
     let bogus = qbrs_core::expr::placeholder::<Text>("not_email");
     let query = select((users::email,))
         .from(users::Table)
@@ -106,10 +99,7 @@ prepare! {
 }
 
 #[test]
-fn a_query_run_with_another_prepare_structs_params_is_refused() {
-    // `Params` is a free parameter of `.prepare()`, so this type-checks;
-    // the placeholder names carry where they were declared, so it can't
-    // bind one struct's value into another's slot.
+fn a_query_resolved_with_another_prepare_structs_same_named_field_is_an_error() {
     let query = select((users::email,))
         .from(users::Table)
         .filter(users::email.eq(ByEmail::email()))

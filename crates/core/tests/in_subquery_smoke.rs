@@ -1,8 +1,3 @@
-//! `x IN (<subquery>)` / `x NOT IN (<subquery>)`: does `Select::contains`
-//! render correctly, stay dialect-pinned the way `EXISTS` does, and type-check
-//! the outer expression against the subquery's single selected column the
-//! same way `.eq(..)` type-checks two columns?
-
 use qbrs_core::dialect::{MySql, Postgres};
 use qbrs_core::expr::ExprMethods;
 use qbrs_core::scope::Table as TableTrait;
@@ -78,10 +73,7 @@ mod orders {
 }
 
 #[test]
-fn an_uncorrelated_in_subquery_renders_and_typechecks() {
-    // `orders::user_id` is `BigInt` and `users::id` is `Integer`, comparable
-    // across widths exactly like `.eq(..)`. That proves `contains` reuses the
-    // same `Comparable` check rather than requiring identical SQL types.
+fn an_in_subquery_compares_an_integer_against_a_bigint_selection_as_eq_would() {
     let subquery = select(orders::user_id).from(orders::Table);
     let outer = select((users::id,)).from(users::Table);
     let cond = subquery.contains(users::id);
@@ -108,12 +100,7 @@ fn not_contains_renders_not_in() {
 }
 
 #[test]
-fn a_correlated_in_subquery_references_the_outer_column() {
-    // `.contains()` is built from `Outer::Tables` the same way `.exists()`
-    // is, so a subquery started via `.correlated(..)` can reference the
-    // outer column in its own `.filter()` while `contains`'s `lhs` also
-    // reaches into the outer scope. Both go through the one flat cons-list,
-    // with no correlation-specific machinery.
+fn a_correlated_in_subquery_reads_the_outer_column_in_its_filter_and_its_left_side() {
     let outer = select((users::id,)).from(users::Table);
     let subquery = outer.correlated(orders::Table, orders::user_id);
     let cond = subquery
@@ -130,9 +117,6 @@ fn a_correlated_in_subquery_references_the_outer_column() {
 
 #[test]
 fn an_in_subquery_is_a_condition_of_its_own_dialect() {
-    // Pinned rather than dialect-agnostic, for the same reason `EXISTS` is:
-    // the subquery was checked against its dialect's capabilities, so it can
-    // only be filtered onto a statement of the same one.
     let subquery = select(orders::user_id).from(orders::Table);
     let (sql, _) = select((users::id,))
         .from(users::Table)

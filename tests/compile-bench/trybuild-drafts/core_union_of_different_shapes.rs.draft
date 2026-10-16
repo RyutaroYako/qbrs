@@ -1,0 +1,30 @@
+//! Deliberately broken: a `UNION` of a `Text` branch and a `BigInt` one.
+//! Shows the message the mismatch reports at compile time, where the database
+//! would otherwise report it at run time. Copy into
+//! `tests/compile-bench/examples/` and run:
+//!   cargo build -p compile-bench --example core_union_of_different_shapes
+use qbrs::prelude::*;
+
+#[derive(Table)]
+#[table(name = "users")]
+#[allow(dead_code)]
+struct Users {
+    #[column(primary_key, generated)]
+    id: i64,
+    email: String,
+}
+
+#[derive(Table)]
+#[table(name = "archived_users")]
+#[allow(dead_code)]
+struct ArchivedUsers {
+    #[column(primary_key, generated)]
+    id: i64,
+    email: String,
+}
+
+fn main() {
+    let emails = select((users::email,)).from(users::Table);
+    let ids = select((archived_users::id,)).from(archived_users::Table);
+    let _ = emails.union(&ids).to_sql(Postgres);
+}

@@ -1,0 +1,20 @@
+//! Deliberately broken: `.returning(..)` on a MySQL `DELETE`. Shows the
+//! `SupportsReturning` gate, since MySQL has no `RETURNING`. Copy into
+//! `tests/compile-bench/examples/` and run:
+//!   cargo build -p compile-bench --example core_returning_on_mysql
+use qbrs::prelude::*;
+
+#[derive(Table)]
+#[table(name = "users")]
+#[allow(dead_code)]
+struct Users {
+    #[column(primary_key, generated)]
+    id: i64,
+}
+
+fn main() {
+    let _ = delete::<MySql, _>(users::Table)
+        .filter(users::id.eq(1i64))
+        .returning(users::id)
+        .to_sql(MySql);
+}

@@ -32,7 +32,7 @@ Narrower loops:
 ```sh
 cargo test -p qbrs-core                                     # pure SQL-rendering tests, no DB
 cargo test -p qbrs-core --test select_smoke                 # one test binary
-cargo test -p qbrs-core --test select_smoke left_join_renders_and_typechecks   # one test
+cargo test -p qbrs-core --test select_smoke right_join_flips_previously_joined_tables_to_nullable   # one test
 cargo nextest run -p qbrs-sqlx                              # real-Postgres integration tests
 cargo run -p qbrs-examples --example 02_select_join          # one runnable example
 cargo build -p compile-bench --bin joins_40                  # scope-resolution depth

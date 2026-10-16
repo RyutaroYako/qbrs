@@ -1,7 +1,3 @@
-//! Does capability gating hold up for a second, meaningfully-different
-//! dialect, not just Postgres? Checked at the SQL-rendering level; execution
-//! is Postgres-only so far.
-
 use qbrs_core::dialect::{MySql, Postgres, Sqlite};
 use qbrs_core::expr::ExprMethods;
 use qbrs_core::insert::{Defaultable, InsertRow, InsertValue, insert};
@@ -178,8 +174,7 @@ fn a_repeated_value_still_binds_once_per_position_where_placeholders_are_positio
 }
 
 #[test]
-fn sqlite_supports_returning_mysql_does_not() {
-    // SQLite 3.35+ has RETURNING, same as Postgres.
+fn a_sqlite_delete_renders_returning() {
     let (sql, _) = qbrs_core::delete::delete(users::Table)
         .filter(users::id.eq(1))
         .returning(users::id)
@@ -188,29 +183,22 @@ fn sqlite_supports_returning_mysql_does_not() {
         sql,
         "DELETE FROM \"users\" WHERE (\"users\".\"id\" = ?) RETURNING \"users\".\"id\""
     );
-
-    // MySQL has no RETURNING at all, so `.returning(..)` must not exist on a
-    // MySql-backed Delete/Insert/Update. Uncomment to confirm the compile
-    // error (kept commented since this test file otherwise compiles/runs):
-    //
-    // let _ = qbrs_core::delete::delete(users::Table)
-    //     .filter(users::id.eq(1))
-    //     .returning(users::id); // error[E0599]: no method named `returning`
 }
 
 #[test]
-fn mysql_supports_right_join_but_not_full_join() {
-    // (No RIGHT JOIN example here since it needs a second table. The point
-    // is purely that `.full_join()` doesn't exist for MySql, proven by the
-    // commented-out snippet below failing to compile if uncommented.)
-    //
-    // qbrs_core::select::select((users::id,))
-    //     .from(users::Table)
-    //     .full_join(users::Table, users::id.eq(users::id)); // error[E0277]: `MySql` doesn't implement `SupportsFullOuterJoin`
+fn mysql_renders_a_right_join() {
+    let (sql, _) = select((users::id,))
+        .from::<MySql, _>(users::Table)
+        .right_join(quoted::Table, quoted::id.eq(users::id))
+        .to_sql(MySql);
+    assert_eq!(
+        sql,
+        "SELECT `users`.`id` FROM `users` RIGHT JOIN `a\"b` ON (`a\"b`.`id` = `users`.`id`)"
+    );
 }
 
 #[test]
-fn sqlite_supports_on_conflict_mysql_does_not() {
+fn sqlite_renders_on_conflict_do_nothing() {
     let (sql, _) = insert(users::Table)
         .values(UsersInsert {
             email: "a@example.com".into(),
@@ -221,15 +209,6 @@ fn sqlite_supports_on_conflict_mysql_does_not() {
         sql,
         "INSERT INTO \"users\" (\"email\") VALUES (?) ON CONFLICT (\"email\") DO NOTHING"
     );
-
-    // MySQL has no ON CONFLICT at all (its equivalent is the differently-
-    // shaped ON DUPLICATE KEY UPDATE, a separate future capability), so
-    // `.on_conflict_do_nothing(..)` must not exist on a MySql-backed
-    // Insert. Uncomment to confirm the compile error:
-    //
-    // let _ = insert(users::Table)
-    //     .values(UsersInsert { email: "a@example.com".into() })
-    //     .on_conflict_do_nothing(users::email); // error[E0599]: no method named `on_conflict_do_nothing`
 }
 
 #[test]
@@ -250,9 +229,7 @@ fn each_dialect_spells_an_aggregate_cast_its_own_way() {
 }
 
 #[test]
-fn a_quote_inside_an_identifier_is_doubled() {
-    // `#[table(name = "..")]` takes an arbitrary string, so the renderer has
-    // to close the identifier itself rather than trusting the input.
+fn a_double_quote_inside_an_identifier_is_doubled() {
     let (sql, _) = select((quoted::id,)).from(quoted::Table).to_sql(Postgres);
     assert_eq!(sql, "SELECT \"a\"\"b\".\"id\" FROM \"a\"\"b\"");
 }
@@ -280,7 +257,7 @@ fn a_bare_offset_gets_the_filler_limit_its_dialect_needs() {
 }
 
 #[test]
-fn sqlite_takes_its_union_branches_as_derived_tables() {
+fn sqlite_takes_its_union_branches_as_derived_tables_where_postgres_parenthesises_them() {
     let a = select((users::id,)).from(users::Table);
     let b = select((users::id,)).from(users::Table);
     let (sql, _) = a.union(&b).to_sql(Sqlite);

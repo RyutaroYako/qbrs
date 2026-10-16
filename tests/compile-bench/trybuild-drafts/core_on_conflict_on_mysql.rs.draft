@@ -1,0 +1,22 @@
+//! Deliberately broken: `.on_conflict_do_nothing(..)` on a MySQL `INSERT`.
+//! Shows the `SupportsOnConflict` gate, since MySQL spells an upsert as the
+//! differently shaped `ON DUPLICATE KEY UPDATE`. Copy into
+//! `tests/compile-bench/examples/` and run:
+//!   cargo build -p compile-bench --example core_on_conflict_on_mysql
+use qbrs::prelude::*;
+
+#[derive(Table)]
+#[table(name = "users")]
+#[allow(dead_code)]
+struct Users {
+    #[column(primary_key, generated)]
+    id: i64,
+    email: String,
+}
+
+fn main() {
+    let _ = insert::<MySql, _>(users::Table)
+        .values(UsersInsert::builder().email("a@example.com").build())
+        .on_conflict_do_nothing(users::email)
+        .to_sql(MySql);
+}
