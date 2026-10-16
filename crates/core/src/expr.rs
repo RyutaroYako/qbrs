@@ -1263,9 +1263,9 @@ pub fn count() -> Keyed<Count, Nil, BigInt> {
 }
 
 /// What `min`/`max` accept: a type the databases order. Its own marker for
-/// the reason `Summable` is one. `WrapNullable<MaybeNull>`, which stood
-/// here before, is implemented for every leaf type, so it gated nothing and
-/// `max(bool_column)` rendered SQL Postgres has no aggregate for.
+/// the reason `Summable` is one. Not `WrapNullable<MaybeNull>`: every leaf
+/// type implements it, so it would gate nothing and `max(bool_column)` would
+/// render SQL Postgres has no aggregate for.
 ///
 /// The set is Postgres's, the narrowest of the three: no `boolean`, no
 /// `bytea`, and no `uuid` before PG 18.

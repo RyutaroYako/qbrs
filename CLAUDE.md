@@ -274,7 +274,7 @@ inferred, which can contradict the join.
 `Dialect` is sealed (`Postgres`/`MySql`/`Sqlite`). Dialect-specific SQL is gated by separate
 marker traits (`SupportsReturning`, `SupportsOnConflict`, `SupportsRightJoin`,
 `SupportsFullOuterJoin`), so an unsupported call is a compile error. Keep capabilities
-fine-grained: they were split precisely because MySQL has `RIGHT JOIN` but not `FULL JOIN`.
+fine-grained rather than one `SupportsOuterJoins`: MySQL has `RIGHT JOIN` but not `FULL JOIN`.
 
 ### Embedded SQL goes through `Fragment`
 
@@ -337,7 +337,7 @@ clause fields back across the two builders or pass them as separate render argum
 **How the proof traits are sealed, and why the obvious ways don't work.** `Find`,
 `Superset`, `row::Field`, `row::TakeNamed`, `select::RowField`/`Selection`/`SelectionPart`
 all take a caller-local marker as a bare parameter, so the orphan rule licenses a schema
-crate to implement them. Two mechanisms were tried and are wrong: a seal on `Self` alone
+crate to implement them. Two seals look sufficient and are not: a seal on `Self` alone
 (the lying impl's `Self` is an honest `Cons`/`Column<C>`, and the free index takes the
 caller's own type), and a private associated *type* (`type Proof: Sealed`), where path
 privacy does not reach through projection, so `<Nil as Superset<Nil, Nil>>::Proof` names it
@@ -360,7 +360,7 @@ the derive emits `AllColumns`/`CteShape` in the schema's own crate. `ColumnList`
 `RawArg` need no such door, since nothing outside this crate implements them. Both still
 need the seal: each pairs a type-level claim with runtime data (`ColumnList` the row against
 the pushed items, `RawArg` a slot's `Req` against the column it delegates to), which is
-precisely what splitting `AllColumns` was meant to remove.
+precisely what `AllColumns` carrying one list removes.
 
 ### Derive and codegen (`crates/macros`)
 
@@ -406,11 +406,11 @@ take `insert::Insertable`, which the derive emits only when there is a column to
 
 `InsertRow::Values` is one chain carrying both halves: `RowCons<C, InsertValue, Tail>`,
 sealed like every other chain. The header is its keys and a row is its cells, walked once
-each. Every earlier shape kept them as two lists that met at render time, and each in
-turn produced SQL malformed for any table or dropped a value: a `COLUMNS` const beside
-positional values (`VALUES ($1, $2), ($3)`), then pairs reconciled against the first row's
-names (an empty first row discarded the rest), then pairs reconciled against a declared
-header (a surplus pair vanished). A chain can carry neither a surplus cell nor a missing one.
+each. Not two lists that meet at render time: each such shape renders SQL malformed for
+any table or drops a value. A `COLUMNS` const beside positional values renders
+`VALUES ($1, $2), ($3)`. Pairs reconciled against the first row's names discard the rest
+when that row is empty. Pairs reconciled against a declared header lose a surplus pair. A
+chain can carry neither a surplus cell nor a missing one.
 A chain whose keys repeat a column is still a lie a hand-written impl can tell, and the
 database rejects it. The derive cannot tell it, since Rust field names are unique. This is
 for the reason `AllColumns` carries one list: its seal is a `#[doc(hidden)]` door the derive

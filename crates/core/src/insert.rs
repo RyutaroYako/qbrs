@@ -129,18 +129,16 @@ impl<T: Into<Value>> From<Defaultable<T>> for InsertValue {
 /// schema's own crate. Two lists that have to line up position for position
 /// could therefore be made not to, and `INSERT INTO t (a, b, c) VALUES ($1)`
 /// is malformed whatever the table looks like. `update::UpdateRow::sets` has
-/// always had this shape.
+/// the same shape.
 pub trait InsertRow: private::Sealed {
     type Table: Table;
 
     /// This row's columns *and* values as one chain: the keys spell the
-    /// statement's header, the cells carry what goes under them. One type,
-    /// because two lists reconciled at render time is the shape that made
-    /// every earlier version of this trait able to produce SQL malformed
-    /// for any table, or to drop a value silently: a `COLUMNS` const
-    /// beside positional values, then pairs matched against the first row's
-    /// names, then pairs matched against a declared header. A chain can
-    /// carry neither a surplus cell nor a missing one.
+    /// statement's header, the cells carry what goes under them. Not two
+    /// lists reconciled at render time: a `COLUMNS` const beside positional
+    /// values, or pairs matched against a header, can render SQL malformed
+    /// for any table or drop a value silently. A chain can carry neither a
+    /// surplus cell nor a missing one.
     type Values: InsertValues;
 
     fn into_values(self) -> Self::Values;

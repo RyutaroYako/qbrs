@@ -231,8 +231,8 @@ pub trait AllColumns: SelectableSealed {
     /// The table's columns as a type-level list, `Cons<Column<C>, ..>`.
     /// The row and the rendered items are both computed from it here, so a
     /// hand-written impl can name a different set of columns but can never
-    /// make the two disagree. While this trait stated the row and pushed the
-    /// items separately, a schema's own crate could.
+    /// make the two disagree. A trait that stated the row and pushed the items
+    /// separately would let a schema's own crate transpose them.
     type Columns;
 }
 
