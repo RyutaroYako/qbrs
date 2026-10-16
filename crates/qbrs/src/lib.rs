@@ -79,9 +79,9 @@ pub mod prelude {
         TextLike, Writable, null,
     };
     pub use qbrs_core::expr::{
-        BigInt, BigIntArray, Bool, Bytes, ExprMethods, HasCount, Integer, IntegerArray, LabelExt,
-        Real, SortDir, Text, TextArray, Value, all_of, any_of, avg, count, count_of, max, min,
-        string_agg, sum,
+        BigInt, BigIntArray, Bool, Bytes, EqAny, ExprMethods, HasCount, Integer, IntegerArray,
+        LabelExt, Real, SortDir, Text, TextArray, Value, all_of, any_of, avg, count, count_of, max,
+        min, string_agg, sum,
     };
     #[cfg(feature = "chrono")]
     pub use qbrs_core::expr::{Date, Timestamptz};

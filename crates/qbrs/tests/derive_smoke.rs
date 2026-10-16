@@ -1,6 +1,6 @@
 use qbrs::Table;
 use qbrs::dialect::Postgres;
-use qbrs::expr::ExprMethods;
+use qbrs::expr::{EqAny, ExprMethods};
 use qbrs::select::{OrderExt, Predicate, Select, Selection, predicate, select};
 use qbrs::statement::Statement;
 use qbrs::update::Assignments;

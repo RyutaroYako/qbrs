@@ -697,9 +697,8 @@ impl<K, Req, S: SqlType> LabelExt for Keyed<K, Req, S> {}
 // at `.decodes_as::<..>()` never prints.
 impl<Req, S: SqlType> LabelExt for Expr<Req, S> {}
 
-/// Comparison/boolean-combinator methods, blanket-implemented for anything
-/// convertible to a typed expression (columns, literals, and `Expr` itself).
-/// Kept separate from `IntoExpr` so one blanket impl can serve all three.
+/// Comparison/boolean-combinator methods on a column or an expression. A
+/// literal goes on the right-hand side, which takes any `IntoExpr`.
 // Allowed rather than satisfied with `&self`: every combinator consumes
 // `self`, as the builders do, and `is_null`/`is_in` are combinators, not
 // predicates on an existing value.
@@ -832,28 +831,6 @@ pub trait ExprMethods: IntoExpr + Sized {
             values,
         })
     }
-
-    /// `x = ANY(<array>)`: is this value one of the elements of that array
-    /// column. The mirror of [`is_in`](Self::is_in), which asks the same
-    /// question of a list the statement writes out: here the list is one
-    /// value the database unnests, so the array can be a column.
-    ///
-    /// `!` it for "not one of them": that is `NOT (x = ANY(a))`, which SQL
-    /// also spells `x <> ALL(a)`. It is not `x <> ANY(a)`, which is true as
-    /// soon as *some* element differs.
-    fn eq_any<Rhs: IntoExpr>(
-        self,
-        array: Rhs,
-    ) -> Expr<<Self::Req as Concat<Rhs::Req>>::Output, Bool>
-    where
-        Rhs::Sql: ArrayOf<Self::Sql>,
-        Self::Req: Concat<Rhs::Req>,
-    {
-        Expr::from_kind(ExprKind::EqAny {
-            expr: Box::new(self.into_expr().kind),
-            array: Box::new(array.into_expr().kind),
-        })
-    }
 }
 
 /// True when any of the conditions is. Takes a runtime-length collection,
@@ -902,7 +879,42 @@ pub(crate) fn fold_conditions(kinds: impl IntoIterator<Item = ExprKind>, all: bo
     folded.unwrap_or(ExprKind::Always(all))
 }
 
-impl<T: IntoExpr> ExprMethods for T {}
+// One impl per expression type rather than a blanket one over `IntoExpr`: a
+// `String` or an `i64` is `IntoExpr` too, and a by-value `eq`/`lt` on it would
+// shadow `PartialEq`/`PartialOrd` in every module importing the prelude.
+impl<Req, S: SqlType> ExprMethods for Expr<Req, S> {}
+impl<C: ColumnKey> ExprMethods for Column<C> {}
+impl<K, Req, S: SqlType> ExprMethods for Keyed<K, Req, S> {}
+
+/// `x = ANY(<array>)` on a value or an expression, so the value can be a
+/// Rust literal: `"rust".to_string().eq_any(feeds::topics)`.
+pub trait EqAny: IntoExpr + Sized {
+    /// `x = ANY(<array>)`: is this value one of the elements of that array
+    /// column. The mirror of [`is_in`](ExprMethods::is_in), which asks the same
+    /// question of a list the statement writes out: here the list is one
+    /// value the database unnests, so the array can be a column.
+    ///
+    /// `!` it for "not one of them": that is `NOT (x = ANY(a))`, which SQL
+    /// also spells `x <> ALL(a)`. It is not `x <> ANY(a)`, which is true as
+    /// soon as *some* element differs.
+    fn eq_any<Rhs: IntoExpr>(
+        self,
+        array: Rhs,
+    ) -> Expr<<Self::Req as Concat<Rhs::Req>>::Output, Bool>
+    where
+        Rhs::Sql: ArrayOf<Self::Sql>,
+        Self::Req: Concat<Rhs::Req>,
+    {
+        Expr::from_kind(ExprKind::EqAny {
+            expr: Box::new(self.into_expr().kind),
+            array: Box::new(array.into_expr().kind),
+        })
+    }
+}
+
+// Blanket over `IntoExpr`, unlike `ExprMethods`: no std method is named
+// `eq_any`, so a literal receiver shadows nothing.
+impl<T: IntoExpr> EqAny for T {}
 
 fn bin_op<Lhs, Rhs>(
     op: BinOp,

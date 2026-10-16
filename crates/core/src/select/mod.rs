@@ -117,7 +117,11 @@ pub trait OrderExt: IntoExpr + Sized {
         }
     }
 }
-impl<T: IntoExpr> OrderExt for T {}
+// Not a blanket impl over `IntoExpr`, for the reason `ExprMethods` gives: a
+// by-value `sort` on a `Vec<String>` would shadow the slice's `sort`.
+impl<Req, S: crate::expr::SqlType> OrderExt for crate::expr::Expr<Req, S> {}
+impl<C: crate::expr::ColumnKey> OrderExt for crate::expr::Column<C> {}
+impl<K, Req, S: crate::expr::SqlType> OrderExt for crate::expr::Keyed<K, Req, S> {}
 
 /// Something a query can select from or join to. A schema table brings
 /// nothing with it; a `Cte` brings its `WITH` binding, so attaching that
