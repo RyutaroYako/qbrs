@@ -3,6 +3,8 @@
 //! Drizzle's own `sql.placeholder()` leaves: its `.execute()` takes an
 //! untyped `Record<string, unknown>`, so a missing/misspelled key is only
 //! a runtime error. Here it is the exact struct `prepare!{}` generated.
+//! `ByEmail::email()` is a placeholder, not a value, until a call binds it. A
+//! count can be prepared from the same filter, rendered once beside the rows.
 //! Run: `cargo run -p qbrs-examples --example 10_prepared`
 
 use qbrs::prelude::*;
@@ -18,15 +20,12 @@ async fn main() {
     let (pool, _db) = setup_db().await;
     seed(&pool).await;
 
-    // Rendered once. `ByEmail::email()` is a placeholder, not a value yet.
-    let query = select((users::id, users::display_name))
+    let users_by_email = select((users::id, users::display_name))
         .from(users::Table)
         .filter(users::email.eq(ByEmail::email()))
         .prepare::<ByEmail, _>(Postgres);
 
-    // The same query prepared as its own total: one rendering for the page,
-    // one for the count, and the page size bound rather than baked in.
-    let total = select((users::id,))
+    let count_by_email = select((users::id,))
         .from(users::Table)
         .filter(users::email.eq(ByEmail::email()))
         .prepare_count::<ByEmail, _>(Postgres);
@@ -36,7 +35,7 @@ async fn main() {
         "grace@example.com",
         "no-such-user@example.com",
     ] {
-        let rows: Vec<(i64, Option<String>)> = query
+        let rows: Vec<(i64, Option<String>)> = users_by_email
             .load(
                 &pool,
                 ByEmail {
@@ -46,7 +45,7 @@ async fn main() {
             .await
             .expect("load prepared query")
             .into_tuples();
-        let matching = total
+        let matching = count_by_email
             .count(
                 &pool,
                 ByEmail {

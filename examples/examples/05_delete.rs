@@ -1,4 +1,6 @@
-//! DELETE, with `RETURNING` to see what was removed.
+//! DELETE, with `RETURNING` to see what was removed. A single bare column in
+//! `RETURNING` decodes to its native type, so the result is a `Vec<String>`
+//! rather than a list of rows.
 //! Run: `cargo run -p qbrs-examples --example 05_delete`
 
 use qbrs::prelude::*;
@@ -10,9 +12,6 @@ async fn main() {
     let (pool, _db) = setup_db().await;
     seed(&pool).await;
 
-    // A single bare `Column` (not wrapped in a tuple) decodes to its plain
-    // native type, not a 1-tuple. `.returning((users::email,))` would give
-    // `Vec<(String,)>` instead.
     let deleted: Vec<String> = delete(users::Table)
         .filter(users::active.eq(false))
         .returning(users::email)

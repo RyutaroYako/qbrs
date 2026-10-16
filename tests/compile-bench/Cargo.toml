@@ -7,7 +7,7 @@ publish = false
 [dependencies]
 qbrs-core = { path = "../../crates/core" }
 
-# The `trybuild-drafts` are copied into `examples/` to eyeball diagnostics,
-# and some of them use the derive, which lives behind the facade.
+# No target here uses `qbrs`, but removing it breaks the `trybuild-drafts` that use the
+# derive once they are copied into `examples/`.
 [dev-dependencies]
 qbrs = { path = "../../crates/qbrs" }

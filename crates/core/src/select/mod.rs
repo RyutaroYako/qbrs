@@ -30,10 +30,8 @@ pub use selection::{
 };
 pub use set_op::SetOp;
 
-/// One `name AS (body)` binding, carried in by the `Cte` a query was
-/// entered through. Opaque outside this crate: `JoinSource::binding` is the
-/// only way to make one, and it takes the name and columns from the
-/// marker's `CteShape` rather than from anything a caller can vary.
+/// No public constructor or fields: `JoinSource::binding` makes one from the
+/// marker's `CteShape`, so a caller cannot vary its name or columns.
 #[doc(hidden)]
 #[derive(Debug, Clone)]
 pub struct CteDef {
@@ -76,8 +74,8 @@ pub struct OrderKey<Req> {
     _marker: PhantomData<fn() -> Req>,
 }
 
-// Hand-written for the reason `Expr`'s is: `#[derive(Clone)]` would ask the
-// phantom `Req` to be `Clone`, which no scope list is.
+// Hand-written, not derived, for the reason `Expr`'s is: `#[derive(Clone)]`
+// would ask the phantom `Req` to be `Clone`, which no scope list is.
 impl<Req> Clone for OrderKey<Req> {
     fn clone(&self) -> Self {
         OrderKey {
@@ -119,7 +117,11 @@ pub trait OrderExt: IntoExpr + Sized {
         }
     }
 }
-impl<T: IntoExpr> OrderExt for T {}
+// Not a blanket impl over `IntoExpr`, for the reason `ExprMethods` gives: a
+// by-value `sort` on a `Vec<String>` would shadow the slice's `sort`.
+impl<Req, S: crate::expr::SqlType> OrderExt for crate::expr::Expr<Req, S> {}
+impl<C: crate::expr::ColumnKey> OrderExt for crate::expr::Column<C> {}
+impl<K, Req, S: crate::expr::SqlType> OrderExt for crate::expr::Keyed<K, Req, S> {}
 
 /// Something a query can select from or join to. A schema table brings
 /// nothing with it; a `Cte` brings its `WITH` binding, so attaching that
@@ -128,15 +130,13 @@ impl<T: IntoExpr> OrderExt for T {}
 pub trait JoinSource<D>: join_source::Sealed {
     /// The table this source contributes to the scope.
     type Table: Table;
-    /// The `WITH` binding this source carries into the statement. It is
-    /// `None` for a schema table, which is already there.
     #[doc(hidden)]
     fn binding(self) -> Option<CteDef>;
 }
 
 mod join_source {
-    /// Sealed the way `dialect::Dialect` is: what a query can read from is
-    /// a closed set of two, a schema table and a bound CTE.
+    /// Sealed rather than open, the way `dialect::Dialect` is: what a query
+    /// can read from is a closed set of two, a schema table and a bound CTE.
     pub trait Sealed {}
     impl<T: super::BaseTable> Sealed for T {}
     impl<D, Marker> Sealed for crate::cte::Cte<D, Marker> {}
@@ -276,8 +276,6 @@ pub fn grouping<Scope, Idxs, K: GroupBy<Scope, Idxs>>(key: K) -> Grouping<Scope>
     note = "a `Predicate` also has to have been discharged against *this* scope: a scope lists its tables most-recently-joined first, so two that look alike can still differ in order"
 )]
 pub trait Condition<D, Scope, Idxs> {
-    /// Discharged against this scope, which for an `Expr` is where its
-    /// `Superset` proof is spent and for a `Predicate` already happened.
     #[doc(hidden)]
     fn into_predicate(self) -> Predicate<D, Scope>;
 }
@@ -314,8 +312,8 @@ pub struct Exists<D, Req> {
     _marker: PhantomData<fn() -> (D, Req)>,
 }
 
-// Hand-written for the reason `Expr`'s is: `#[derive(Clone)]` would ask the
-// phantom tags to be `Clone`.
+// Hand-written, not derived, for the reason `Expr`'s is: `#[derive(Clone)]`
+// would ask the phantom tags to be `Clone`.
 impl<D, Req> Clone for Exists<D, Req> {
     fn clone(&self) -> Self {
         Exists {
@@ -371,8 +369,8 @@ pub struct Predicate<D, Scope> {
     _marker: PhantomData<fn() -> (D, Scope)>,
 }
 
-// Hand-written for the reason `Expr`'s is: `#[derive(Clone)]` would ask a
-// phantom `Scope` to be `Clone`.
+// Hand-written, not derived, for the reason `Expr`'s is: `#[derive(Clone)]`
+// would ask a phantom `Scope` to be `Clone`.
 impl<D, Scope> Clone for Predicate<D, Scope> {
     fn clone(&self) -> Self {
         Predicate {
@@ -466,7 +464,7 @@ impl<Sel> SelectSeed<Sel> {
         source: S,
     ) -> Select<D, Cons<TableSlot<S::Table, NotNull>, Nil>, Sel> {
         let mut body = SelectBody::new(<S::Table as Table>::NAME);
-        body.bind(source);
+        body.attach_binding_of(source);
         Select {
             body,
             selection: self.selection,
@@ -475,10 +473,9 @@ impl<Sel> SelectSeed<Sel> {
     }
 }
 
-/// Every clause of a `SELECT` except the selection list, which `Select`
-/// keeps typed and `DynSelect` keeps rendered. Held whole by both, so a new
-/// clause is added here once instead of being threaded through each of them
-/// and through rendering by hand.
+/// Held whole by `Select` and `DynSelect` rather than spread across their
+/// fields, so a clause added here flows through `.erase()`, `retype()` and
+/// rendering without being threaded through each by hand.
 #[derive(Debug, Clone)]
 pub(crate) struct SelectBody {
     ctes: Vec<CteDef>,
@@ -509,15 +506,11 @@ impl SelectBody {
         }
     }
 
-    /// `SELECT count(*)` over this body with its paging dropped: a total
-    /// counts the rows that match, not the page being shown.
-    ///
-    /// A query whose rows aren't one per matching row is counted by
-    /// wrapping it, selection and all, since what a page of it would show is
-    /// what has to be counted. The rule is stated as what may be left
+    /// Wraps a query whose rows are not one per matching row rather than
+    /// swapping its selection for `count(*)`. The test names what may stay
     /// unwrapped (plain columns, no `GROUP BY`/`HAVING`/`DISTINCT`) rather
-    /// than as a list of what may not: an aggregate collapses the rows too,
-    /// and `sql!` can hold anything at all.
+    /// than what may not: an aggregate collapses rows too, and `sql!` can
+    /// hold anything.
     fn count_sql<D: Dialect>(&self, selection: &[SelectItem]) -> (String, Vec<Value>) {
         let mut body = self.clone();
         body.order_by.clear();
@@ -541,9 +534,7 @@ impl SelectBody {
         sink.finish()
     }
 
-    /// Attaches whatever `WITH` binding a join source carries before its
-    /// table is named in a FROM or JOIN clause.
-    fn bind<D, S: JoinSource<D>>(&mut self, source: S) {
+    fn attach_binding_of<D, S: JoinSource<D>>(&mut self, source: S) {
         self.ctes.extend(source.binding());
     }
 }
@@ -558,7 +549,8 @@ pub struct Select<D, Scope, Sel, Outer = Nil> {
     _marker: PhantomData<fn() -> (D, Scope, Outer)>,
 }
 
-// Cloning is what lets one built-up query serve both a count and a page.
+// Hand-written, not derived, for the reason `Expr`'s is: `#[derive(Clone)]`
+// would ask the phantom `D`, `Scope` and `Outer` to be `Clone`.
 impl<D, Scope, Sel: Clone, Outer> Clone for Select<D, Scope, Sel, Outer> {
     fn clone(&self) -> Self {
         Select {
@@ -737,7 +729,7 @@ impl<D, Scope, Sel, Outer> Select<D, Scope, Sel, Outer> {
     where
         C: Condition<D, Cons<TableSlot<S::Table, NotNull>, Scope>, Idxs>,
     {
-        self.body.bind(source);
+        self.body.attach_binding_of(source);
         self.body.joins.push(JoinClause {
             kind: JoinKind::Inner,
             table: <S::Table as Table>::NAME,
@@ -754,7 +746,7 @@ impl<D, Scope, Sel, Outer> Select<D, Scope, Sel, Outer> {
     where
         C: Condition<D, Cons<TableSlot<S::Table, MaybeNull>, Scope>, Idxs>,
     {
-        self.body.bind(source);
+        self.body.attach_binding_of(source);
         self.body.joins.push(JoinClause {
             kind: JoinKind::Left,
             table: <S::Table as Table>::NAME,
@@ -776,7 +768,7 @@ impl<D, Scope, Sel, Outer> Select<D, Scope, Sel, Outer> {
         Scope: MapNullable,
         C: Condition<D, Cons<TableSlot<S::Table, NotNull>, Scope::Output>, Idxs>,
     {
-        self.body.bind(source);
+        self.body.attach_binding_of(source);
         self.body.joins.push(JoinClause {
             kind: JoinKind::Right,
             table: <S::Table as Table>::NAME,
@@ -795,7 +787,7 @@ impl<D, Scope, Sel, Outer> Select<D, Scope, Sel, Outer> {
         Scope: MapNullable,
         C: Condition<D, Cons<TableSlot<S::Table, MaybeNull>, Scope::Output>, Idxs>,
     {
-        self.body.bind(source);
+        self.body.attach_binding_of(source);
         self.body.joins.push(JoinClause {
             kind: JoinKind::Full,
             table: <S::Table as Table>::NAME,
@@ -842,12 +834,10 @@ impl<D: Dialect, Scope, Sel> Select<D, Scope, Sel> {
 }
 
 impl<D: Dialect, Scope, Sel> Select<D, Scope, Sel> {
-    /// This query as an embeddable `Fragment`: an `EXISTS (..)` subquery, a
-    /// CTE body, or a set-operation branch. The only way to produce one, so
-    /// no caller has to remember that an embedded query renders with `?`
-    /// placeholders rather than `D`'s own style. `Outer = Nil` like the
-    /// other terminals: a correlated subquery names tables that aren't in
-    /// its own `FROM`, and reaches SQL through `EXISTS` instead.
+    /// The one constructor of a query `Fragment`, rather than each embedding
+    /// site rendering into a `FragmentSink` itself. Only for `Outer = Nil`: a
+    /// correlated subquery names tables outside its own `FROM`, and reaches
+    /// SQL through `EXISTS` instead.
     pub(crate) fn fragment<Idx>(&self) -> Fragment
     where
         Sel: Selection<Scope, Idx>,
@@ -943,16 +933,14 @@ impl SelectBody {
     }
 }
 
-/// Starts a correlated subquery against a scope, rather than against a
-/// query. `UPDATE`/`DELETE`, whose scope is the one table they write,
-/// therefore reach the same `EXISTS` a `SELECT` does without conjuring a
-/// `Select` they don't otherwise need.
+/// A free function as well as `Select::correlated`: `UPDATE`/`DELETE` have
+/// a scope but no `Select` to call it on.
 pub(crate) fn correlated_with<D, Scope, S: JoinSource<D>, InnerSel>(
     source: S,
     selection: InnerSel,
 ) -> Select<D, Cons<TableSlot<S::Table, NotNull>, Scope>, InnerSel, Scope> {
     let mut body = SelectBody::new(<S::Table as Table>::NAME);
-    body.bind(source);
+    body.attach_binding_of(source);
     Select {
         body,
         selection,
@@ -1100,10 +1088,9 @@ pub struct RowCount(RowCountKind);
 
 #[derive(Debug, Clone)]
 enum RowCountKind {
-    /// Written into the SQL text: a page size is not a value the plan
-    /// should be reused across.
+    /// Written into the SQL text rather than bound: a page size is not a
+    /// value the plan should be reused across.
     Literal(i64),
-    /// A bound parameter, which is what a `prepare!{}` placeholder is.
     Bound(ExprKind),
 }
 
@@ -1138,8 +1125,6 @@ impl IntoRowCount for Expr<Nil, crate::expr::BigInt> {
     }
 }
 
-/// `LIMIT`/`OFFSET`, with the filler a dialect needs when there's an offset
-/// and no limit, since a bare `OFFSET` is Postgres-only.
 pub(crate) fn render_limit_offset<D: Dialect>(
     sink: &mut dyn Sink,
     limit: Option<&RowCount>,

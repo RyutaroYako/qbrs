@@ -1,7 +1,3 @@
-//! Does "subquery Scope = Cons<inner, outer>" let a correlated subquery
-//! reference outer columns with no machinery beyond what `Find`/`Superset`
-//! already do for ordinary joins?
-
 use qbrs_core::dialect::{MySql, Postgres};
 use qbrs_core::expr::ExprMethods;
 use qbrs_core::scope::Table as TableTrait;
@@ -77,14 +73,8 @@ mod orders {
 }
 
 #[test]
-fn correlated_exists_references_outer_column() {
+fn a_correlated_exists_filters_on_its_own_table_and_the_outer_one_in_one_expression() {
     let outer = select((users::id,)).from(users::Table);
-
-    // The subquery's `.filter()` references `orders::user_id` (its own
-    // FROM) *and* `users::id` (the outer query's FROM) in the same
-    // expression. This is exactly the correlated-subquery case. It
-    // type-checks with no special API beyond `.correlated()` + the
-    // ordinary `Find`/`Superset` machinery already used for joins.
     let subquery = outer.correlated(orders::Table, (orders::user_id,));
     let cond = subquery.filter(orders::user_id.eq(users::id)).exists();
 
@@ -97,46 +87,32 @@ fn correlated_exists_references_outer_column() {
 }
 
 #[test]
-fn correlated_subquery_with_bound_value_renumbers_correctly() {
-    // The outer query also binds a literal value, proving the subquery's
-    // parameters take their numbers from the statement they end up in,
-    // rather than from the query they were written in.
+fn a_correlated_subquerys_placeholders_are_numbered_after_the_outer_querys() {
     let outer = select((users::id,))
         .from(users::Table)
         .filter(users::id.gt(0));
     let subquery = outer.correlated(orders::Table, (orders::user_id,));
-    let cond = subquery.filter(orders::user_id.eq(users::id)).exists();
+    let cond = subquery
+        .filter(orders::user_id.eq(users::id))
+        .filter(orders::user_id.lt(5))
+        .exists();
 
     let (sql, params) = outer.filter(cond).to_sql(Postgres);
     assert_eq!(
         sql,
-        "SELECT \"users\".\"id\" FROM \"users\" WHERE (\"users\".\"id\" > $1) AND (EXISTS (SELECT \"orders\".\"user_id\" FROM \"orders\" WHERE (\"orders\".\"user_id\" = \"users\".\"id\")))"
+        "SELECT \"users\".\"id\" FROM \"users\" WHERE (\"users\".\"id\" > $1) AND (EXISTS (SELECT \"orders\".\"user_id\" FROM \"orders\" WHERE (\"orders\".\"user_id\" = \"users\".\"id\") AND (\"orders\".\"user_id\" < $2)))"
     );
-    assert_eq!(params, vec![qbrs_core::expr::Value::I32(0)]);
+    assert_eq!(
+        params,
+        vec![
+            qbrs_core::expr::Value::I32(0),
+            qbrs_core::expr::Value::I32(5)
+        ]
+    );
 }
-
-// Uncomment to confirm a subquery referencing a table from neither its own
-// FROM nor the outer scope is (correctly) a compile error:
-//
-// #[test]
-// fn subquery_cannot_reference_an_unrelated_table() {
-//     pub struct PaymentsMarker;
-//     impl TableTrait for PaymentsMarker {
-//         const NAME: &'static str = "payments";
-//     }
-//     let payments_amount = qbrs_core::expr::Column::<PaymentsMarker, qbrs_core::expr::Integer>::new("amount");
-//     let outer = select((users::id,)).from(users::Table);
-//     let subquery = outer.correlated(orders::Table, (orders::user_id,));
-//     let _cond = subquery.filter(payments_amount.eq(1)).exists(); // error: Payments not in scope
-// }
 
 #[test]
 fn an_exists_is_a_condition_of_its_own_dialect() {
-    // Pinned rather than dialect-agnostic: the subquery was checked against
-    // its dialect's capabilities, and any CTE it binds is already rendered
-    // in that dialect, so it can only be filtered onto a statement of the
-    // same one. The cross-dialect version is a compile error. See
-    // `tests/compile-bench/trybuild-drafts/exists_across_dialects.rs.draft`.
     let inner = select((orders::user_id,)).from(orders::Table);
     let (sql, _) = select((users::id,))
         .from(users::Table)

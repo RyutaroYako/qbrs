@@ -2,7 +2,9 @@
 //! a query produces rather than the ones the caller holds. The header is the
 //! columns the target lets a statement write, so a generated key stays the
 //! database's to fill, and `row::SameShape` checks the query against them at
-//! compile time, the same one comparison a `UNION` branch goes through.
+//! compile time, the same one comparison a `UNION` branch goes through. The
+//! source query's binds are numbered by the statement it lands in. Deleting
+//! the originals is the other half of the archival pattern.
 //! Known limitation: no `ON CONFLICT` on this shape, and no column subset.
 //! Run: `cargo run -p qbrs-examples --example 25_insert_select`
 
@@ -11,8 +13,6 @@ use qbrs::prelude::*;
 use qbrs_examples::*;
 use qbrs_sqlx::prelude::*;
 
-/// The archive keeps an identity of its own: a generated column is not in
-/// the header, so the query fills the rest and the database fills this one.
 #[derive(Table)]
 #[table(name = "archived_orders")]
 #[allow(dead_code)]
@@ -45,9 +45,6 @@ async fn main() {
     .await
     .expect("create archived_orders");
 
-    // The source is an ordinary query: filters, joins, whatever it takes
-    // to say which rows to copy. Its bind is numbered by the statement it
-    // lands in, not by the query on its own.
     let shipped = select((orders::user_id, orders::total, orders::shipped))
         .from(orders::Table)
         .filter(orders::shipped.eq(true));
@@ -61,7 +58,6 @@ async fn main() {
     println!("archived order ids: {archived:?}");
     assert_eq!(archived.len(), 1);
 
-    // Then the originals go, which is the other half of the pattern.
     let removed = delete(orders::Table)
         .filter(orders::shipped.eq(true))
         .execute(&pool)

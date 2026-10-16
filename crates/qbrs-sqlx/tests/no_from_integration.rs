@@ -1,21 +1,14 @@
-//! `SELECT <expr>` with no `FROM`, against a real Postgres: the advisory
-//! lock the issue reached raw sqlx for, plus the two other shapes a
-//! FROM-less query has: a function of no arguments, and one taking a bind.
-
 mod common;
 
 use qbrs::prelude::*;
 use qbrs_sqlx::prelude::*;
 
 #[tokio::test]
-async fn a_select_with_no_from_computes_its_value_and_binds_its_arguments() {
+async fn a_select_with_no_from_takes_and_releases_an_advisory_lock_and_computes_a_row() {
     let (pool, guard) = common::test_pool("qbrs_no_from").await;
 
-    // The shape the issue was stuck on: a lock keyed by a bound value,
-    // with no table anywhere in the statement. A session lock belongs to
-    // the connection that took it, so both statements go to the same one,
-    // which a FROM-less query reaches the way any other does, by being
-    // generic over `PgExecutor`.
+    // Running these two on `&pool` could release the lock from a connection
+    // that never took it, since a session lock belongs to its connection.
     let mut conn = pool.acquire().await.expect("one connection");
     let key = 4_242_i64;
     let taken: bool = select(qbrs::sql!(qbrs::expr::Bool, "pg_try_advisory_lock(?)", key))
@@ -33,7 +26,6 @@ async fn a_select_with_no_from_computes_its_value_and_binds_its_arguments() {
     assert!(released);
     drop(conn);
 
-    // A function of no arguments, and a row of two values rather than one.
     let settings: (String, i64) = select((
         qbrs::sql!(qbrs::expr::Text, "current_setting('server_version')"),
         qbrs::sql!(qbrs::expr::BigInt, "(? + ?)", 2i64, 3i64),

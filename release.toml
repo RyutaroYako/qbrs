@@ -1,31 +1,18 @@
-# Workspace config for `cargo-release` (https://github.com/crate-ci/cargo-release).
-# Two callers run `cargo release` against it: `scripts/release.sh` and the
-# `cut` job in `.github/workflows/release.yaml`. Both run the gate first, so
-# neither touches a version number before the tree is green. Nothing else
-# should call `cargo release` directly.
-#
-# `tests/compile-bench`, `tests/dialect-exec`, `tests/embedded-pg`, and
-# `examples` all carry `publish = false` in their own Cargo.toml. Their
-# versions still move with the workspace, since they inherit it. Only
-# qbrs-core, qbrs-macros, qbrs, and qbrs-sqlx are ever published.
+# Run through `scripts/release.sh` or the `cut` job in `release.yaml`, never as a bare
+# `cargo release`: both run the gate first, so no version moves before the tree is green.
 
-# All four crates share one version number (`workspace.package.version`),
-# so they bump and get tagged together rather than drifting independently.
 shared-version = true
 consolidate-commits = true
 
-# qbrs and qbrs-sqlx depend on qbrs-core/qbrs-macros via
-# `[workspace.dependencies]` version pins. Keep those exact rather than
-# leaving a wider range once every crate has actually moved to the new
-# version.
+# `upgrade` rather than `fix`, which leaves a `[workspace.dependencies]` pin alone while
+# it still matches, so `qbrs` would declare a wider range than the `qbrs-core` beside it.
 dependent-version = "upgrade"
 
 tag-name = "v{{version}}"
 tag-message = "Release {{version}}"
 pre-release-commit-message = "Release {{version}}"
 
-# CI publishes. Cutting a release ends at the tag, wherever it is cut from,
-# and the tag is what the publish half runs against. So a crates.io
-# credential never has to exist on a laptop.
+# Not `true`: CI publishes from the tag through Trusted Publishing, so no crates.io
+# credential has to exist wherever the release is cut.
 publish = false
 push = true

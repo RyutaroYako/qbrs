@@ -120,7 +120,6 @@ impl Dialect for MySql {
         func: "group_concat",
         backslash_escapes: true,
     };
-    // Uses the default `?` placeholder.
 }
 
 #[derive(Debug, Clone, Copy, Default)]
@@ -130,7 +129,6 @@ impl Dialect for Sqlite {
     const PARENTHESIZED_SET_OP_BRANCHES: bool = false;
     const OFFSET_WITHOUT_LIMIT: Option<&'static str> = Some("-1");
     const IDENTIFIER_QUOTE: char = '"';
-    // Uses the default `?` placeholder.
 }
 
 /// `RETURNING` support (Postgres, SQLite 3.35+). MySQL has no equivalent

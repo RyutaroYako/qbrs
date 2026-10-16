@@ -22,9 +22,6 @@ macro_rules! declare_tables {
     };
 }
 
-// 100 synthetic tables: headroom to stress-test well past diesel's ~7-join
-// blowup point, including a full-superset worst case where every table is
-// required at once.
 declare_tables!(
     T00, T01, T02, T03, T04, T05, T06, T07, T08, T09, T10, T11, T12, T13, T14, T15, T16, T17, T18,
     T19, T20, T21, T22, T23, T24, T25, T26, T27, T28, T29, T30, T31, T32, T33, T34, T35, T36, T37,
@@ -100,8 +97,8 @@ macro_rules! row_of {
     };
 }
 
-// Re-exported under a stable path so the macros above resolve these types
-// regardless of what the calling crate imported.
+// The macros name these through `$crate` rather than writing `qbrs_core::..`, which
+// resolves only in a caller that depends on `qbrs_core` under that name.
 #[doc(hidden)]
 pub mod __private {
     pub use qbrs_core::expr::{BigInt, Column, ColumnKey};

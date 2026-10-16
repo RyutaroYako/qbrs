@@ -1,12 +1,8 @@
-//! Postgres array columns, end to end: declared in a schema, bound, and
-//! decoded back into the `Vec<T>` the schema names. An array is one bind
-//! parameter rather than a rendered list, so what a database does with it
-//! is the only thing that says the mapping is right.
-
 mod common;
 
 use qbrs::prelude::*;
 use qbrs_sqlx::prelude::*;
+use sqlx::PgPool;
 
 #[derive(Table)]
 #[table(name = "accounts")]
@@ -22,15 +18,13 @@ struct Accounts {
     denied: Vec<uuid::Uuid>,
 }
 
-/// The DTO shape a handler returns, filled by name.
 #[derive(qbrs::FromRow, Debug, PartialEq)]
 struct Methods {
     login_methods: Vec<String>,
     notify: Option<Vec<String>>,
 }
 
-/// The three arrays a row selects, in selection order.
-type Arrays = (Vec<i32>, Vec<i64>, Option<Vec<String>>);
+type DelaysVersionsAndNotify = (Vec<i32>, Vec<i64>, Option<Vec<String>>);
 
 #[tokio::test]
 async fn array_columns_bind_and_decode_as_the_vec_the_schema_names() {
@@ -54,7 +48,7 @@ async fn array_columns_bind_and_decode_as_the_vec_the_schema_names() {
     .await
     .expect("create accounts");
 
-    let row = || {
+    let filled_row = {
         let builder = AccountsInsert::builder()
             .login_methods(vec!["password".to_string(), "sso".to_string()])
             .retry_delays(vec![1i32, 2, 5])
@@ -64,16 +58,14 @@ async fn array_columns_bind_and_decode_as_the_vec_the_schema_names() {
         let builder = builder.denied(vec![uuid::Uuid::nil()]);
         builder.build()
     };
-
     let id: i64 = qbrs::insert::insert(accounts::Table)
-        .values(row())
+        .values(filled_row)
         .returning(accounts::id)
         .load_one(&pool)
         .await
         .expect("insert a row of arrays")
         .expect("one row");
 
-    // An empty array is a value, not a NULL, and the two stay apart.
     let empty_row = {
         let builder = AccountsInsert::builder()
             .login_methods(Vec::<String>::new())
@@ -84,16 +76,58 @@ async fn array_columns_bind_and_decode_as_the_vec_the_schema_names() {
         let builder = builder.denied(Vec::<uuid::Uuid>::new());
         builder.build()
     };
-    qbrs::insert::insert(accounts::Table)
+    let empty_id: i64 = qbrs::insert::insert(accounts::Table)
         .values(empty_row)
-        .execute(&pool)
+        .returning(accounts::id)
+        .load_one(&pool)
         .await
-        .expect("insert empty arrays and a NULL one");
+        .expect("insert empty arrays and a NULL one")
+        .expect("one row");
 
+    array_columns_fill_a_from_row_struct_by_name(&pool, id).await;
+    an_empty_array_reads_back_as_an_empty_vec_apart_from_a_null_array(&pool).await;
+    an_array_column_equals_a_bound_array_compared_as_a_whole(&pool).await;
+    an_update_replaces_an_array_column_whole(&pool, id).await;
+    #[cfg(feature = "uuid")]
+    a_uuid_array_column_decodes_as_a_vec_of_uuid(&pool).await;
+    eq_any_finds_the_rows_whose_array_column_holds_a_value(&pool, id).await;
+    negated_eq_any_finds_the_rows_whose_array_column_holds_none_of_it(&pool, empty_id).await;
+    eq_any_over_a_null_array_is_null_so_its_row_is_in_neither_count(&pool).await;
+    eq_any_against_a_bound_array_matches_a_column_in_one_parameter(&pool, id).await;
+
+    common::shutdown(pool, guard).await;
+}
+
+type AccountsScope = Cons<TableSlot<accounts::Table, NotNull>, Nil>;
+
+async fn count_accounts_where(pool: &PgPool, condition: Predicate<Postgres, AccountsScope>) -> i64 {
+    select(qbrs::expr::count())
+        .from(accounts::Table)
+        .filter(condition)
+        .load_one(pool)
+        .await
+        .expect("count the matching accounts")
+        .expect("one row")
+}
+
+async fn ids_of_accounts_where(
+    pool: &PgPool,
+    condition: Predicate<Postgres, AccountsScope>,
+) -> Vec<i64> {
+    select(accounts::id)
+        .from(accounts::Table)
+        .filter(condition)
+        .order_by(accounts::id.asc())
+        .load(pool)
+        .await
+        .expect("select the matching accounts")
+}
+
+async fn array_columns_fill_a_from_row_struct_by_name(pool: &PgPool, id: i64) {
     let filled: Methods = select(accounts::All)
         .from(accounts::Table)
         .filter(accounts::id.eq(id))
-        .load_one(&pool)
+        .load_one(pool)
         .await
         .expect("read the arrays back")
         .expect("one row")
@@ -105,15 +139,17 @@ async fn array_columns_bind_and_decode_as_the_vec_the_schema_names() {
             notify: Some(vec!["ops@example.com".to_string()]),
         }
     );
+}
 
-    let rows: Vec<Arrays> = select((
+async fn an_empty_array_reads_back_as_an_empty_vec_apart_from_a_null_array(pool: &PgPool) {
+    let rows: Vec<DelaysVersionsAndNotify> = select((
         accounts::retry_delays,
         accounts::seen_versions,
         accounts::notify,
     ))
     .from(accounts::Table)
     .order_by(accounts::id.asc())
-    .load(&pool)
+    .load(pool)
     .await
     .expect("read every array column")
     .into_tuples();
@@ -128,19 +164,15 @@ async fn array_columns_bind_and_decode_as_the_vec_the_schema_names() {
             (vec![], vec![], None),
         ]
     );
+}
 
-    // An array compares as a whole, which is what `Comparable<T> for T`
-    // gives every leaf type, and Postgres agrees for arrays.
-    let matched: i64 = select(qbrs::expr::count())
-        .from(accounts::Table)
-        .filter(accounts::retry_delays.eq(vec![1i32, 2, 5]))
-        .load_one(&pool)
-        .await
-        .expect("compare an array against a bound one")
-        .expect("one row");
+async fn an_array_column_equals_a_bound_array_compared_as_a_whole(pool: &PgPool) {
+    let matched =
+        count_accounts_where(pool, predicate(accounts::retry_delays.eq(vec![1i32, 2, 5]))).await;
     assert_eq!(matched, 1);
+}
 
-    // `UPDATE .. SET <array column> = <array>` replaces the whole value.
+async fn an_update_replaces_an_array_column_whole(pool: &PgPool, id: i64) {
     let changed = qbrs::update::update(accounts::Table)
         .set(
             qbrs::update::Assignments::from_row(AccountsUpdate {
@@ -150,81 +182,72 @@ async fn array_columns_bind_and_decode_as_the_vec_the_schema_names() {
             .expect("login_methods is set"),
         )
         .filter(accounts::id.eq(id))
-        .execute(&pool)
+        .execute(pool)
         .await
         .expect("update an array column");
     assert_eq!(changed, 1);
     let replaced: Vec<String> = select(accounts::login_methods)
         .from(accounts::Table)
         .filter(accounts::id.eq(id))
-        .load_one(&pool)
+        .load_one(pool)
         .await
         .expect("read the updated array back")
         .expect("one row");
     assert_eq!(replaced, vec!["sso".to_string()]);
+}
 
-    #[cfg(feature = "uuid")]
-    {
-        let denied: Vec<Vec<uuid::Uuid>> = select(accounts::denied)
-            .from(accounts::Table)
-            .order_by(accounts::id.asc())
-            .load(&pool)
-            .await
-            .expect("read the uuid array");
-        assert_eq!(denied, vec![vec![uuid::Uuid::nil()], vec![]]);
-    }
+#[cfg(feature = "uuid")]
+async fn a_uuid_array_column_decodes_as_a_vec_of_uuid(pool: &PgPool) {
+    let denied: Vec<Vec<uuid::Uuid>> = select(accounts::denied)
+        .from(accounts::Table)
+        .order_by(accounts::id.asc())
+        .load(pool)
+        .await
+        .expect("read the uuid array");
+    assert_eq!(denied, vec![vec![uuid::Uuid::nil()], vec![]]);
+}
 
-    // The shape the issue was stuck on: is this value referenced inside
-    // any row's array column? That tests a scalar against an array, which
-    // `is_in` (a scalar against a written-out list) cannot do.
-    let referencing: i64 = select(qbrs::expr::count())
-        .from(accounts::Table)
-        .filter("sso".to_string().eq_any(accounts::login_methods))
-        .load_one(&pool)
-        .await
-        .expect("count the rows referencing it")
-        .expect("one row");
-    assert_eq!(referencing, 1);
+async fn eq_any_finds_the_rows_whose_array_column_holds_a_value(pool: &PgPool, sso_id: i64) {
+    let referencing = ids_of_accounts_where(
+        pool,
+        predicate("sso".to_string().eq_any(accounts::login_methods)),
+    )
+    .await;
+    assert_eq!(referencing, vec![sso_id]);
+}
 
-    // `!` is "none of them", which is `<> ALL(..)` and not `<> ANY(..)`.
-    // The row whose array holds only `sso` is the one it excludes.
-    let others: i64 = select(qbrs::expr::count())
-        .from(accounts::Table)
-        .filter(!"sso".to_string().eq_any(accounts::login_methods))
-        .load_one(&pool)
-        .await
-        .expect("count the rest")
-        .expect("one row");
-    assert_eq!(others, 1);
+async fn negated_eq_any_finds_the_rows_whose_array_column_holds_none_of_it(
+    pool: &PgPool,
+    empty_id: i64,
+) {
+    let others = ids_of_accounts_where(
+        pool,
+        predicate(!"sso".to_string().eq_any(accounts::login_methods)),
+    )
+    .await;
+    assert_eq!(others, vec![empty_id]);
+}
 
-    // A nullable array column: the row that holds the value matches, and
-    // the row whose array is NULL answers NULL rather than false, so it
-    // is in neither count, and the two do not add up to the table.
-    let notified: i64 = select(qbrs::expr::count())
-        .from(accounts::Table)
-        .filter("ops@example.com".to_string().eq_any(accounts::notify))
-        .load_one(&pool)
-        .await
-        .expect("count over the nullable array")
-        .expect("one row");
-    let not_notified: i64 = select(qbrs::expr::count())
-        .from(accounts::Table)
-        .filter(!"ops@example.com".to_string().eq_any(accounts::notify))
-        .load_one(&pool)
-        .await
-        .expect("count its complement")
-        .expect("one row");
+async fn eq_any_over_a_null_array_is_null_so_its_row_is_in_neither_count(pool: &PgPool) {
+    let notified = count_accounts_where(
+        pool,
+        predicate("ops@example.com".to_string().eq_any(accounts::notify)),
+    )
+    .await;
+    let not_notified = count_accounts_where(
+        pool,
+        predicate(!"ops@example.com".to_string().eq_any(accounts::notify)),
+    )
+    .await;
     assert_eq!((notified, not_notified), (1, 0));
+}
 
-    // The array can be a bound value rather than a column, which is how a
-    // request's own list of ids arrives: one parameter, not one per id.
+async fn eq_any_against_a_bound_array_matches_a_column_in_one_parameter(pool: &PgPool, id: i64) {
     let by_id: Vec<i64> = select(accounts::id)
         .from(accounts::Table)
         .filter(accounts::id.eq_any(vec![id, id + 1000]))
-        .load(&pool)
+        .load(pool)
         .await
         .expect("membership in a bound array");
     assert_eq!(by_id, vec![id]);
-
-    common::shutdown(pool, guard).await;
 }

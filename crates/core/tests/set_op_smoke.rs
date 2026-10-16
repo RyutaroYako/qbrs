@@ -1,6 +1,3 @@
-//! `UNION`/`UNION ALL`/`INTERSECT`/`EXCEPT` between two `Select`s with
-//! different `Scope`s (different source tables) but the same output shape.
-
 use qbrs_core::dialect::Postgres;
 use qbrs_core::expr::ExprMethods;
 use qbrs_core::scope::Table as TableTrait;
@@ -110,9 +107,6 @@ mod archived_users {
 
 #[test]
 fn union_combines_two_different_scopes_and_renumbers_params() {
-    // Each branch has its own bound parameter, which proves placeholders get
-    // renumbered across the splice, not just copied verbatim (which would
-    // collide on `$1` twice).
     let live = select((users::id, users::email))
         .from(users::Table)
         .filter(users::id.gt(10));
@@ -154,10 +148,8 @@ fn counting_a_set_op_drops_its_own_paging_but_not_its_branches() {
     );
 }
 
-/// A table wider than the positional view's 32 fields still unions: two
-/// selections agree or don't, however wide they are.
 #[test]
-fn a_wide_selection_can_still_be_a_branch() {
+fn a_selection_wider_than_the_32_field_positional_view_still_unions() {
     let left = select((
         users::id,
         users::email,
@@ -190,13 +182,15 @@ fn a_wide_selection_can_still_be_a_branch() {
         users::id,
         users::email,
         users::id,
-        users::email,
+        (users::email, users::id),
     ))
     .from(users::Table);
     let right = left.clone();
 
     let (sql, _params) = left.union(&right).to_sql(Postgres);
-    assert!(sql.contains(" UNION "), "{sql}");
+    let (left_branch, right_branch) = sql.split_once(" UNION ").unwrap_or_else(|| panic!("{sql}"));
+    assert_eq!(left_branch.matches("\"users\".\"").count(), 33, "{sql}");
+    assert_eq!(right_branch.matches("\"users\".\"").count(), 33, "{sql}");
 }
 
 #[test]
@@ -233,7 +227,7 @@ fn union_all_intersect_except_use_their_own_keywords() {
 }
 
 #[test]
-fn chained_set_ops_and_ordinal_order_by_limit_offset() {
+fn a_chained_set_operation_takes_order_by_limit_and_offset_after_its_last_branch() {
     let a = select((users::id,)).from(users::Table);
     let b = select((archived_users::id,)).from(archived_users::Table);
     let c = select((users::id,))
@@ -258,9 +252,7 @@ fn chained_set_ops_and_ordinal_order_by_limit_offset() {
 }
 
 #[test]
-fn a_set_operation_can_be_ordered_by_a_column_instead_of_a_number() {
-    // The position is the row's own index for that key, so a column the
-    // combined result doesn't select can't be named here.
+fn a_set_operation_ordered_by_a_column_renders_that_columns_position() {
     let a = select((users::id, users::email)).from(users::Table);
     let b = select((archived_users::id, archived_users::email)).from(archived_users::Table);
 
@@ -277,23 +269,8 @@ fn a_set_operation_can_be_ordered_by_a_column_instead_of_a_number() {
     );
 }
 
-// Uncomment to eyeball the compile error for mismatched output shapes
-// (confirmed working, kept out of the normal test run since it's meant to
-// fail): `users::email` (Text) vs. `archived_users::id` (Integer). The two
-// branches' `Selection::Output` types differ, so this is a compile error,
-// not a runtime "column count/type mismatch" surprise.
-//
-// #[test]
-// fn mismatched_output_shape_is_a_compile_error() {
-//     let a = select((users::email,)).from(users::Table);
-//     let b = select((archived_users::id,)).from(archived_users::Table);
-//     let _ = a.union(&b); // error[E0271]: type mismatch resolving `<... as Selection<...>>::Output == (String,)`
-// }
-
 #[test]
 fn a_single_column_set_operation_orders_without_naming_a_position() {
-    // One column, one position: nothing to state, and no way to state a
-    // wrong one. `ORDER BY 99` is not spellable anywhere any more.
     let a = select(users::id).from(users::Table);
     let b = select(archived_users::id).from(archived_users::Table);
 
@@ -308,11 +285,7 @@ fn a_single_column_set_operation_orders_without_naming_a_position() {
 }
 
 #[test]
-fn a_chain_renders_as_the_left_fold_it_reads_as() {
-    // SQL binds `INTERSECT` tighter than `UNION`/`EXCEPT`, and SQLite reads
-    // compound operators left to right, so flat text would mean two
-    // different things in the two dialects this crate executes, neither of
-    // them the fold the builder describes.
+fn a_chain_that_changes_operator_parenthesises_the_left_fold_so_far() {
     let a = select((users::id,)).from(users::Table);
     let b = select((users::id,))
         .from(users::Table)
@@ -328,8 +301,14 @@ fn a_chain_renders_as_the_left_fold_it_reads_as() {
          UNION (SELECT \"users\".\"id\" FROM \"users\" WHERE (\"users\".\"id\" > $1))) \
          INTERSECT (SELECT \"users\".\"id\" FROM \"users\" WHERE (\"users\".\"id\" < $2))"
     );
+}
 
-    // One operator throughout is already a left fold, so it stays flat.
+#[test]
+fn a_chain_of_one_operator_renders_flat() {
+    let a = select((users::id,)).from(users::Table);
+    let b = select((users::id,)).from(users::Table);
+    let c = select((users::id,)).from(users::Table);
+
     let (flat, _) = a.union(&b).union(&c).to_sql(Postgres);
     assert!(!flat.starts_with("(("), "{flat}");
 }

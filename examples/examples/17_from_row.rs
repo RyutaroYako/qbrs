@@ -2,6 +2,13 @@
 //! matching field names. The struct names no column, no table, and no join:
 //! nothing ties it to the query that fills it, so it can live in a
 //! domain module and carry `#[derive(Serialize)]` for an API response.
+//!
+//! A selection need not match a struct's field order or exact field set, so
+//! two independent queries fill `UserSummary` and `Contact` with nothing said
+//! at the call site. `select(users::All)` is the table's own column list, so
+//! adding a column to the schema leaves no query behind, and it counts as one
+//! element of a selection tuple. Where a name does not line up, `take` maps
+//! one field at a time by hand, still moving rather than copying.
 //! Run: `cargo run -p qbrs-examples --example 17_from_row`
 
 use qbrs::prelude::*;
@@ -13,11 +20,11 @@ use qbrs_sqlx::prelude::*;
 struct UserSummary {
     email: String,
     display_name: Option<String>,
+    // Not `i64`: the LEFT JOIN that fills it makes `total` nullable, and a
+    // non-`Option` field is a compile error.
     total: Option<i64>,
 }
 
-/// Every column of `users`, which `select(users::All)` fills without the
-/// call site listing them: the derive already knows what the table has.
 #[derive(Debug, FromRow)]
 #[allow(dead_code)]
 struct WholeUser {
@@ -27,9 +34,8 @@ struct WholeUser {
     active: bool,
 }
 
-/// Both tables have an `id` and both are selected whole, so two fields
-/// can't be told apart by name. `from = <column>` fills them by identity
-/// instead, using the same key `row.get(users::id)` uses.
+// Not matched by name: both tables have an `id` and both are selected whole,
+// so `from = <column>` fills each by identity, the key `row.get(..)` uses.
 #[derive(Debug, FromRow)]
 #[allow(dead_code)]
 struct UserWithOrder {
@@ -41,7 +47,6 @@ struct UserWithOrder {
     total: i64,
 }
 
-/// A different view, declared independently: fewer fields, opposite order.
 #[derive(Debug, FromRow)]
 #[allow(dead_code)]
 struct Contact {
@@ -54,9 +59,6 @@ async fn main() {
     let (pool, _db) = setup_db().await;
     seed(&pool).await;
 
-    // Selected as (id, total, email, display_name), deliberately neither
-    // the order nor the exact set `UserSummary` declares. `users::id` is
-    // simply not wanted, and the fields are matched by name.
     let summaries: Vec<UserSummary> =
         select((users::id, orders::total, users::email, users::display_name))
             .from(users::Table)
@@ -71,16 +73,13 @@ async fn main() {
     for s in &summaries {
         println!("  {s:?}");
     }
-    // `total` is `Option<i64>` because of the LEFT JOIN, and the struct has
-    // to agree: declaring it `i64` would be a compile error, not a surprise.
     assert!(
         summaries
             .iter()
-            .any(|s| s.email == "dan@example.com" && s.total.is_none())
+            .any(|s| s.email == "dan@example.com" && s.total.is_none()),
+        "Dan has no orders, so his LEFT JOINed total is None"
     );
 
-    // A different query (no join, different selection order) fills the
-    // other struct with nothing said about either of them at the call site.
     let contacts: Vec<Contact> = select((users::email, users::display_name))
         .from(users::Table)
         .filter(users::active.eq(true))
@@ -95,9 +94,6 @@ async fn main() {
         println!("  {c:?}");
     }
 
-    // `users::All` is the table's own column list, so adding a column to
-    // the schema doesn't leave a query behind. It also counts as one
-    // element of the selection tuple however many columns it has.
     let everyone: Vec<WholeUser> = select(users::All)
         .from(users::Table)
         .order_by(users::id.asc())
@@ -107,8 +103,6 @@ async fn main() {
         .into_structs();
     println!("whole rows: {everyone:?}");
 
-    // Two whole tables at once: `email` and `total` are still matched by
-    // name, and the two `id`s by the column each one means.
     let joined: Vec<UserWithOrder> = select((users::All, orders::All))
         .from(users::Table)
         .inner_join(orders::Table, orders::user_id.eq(users::id))
@@ -120,8 +114,6 @@ async fn main() {
     println!("user with order: {joined:?}");
     assert!(joined.iter().all(|j| j.order_id > 0 && j.id > 0));
 
-    // When a name doesn't line up, `take` writes the mapping by hand, one
-    // field at a time, still moving rather than copying.
     let renamed: Vec<(String, i64)> = select((users::email, orders::total))
         .from(users::Table)
         .inner_join(orders::Table, orders::user_id.eq(users::id))

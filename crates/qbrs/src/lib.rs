@@ -79,16 +79,16 @@ pub mod prelude {
         TextLike, Writable, null,
     };
     pub use qbrs_core::expr::{
-        BigInt, BigIntArray, Bool, Bytes, ExprMethods, HasCount, Integer, IntegerArray, LabelExt,
-        Real, SortDir, Text, TextArray, Value, all_of, any_of, avg, count, count_of, max, min,
-        string_agg, sum,
+        BigInt, BigIntArray, Bool, Bytes, EqAny, ExprMethods, HasCount, Integer, IntegerArray,
+        LabelExt, Real, SortDir, Text, TextArray, Value, all_of, any_of, avg, count, count_of, max,
+        min, string_agg, sum,
     };
     #[cfg(feature = "chrono")]
     pub use qbrs_core::expr::{Date, Timestamptz};
     pub use qbrs_core::expr::{Declared, Expr, IntoExpr, Keyed, Labeled};
-    // `Uuid` is `uuid::Uuid`, so a schema importing it directly and one taking
-    // it from here name a single type: the explicit import wins over the glob
-    // and both mean the same thing.
+    // Leaving `Uuid` out so it cannot clash with a schema's own `use uuid::Uuid`
+    // is unnecessary: both name `uuid::Uuid`, so the explicit import shadows
+    // this glob with the same type.
     #[cfg(feature = "uuid")]
     pub use qbrs_core::expr::{Uuid, UuidArray};
     pub use qbrs_core::insert::{

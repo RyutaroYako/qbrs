@@ -1,0 +1,39 @@
+//! Deliberately broken: a correlated subquery filtering on a table in neither
+//! its own `FROM` nor the outer query's. Shows the message a subquery reports
+//! for a table outside both scopes. Copy into `tests/compile-bench/examples/`
+//! and run:
+//!   cargo build -p compile-bench --example core_subquery_naming_an_unrelated_table
+use qbrs::prelude::*;
+
+#[derive(Table)]
+#[table(name = "users")]
+#[allow(dead_code)]
+struct Users {
+    #[column(primary_key, generated)]
+    id: i64,
+}
+
+#[derive(Table)]
+#[table(name = "orders")]
+#[allow(dead_code)]
+struct Orders {
+    #[column(primary_key, generated)]
+    id: i64,
+    user_id: i64,
+}
+
+#[derive(Table)]
+#[table(name = "payments")]
+#[allow(dead_code)]
+struct Payments {
+    #[column(primary_key, generated)]
+    id: i64,
+    amount: i64,
+}
+
+fn main() {
+    let outer = select((users::id,)).from(users::Table);
+    let subquery = outer.correlated(orders::Table, (orders::user_id,));
+    let exists = subquery.filter(payments::amount.eq(1i64)).exists();
+    let _ = outer.filter(exists).to_sql(Postgres);
+}

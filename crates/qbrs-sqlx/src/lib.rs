@@ -73,12 +73,9 @@ pub mod prelude {
     };
 }
 
-/// Binds a `Value` to a Postgres query parameter. `Value`'s typed `NullX`
-/// variants carry the parameter type a NULL bind still has to declare.
-///
-/// Fallible only for `Value::Placeholder`: an unresolved named placeholder
-/// is a misuse no compile-time check here can catch, so it surfaces as
-/// `Error::UnresolvedPlaceholder` rather than a wrong bind or a panic.
+/// Returns `Error::UnresolvedPlaceholder` for a `Value::Placeholder` rather
+/// than panicking: an unresolved placeholder is a caller's misuse that no
+/// compile-time check here can catch.
 fn bind_value<'q>(
     query: sqlx::query::Query<'q, sqlx::Postgres, sqlx::postgres::PgArguments>,
     v: Value,
@@ -129,8 +126,9 @@ fn bind_value<'q>(
         Value::Placeholder(name) => {
             return Err(qbrs_core::select::UnresolvedPlaceholder(name).into());
         }
-        // Reachable only when a column type is on in `qbrs-core` and off
-        // here: the variant exists, the arm that binds it doesn't.
+        // Not removable though unreachable with matching features: with a
+        // column type on in `qbrs-core` and off here, the variant exists and
+        // no arm binds it.
         #[allow(unreachable_patterns)]
         other => return Err(Error::FeatureNotEnabled(other.type_name())),
     })
@@ -146,9 +144,9 @@ fn bind_all<'q>(
     Ok(query)
 }
 
-/// Generic over `E: sqlx::PgExecutor` so every `.load()`/`.execute()` works
-/// against a `&PgPool` or a transaction alike. sqlx implements `Executor` for
-/// `&mut PgConnection`, not `Transaction`, so callers pass `&mut *tx`.
+/// Generic over `PgExecutor` rather than taking a `&PgPool`, so a
+/// transaction works too. sqlx implements `Executor` for `&mut PgConnection`,
+/// not for `Transaction`, so a caller passes `&mut *tx`.
 async fn fetch_all<'e, T: DecodeRow, E: sqlx::PgExecutor<'e>>(
     executor: E,
     sql: &str,
@@ -175,9 +173,9 @@ async fn fetch_optional<'e, T: DecodeRow, E: sqlx::PgExecutor<'e>>(
         .transpose()
 }
 
-/// The streaming counterpart: rows are decoded as they arrive rather than
-/// collected first. The query owns its SQL and its binds, so the stream
-/// borrows only the executor.
+/// Takes `sql: String` rather than `&str` like its siblings: the stream
+/// outlives this call, so the query owns its text and binds and borrows only
+/// the executor.
 fn fetch_stream<'e, T: DecodeRow + Send + 'e, E: sqlx::PgExecutor<'e>>(
     executor: E,
     sql: String,
@@ -608,9 +606,9 @@ pub trait PreparedExt {
 
 impl<D, Params, Output> PreparedExt for Prepared<D, Params, Output> {}
 
-// A prepared query's `load`/`count` are told apart from the plain ones by
-// arity, but `execute` is not. Without this impl, it is the one terminal on
-// the one builder that reports nothing.
+// Kept though `execute` on a `Prepared` never compiles: `load`/`count` differ
+// from the plain ones by arity and `execute` does not, so without this impl
+// it is the one terminal that reports nothing.
 impl<D, Params, Output> ExecuteExt for Prepared<D, Params, Output> {}
 
 #[diagnostic::do_not_recommend]
@@ -663,29 +661,31 @@ impl<D, Params, Output> PreparedCountExt for Prepared<D, Params, Output> {}
 mod tests {
     use super::*;
 
-    // No real Postgres needed: binding inspects the `Value` enum before
-    // anything reaches the network, so an unresolved placeholder is
-    // reachable, and its error checkable, without a live DB.
-    #[test]
-    fn unresolved_placeholder_is_a_typed_error_not_a_sqlx_configuration_string() {
+    fn unresolved_placeholder_bind_error() -> Error {
         let query = sqlx::query(sqlx::AssertSqlSafe("SELECT $1"));
-        let err = match bind_all(query, vec![Value::Placeholder("email")]) {
+        match bind_all(query, vec![Value::Placeholder("email")]) {
             Err(e) => e,
             Ok(_) => panic!("unresolved placeholder must fail to bind"),
-        };
+        }
+    }
 
+    #[test]
+    fn binding_an_unresolved_placeholder_fails_with_its_own_variant_before_reaching_any_database() {
         assert!(matches!(
-            err,
+            unresolved_placeholder_bind_error(),
             Error::UnresolvedPlaceholder(qbrs_core::select::UnresolvedPlaceholder("email"))
         ));
-        // A real `std::error::Error`, so it composes with
-        // `anyhow`/`Box<dyn Error>`.
+    }
+
+    #[test]
+    fn an_unresolved_placeholder_error_is_a_std_error_that_names_the_placeholder() {
+        let err = unresolved_placeholder_bind_error();
         let _: &dyn std::error::Error = &err;
         assert_eq!(err.to_string(), "no value provided for placeholder `email`");
     }
 
     #[test]
-    fn sqlx_errors_convert_via_from() {
+    fn a_sqlx_error_converts_into_the_sqlx_variant() {
         let err: Error = sqlx::Error::RowNotFound.into();
         assert!(matches!(err, Error::Sqlx(sqlx::Error::RowNotFound)));
     }

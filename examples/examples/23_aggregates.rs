@@ -1,4 +1,9 @@
 //! Every aggregate helper, and the two questions `count` answers.
+//!
+//! An aggregate is keyed by the column it aggregates, so a row of them is read
+//! by the value that selected it, like any other row. `count()` counts rows
+//! and `count_of(column)` counts that column's non-NULL values. They agree
+//! until a LEFT JOIN makes them differ.
 //! Run: `cargo run -p qbrs-examples --example 23_aggregates`
 
 use qbrs::expr::{avg, count, count_of, max, min, string_agg, sum};
@@ -11,8 +16,6 @@ async fn main() {
     let (pool, _db) = setup_db().await;
     seed(&pool).await;
 
-    // An aggregate is keyed by the column it aggregates, so a row of six of
-    // them is read the way any other row is: by the value that selected it.
     let per_user = select((
         users::email,
         count(),
@@ -46,10 +49,7 @@ async fn main() {
     }
     assert_eq!(per_user.len(), 2, "dan has no orders, so HAVING drops him");
 
-    // `count()` counts rows and `count_of(column)` counts that column's
-    // non-NULL values, the same number until a LEFT JOIN makes them differ.
-    // Dan matches no order, so his row has one row and no order in it.
-    let dan: Vec<(i64, i64)> = select((count(), count_of(orders::total)))
+    let dan_rows_and_orders: Vec<(i64, i64)> = select((count(), count_of(orders::total)))
         .from(users::Table)
         .left_join(orders::Table, orders::user_id.eq(users::id))
         .filter(users::email.eq("dan@example.com"))
@@ -57,13 +57,14 @@ async fn main() {
         .await
         .expect("count rows against count of a column")
         .into_tuples();
-    assert_eq!(dan, vec![(1, 0)]);
+    assert_eq!(
+        dan_rows_and_orders,
+        vec![(1, 0)],
+        "Dan's LEFT JOIN yields one row holding no order"
+    );
 
-    // `string_agg` takes its separator as a `&'static str`, written into the
-    // SQL rather than bound. MySQL's `SEPARATOR` takes a literal and rejects
-    // a parameter, so a separator that renders in only two of the three
-    // dialects is not one this builder offers. It is NULL over zero rows,
-    // hence the `Option`.
+    // Not a runtime `String`: MySQL's `SEPARATOR` takes only a literal, so the
+    // separator is a `&'static str` on every dialect, though Postgres binds it.
     let emails: Option<String> = select(string_agg(users::email, ", "))
         .from(users::Table)
         .filter(users::active.eq(true))
@@ -73,9 +74,8 @@ async fn main() {
         .expect("one row");
     println!("active: {}", emails.as_deref().unwrap_or("(none)"));
 
-    // Ordering *inside* the aggregate isn't built (SQLite reached it only
-    // in 3.44 and MySQL spells it elsewhere in the call), so a run whose
-    // order matters goes through `sql!{}`, where the text is yours.
+    // Not the builder's `string_agg`: ordering inside an aggregate is not
+    // built, since SQLite has it only from 3.44 and MySQL spells it elsewhere.
     let ordered: Option<String> = select(qbrs::sql!(
         Nullable<Text>,
         "string_agg(?, ', ' ORDER BY ?)",

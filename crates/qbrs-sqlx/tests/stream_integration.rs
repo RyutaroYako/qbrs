@@ -1,13 +1,10 @@
-//! `.stream(..)` against a real Postgres: the export that writes as it
-//! reads. Only a database says the rows arrive one at a time and decode to
-//! what `.load(..)` would have collected.
-
 mod common;
 
 use qbrs::prelude::*;
-// `StreamExt::next` comes from the same prelude the terminal does, so a
-// caller needs no `futures` dependency of their own.
+// Importing `futures::StreamExt` here would hide whether the prelude alone
+// gives a caller the `next()` a stream is read with.
 use qbrs_sqlx::prelude::*;
+use sqlx::PgPool;
 
 #[derive(Table)]
 #[table(name = "readings_stream_drop")]
@@ -30,7 +27,7 @@ struct ReadingsStream {
 }
 
 #[tokio::test]
-async fn a_stream_yields_the_rows_load_would_have_collected() {
+async fn a_select_a_union_and_an_update_returning_each_stream_their_rows() {
     let (pool, guard) = common::test_pool("qbrs_stream").await;
 
     sqlx::query("DROP TABLE IF EXISTS readings_stream")
@@ -60,43 +57,50 @@ async fn a_stream_yields_the_rows_load_would_have_collected() {
         .await
         .expect("seed the readings");
 
+    a_batching_consumer_streams_the_filtered_rows_in_order_and_load_collects_the_same(&pool).await;
+    a_union_streams_its_rows_like_a_select(&pool).await;
+    an_update_returning_streams_its_rows_like_a_select(&pool).await;
+
+    common::shutdown(pool, guard).await;
+}
+
+async fn a_batching_consumer_streams_the_filtered_rows_in_order_and_load_collects_the_same(
+    pool: &PgPool,
+) {
     let query = select((readings_stream::label, readings_stream::value))
         .from(readings_stream::Table)
         .filter(readings_stream::value.gte(100i64))
-        .order_by(readings_stream::value.asc());
+        .order_by(readings_stream::value.desc());
 
-    // The shape the issue was stuck on: consume in batches, holding one
-    // batch rather than the whole result.
-    let mut rows = query.stream(&pool).expect("open the stream");
+    let mut rows = query.stream(pool).expect("open the stream");
     let mut batch = Vec::new();
     let mut batches = 0usize;
-    let mut seen = 0usize;
-    let mut first = None;
+    let mut streamed: Vec<(String, i64)> = Vec::new();
     while let Some(row) = rows.next().await {
-        let row = row.expect("decode a streamed row");
-        if first.is_none() {
-            first = Some(*row.get(readings_stream::value));
-        }
-        batch.push(row);
-        seen += 1;
+        batch.push(row.expect("decode a streamed row").into_tuple());
         if batch.len() == 100 {
             batches += 1;
-            batch.clear();
+            streamed.append(&mut batch);
         }
     }
     drop(rows);
-    assert_eq!(seen, 400);
+    streamed.append(&mut batch);
     assert_eq!(batches, 4);
-    assert_eq!(first, Some(100));
+    let expected: Vec<(String, i64)> = (100..500i64)
+        .rev()
+        .map(|n| (format!("row-{n}"), n))
+        .collect();
+    assert_eq!(streamed, expected);
 
-    // Same query, same values: streaming and collecting differ in when the
-    // rows arrive, not in what they are.
-    let collected = query.load(&pool).await.expect("collect the same query");
-    assert_eq!(collected.len(), seen);
-    assert_eq!(*collected[0].get(readings_stream::label), "row-100");
+    let collected: Vec<(String, i64)> = query
+        .load(pool)
+        .await
+        .expect("collect the same query")
+        .into_tuples();
+    assert_eq!(collected, streamed);
+}
 
-    // A `RETURNING` streams too: the terminal is cut by what a statement
-    // produces, not by which builder produced it.
+async fn an_update_returning_streams_its_rows_like_a_select(pool: &PgPool) {
     let mut bumped = qbrs::update::update(readings_stream::Table)
         .set(
             qbrs::update::Assignments::from_row(ReadingsStreamUpdate {
@@ -107,23 +111,39 @@ async fn a_stream_yields_the_rows_load_would_have_collected() {
         )
         .filter(readings_stream::value.lt(3i64))
         .returning(readings_stream::value)
-        .stream(&pool)
+        .stream(pool)
         .expect("open the returning stream");
     let mut bumped_values = Vec::new();
     while let Some(value) = bumped.next().await {
         bumped_values.push(value.expect("decode a returned row"));
     }
+    drop(bumped);
     bumped_values.sort_unstable();
     assert_eq!(bumped_values, vec![0i64, 1, 2]);
-    drop(bumped);
-
-    common::shutdown(pool, guard).await;
 }
 
-/// A stream holds its connection until it ends. Dropped early, the
-/// connection goes back. Only a pool with one connection in it says so.
+async fn a_union_streams_its_rows_like_a_select(pool: &PgPool) {
+    let low = select((readings_stream::value,))
+        .from(readings_stream::Table)
+        .filter(readings_stream::value.lt(2i64));
+    let high = select((readings_stream::value,))
+        .from(readings_stream::Table)
+        .filter(readings_stream::value.gte(498i64));
+    let mut both = low
+        .union(&high)
+        .stream(pool)
+        .expect("open the union stream");
+    let mut values = Vec::new();
+    while let Some(row) = both.next().await {
+        values.push(*row.expect("decode a union row").get(readings_stream::value));
+    }
+    drop(both);
+    values.sort_unstable();
+    assert_eq!(values, vec![0, 1, 498, 499]);
+}
+
 #[tokio::test]
-async fn a_stream_dropped_early_gives_its_connection_back() {
+async fn a_stream_dropped_early_gives_the_only_connection_of_its_pool_back() {
     let (pool, guard) = common::test_pool("qbrs_stream_drop").await;
     let one_at_a_time = sqlx::postgres::PgPoolOptions::new()
         .max_connections(1)
@@ -167,35 +187,11 @@ async fn a_stream_dropped_early_gives_its_connection_back() {
     assert_eq!(first, 0);
     drop(rows);
 
-    // The only connection there is has to be free again.
     let all = query
         .load(&one_at_a_time)
         .await
         .expect("the pool's one connection is back");
     assert_eq!(all.len(), 50);
-
-    // A `UNION` streams for the same reason a `SELECT` does: the terminal
-    // is cut by what a statement produces.
-    let low = select((readings_stream_drop::value,))
-        .from(readings_stream_drop::Table)
-        .filter(readings_stream_drop::value.lt(2i64));
-    let high = select((readings_stream_drop::value,))
-        .from(readings_stream_drop::Table)
-        .filter(readings_stream_drop::value.gte(48i64));
-    let mut both = low
-        .union(&high)
-        .stream(&one_at_a_time)
-        .expect("open the union stream");
-    let mut values = Vec::new();
-    while let Some(row) = both.next().await {
-        values.push(
-            *row.expect("decode a union row")
-                .get(readings_stream_drop::value),
-        );
-    }
-    drop(both);
-    values.sort_unstable();
-    assert_eq!(values, vec![0, 1, 48, 49]);
 
     one_at_a_time.close().await;
     common::shutdown(pool, guard).await;

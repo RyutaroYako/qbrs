@@ -1,7 +1,8 @@
 //! `x IN (<subquery>)` / `x NOT IN (<subquery>)`: `Select::contains` builds
 //! the condition from a subquery the same way `.exists()` does, but the
 //! subquery here selects exactly one column, checked against the outer
-//! expression with the same `Comparable` rule `.eq(..)` uses.
+//! expression with the same `Comparable` rule `.eq(..)` uses. The subquery is
+//! borrowed, not consumed, so one serves both sides of the split.
 //! Run: `cargo run -p qbrs-examples --example 20_in_subquery`
 
 use qbrs::prelude::*;
@@ -13,9 +14,8 @@ async fn main() {
     let (pool, _db) = setup_db().await;
     seed(&pool).await;
 
-    // A single un-tupled selection, exactly like `select(users::email)`
-    // elsewhere. That's what lets `.contains(..)` read its `RowField::Sql`
-    // and check it against `lhs` the way `.eq(..)` checks two columns.
+    // Not `(orders::user_id,)`: `.contains(..)` reads the selected column's SQL
+    // type off a single un-tupled selection, which a tuple is not.
     let big_spenders = select(orders::user_id)
         .from(orders::Table)
         .filter(orders::total.gt(1000i64));
@@ -34,8 +34,6 @@ async fn main() {
     println!("spent over 1000: {spenders:?}");
     assert_eq!(spenders, vec!["ada@example.com".to_string()]);
 
-    // `big_spenders` is borrowed by `.contains(..)`, not consumed, so the
-    // same subquery serves both sides of the split.
     let everyone_else: Vec<String> = select((users::email,))
         .from(users::Table)
         .filter(big_spenders.not_contains(users::id))

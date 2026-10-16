@@ -1,0 +1,34 @@
+//! Deliberately broken: an `if` whose arms are the same query with and
+//! without a join. Shows that the two scopes are two types, which is what
+//! `.erase()` into `DynSelect` unifies. Copy into
+//! `tests/compile-bench/examples/` and run:
+//!   cargo build -p compile-bench --example core_conditional_join_without_erase
+use qbrs::prelude::*;
+
+#[derive(Table)]
+#[table(name = "users")]
+#[allow(dead_code)]
+struct Users {
+    #[column(primary_key, generated)]
+    id: i64,
+}
+
+#[derive(Table)]
+#[table(name = "orders")]
+#[allow(dead_code)]
+struct Orders {
+    #[column(primary_key, generated)]
+    id: i64,
+    user_id: i64,
+}
+
+fn main() {
+    let with_orders = std::env::args().count() > 1;
+    let base = select(users::id).from(users::Table);
+    let query = if with_orders {
+        base.inner_join(orders::Table, orders::user_id.eq(users::id))
+    } else {
+        base
+    };
+    let _ = query.to_sql(Postgres);
+}

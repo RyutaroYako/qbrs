@@ -32,7 +32,7 @@ Narrower loops:
 ```sh
 cargo test -p qbrs-core                                     # pure SQL-rendering tests, no DB
 cargo test -p qbrs-core --test select_smoke                 # one test binary
-cargo test -p qbrs-core --test select_smoke left_join_renders_and_typechecks   # one test
+cargo test -p qbrs-core --test select_smoke right_join_flips_previously_joined_tables_to_nullable   # one test
 cargo nextest run -p qbrs-sqlx                              # real-Postgres integration tests
 cargo run -p qbrs-examples --example 02_select_join          # one runnable example
 cargo build -p compile-bench --bin joins_40                  # scope-resolution depth
@@ -274,7 +274,7 @@ inferred, which can contradict the join.
 `Dialect` is sealed (`Postgres`/`MySql`/`Sqlite`). Dialect-specific SQL is gated by separate
 marker traits (`SupportsReturning`, `SupportsOnConflict`, `SupportsRightJoin`,
 `SupportsFullOuterJoin`), so an unsupported call is a compile error. Keep capabilities
-fine-grained: they were split precisely because MySQL has `RIGHT JOIN` but not `FULL JOIN`.
+fine-grained rather than one `SupportsOuterJoins`: MySQL has `RIGHT JOIN` but not `FULL JOIN`.
 
 ### Embedded SQL goes through `Fragment`
 
@@ -337,7 +337,7 @@ clause fields back across the two builders or pass them as separate render argum
 **How the proof traits are sealed, and why the obvious ways don't work.** `Find`,
 `Superset`, `row::Field`, `row::TakeNamed`, `select::RowField`/`Selection`/`SelectionPart`
 all take a caller-local marker as a bare parameter, so the orphan rule licenses a schema
-crate to implement them. Two mechanisms were tried and are wrong: a seal on `Self` alone
+crate to implement them. Two seals look sufficient and are not: a seal on `Self` alone
 (the lying impl's `Self` is an honest `Cons`/`Column<C>`, and the free index takes the
 caller's own type), and a private associated *type* (`type Proof: Sealed`), where path
 privacy does not reach through projection, so `<Nil as Superset<Nil, Nil>>::Proof` names it
@@ -360,7 +360,7 @@ the derive emits `AllColumns`/`CteShape` in the schema's own crate. `ColumnList`
 `RawArg` need no such door, since nothing outside this crate implements them. Both still
 need the seal: each pairs a type-level claim with runtime data (`ColumnList` the row against
 the pushed items, `RawArg` a slot's `Req` against the column it delegates to), which is
-precisely what splitting `AllColumns` was meant to remove.
+precisely what `AllColumns` carrying one list removes.
 
 ### Derive and codegen (`crates/macros`)
 
@@ -406,11 +406,11 @@ take `insert::Insertable`, which the derive emits only when there is a column to
 
 `InsertRow::Values` is one chain carrying both halves: `RowCons<C, InsertValue, Tail>`,
 sealed like every other chain. The header is its keys and a row is its cells, walked once
-each. Every earlier shape kept them as two lists that met at render time, and each in
-turn produced SQL malformed for any table or dropped a value: a `COLUMNS` const beside
-positional values (`VALUES ($1, $2), ($3)`), then pairs reconciled against the first row's
-names (an empty first row discarded the rest), then pairs reconciled against a declared
-header (a surplus pair vanished). A chain can carry neither a surplus cell nor a missing one.
+each. Not two lists that meet at render time: each such shape renders SQL malformed for
+any table or drops a value. A `COLUMNS` const beside positional values renders
+`VALUES ($1, $2), ($3)`. Pairs reconciled against the first row's names discard the rest
+when that row is empty. Pairs reconciled against a declared header lose a surplus pair. A
+chain can carry neither a surplus cell nor a missing one.
 A chain whose keys repeat a column is still a lie a hand-written impl can tell, and the
 database rejects it. The derive cannot tell it, since Rust field names are unique. This is
 for the reason `AllColumns` carries one list: its seal is a `#[doc(hidden)]` door the derive
@@ -511,14 +511,39 @@ transactional API. Everything returns `qbrs_sqlx::Result<T>`; keep `UnresolvedPl
 
 ## Conventions
 
-- **A comment is a design smell, not a deliverable.** Reaching for one usually means an
-  invariant is being kept by discipline that a type could have kept instead. Fix the
-  structure first: give the concept a name (`Fragment`, `WindowFunc`), make the only
-  constructor the correct one, split a state into two types rather than a flag. Write the
-  comment only for what genuinely cannot be encoded (a language-level coherence rule, an
-  external system's behavior), and then keep it to a sentence or two, stating the rule that
-  holds now, never the history of how it was found. Do not narrate rejected alternatives or
-  quote compiler error codes.
+- **Each kind of text answers one question.** Code says *how*. Test code says *what*. A
+  commit message says *why*. A code comment says *why not*. Text answering another
+  kind's question is in the wrong place, so move it there.
+  - **Code: how.** The code itself is the explanation of how it works. Reaching for a
+    comment to explain what or how a piece of code does usually means an invariant is
+    being kept by discipline that a type could have kept instead. Fix the structure:
+    give the concept a name (`Fragment`, `WindowFunc`), extract a function or a `const`,
+    make the only constructor the correct one, or split a state into two types rather
+    than a flag.
+  - **Test code: what.** A test states the behavior it pins down. Its name is a full
+    sentence naming that behavior (`right_join_flips_previously_joined_tables_to_nullable`).
+    A name that says only that something "works", "renders" or "matches the expected SQL"
+    states no behavior. Where a test needs a comment to say what it checks, rename it, or
+    split it into tests whose names each say one thing. A compile-fail case is a
+    `trybuild-drafts/*.draft`, not a commented-out test.
+  - **Commit message: why.** The subject says what changed. The body says why it had to
+    change: the problem, the constraint, what it was before. The history of how a design
+    was arrived at lives here, and nowhere in the tree.
+  - **Code comment: why not.** A comment exists only to stop a reader from making the
+    obvious change that would be wrong. It names the alternative a reader would reach for
+    (a `#[derive]`, a blanket impl, binding a value, a simpler bound) and states the rule
+    that rules it out: a coherence rule, an external system's behavior, a diagnostic that
+    would otherwise not print. A "**Known limitations**" note is one too: it says why the
+    obvious feature is not there. A comment restating what the next line does, or giving
+    a reason no alternative contradicts, is deleted or turned into a name. Keep it to a
+    sentence or two, in the present tense. Never narrate how the design was found, never
+    write "used to" or "was tried", and never quote compiler error codes.
+  - The same rules hold for `#` comments in `Cargo.toml`, workflows and scripts, and for
+    `///` on an item no other crate can see. A `///` or `//!` on a public item is API
+    documentation rather than a code comment: it tells a user what the item is for and how
+    to use it, so it may say *what*.
+    An example's teaching narrative is its `//!` header, which is documentation too; an
+    inline `//` in an example follows the comment rule.
 - **No em-dash in prose, anywhere.** Not in `README.md`, not in a doc comment, not in a
   `#[diagnostic::on_unimplemented]` string a reader meets as a compiler error. A sentence
   reaching for one usually wants to be two sentences; a colon or parentheses covers the
@@ -537,8 +562,8 @@ transactional API. Everything returns `qbrs_sqlx::Result<T>`; keep `UnresolvedPl
   matching `qbrs_sqlx::DecodeRow` impl if it decodes to a type nothing else does.
 - Core tests are pure string-rendering assertions with `#[test]`. Anything a database has to
   agree with runs against one: Postgres in `qbrs-sqlx`, every rendered shape in
-  `tests/dialect-exec` against SQLite, both with `#[tokio::test]`. Test names are full sentences
-  (`right_join_flips_previously_joined_tables_to_nullable`).
+  `tests/dialect-exec` against SQLite, both with `#[tokio::test]`. Test names follow the
+  *what* rule above.
 - `tests/compile-bench/trybuild-drafts/*.draft` are deliberately-broken snippets kept out of
   the build; copy one into `tests/compile-bench/examples/` to eyeball the
   `#[diagnostic::on_unimplemented]` messages after changing them.

@@ -39,10 +39,9 @@ pub trait IntoColumnValue<V> {
 }
 
 mod insertable {
-    /// Sealed like the other markers a derive emits. Unlike `Filled`, whose
-    /// doc explains why forging it buys nothing, forging this one turns a
-    /// bulk insert into a single `DEFAULT VALUES`, losing rows quietly, so
-    /// it gets the door even though a determined caller can still write it.
+    /// Sealed, unlike `Filled`: forging this one turns a bulk insert into a
+    /// single `DEFAULT VALUES` that quietly loses rows. The `#[doc(hidden)]`
+    /// door stops an accidental impl, not a determined one.
     pub trait Sealed {}
 }
 
@@ -130,30 +129,27 @@ impl<T: Into<Value>> From<Defaultable<T>> for InsertValue {
 /// schema's own crate. Two lists that have to line up position for position
 /// could therefore be made not to, and `INSERT INTO t (a, b, c) VALUES ($1)`
 /// is malformed whatever the table looks like. `update::UpdateRow::sets` has
-/// always had this shape.
+/// the same shape.
 pub trait InsertRow: private::Sealed {
     type Table: Table;
 
     /// This row's columns *and* values as one chain: the keys spell the
-    /// statement's header, the cells carry what goes under them. One type,
-    /// because two lists reconciled at render time is the shape that made
-    /// every earlier version of this trait able to produce SQL malformed
-    /// for any table, or to drop a value silently: a `COLUMNS` const
-    /// beside positional values, then pairs matched against the first row's
-    /// names, then pairs matched against a declared header. A chain can
-    /// carry neither a surplus cell nor a missing one.
+    /// statement's header, the cells carry what goes under them. Not two
+    /// lists reconciled at render time: a `COLUMNS` const beside positional
+    /// values, or pairs matched against a header, can render SQL malformed
+    /// for any table or drop a value silently. A chain can carry neither a
+    /// surplus cell nor a missing one.
     type Values: InsertValues;
 
     fn into_values(self) -> Self::Values;
 }
 
 mod insert_values {
-    /// Sealed to the two shapes a chain has, so `Values` is always a real
-    /// one. `row::ColumnNames` is sealed for the same reason.
+    /// Sealed to the two shapes a chain has rather than left open, so
+    /// `Values` is always a real chain.
     pub trait Sealed {}
 }
 
-/// One row's cells, in the order its chain declares them.
 fn collect_values<R: InsertRow>(row: R) -> Vec<InsertValue> {
     let mut out = Vec::new();
     row.into_values().push_values(&mut out);
@@ -223,8 +219,6 @@ pub trait ConflictTarget<T: Table>: conflict_target::Sealed<T> {
     fn into_target(self) -> Target;
 }
 
-/// The rendered half of a conflict target: the columns a dialect infers an
-/// index from, and the `index_predicate` that picks a *partial* one.
 #[doc(hidden)]
 pub struct Target {
     columns: Vec<&'static str>,
@@ -232,13 +226,11 @@ pub struct Target {
 }
 
 mod conflict_target {
-    /// Sealed for the reason `InsertRow` is: a hand-written impl could name
-    /// a column that isn't there, and the point of taking `Column<C>`s is
-    /// that it can't. Both seals carry the trait's own table parameter. A
-    /// seal on `Self` alone leaves that table a free slot the caller fills
-    /// with their own type, which is all the orphan rule asks for, and
-    /// `ON CONFLICT ("nickname")` against a table without one is exactly
-    /// the typo the seal is here to stop.
+    /// Sealed with the trait's table parameter rather than on `Self` alone:
+    /// that leaves the table a free slot the caller fills with their own
+    /// type, which is all the orphan rule asks for, and a hand-written impl
+    /// could then render `ON CONFLICT ("nickname")` against a table without
+    /// one.
     pub trait ColumnsSealed<T> {}
     pub trait Sealed<T> {}
 }
@@ -263,7 +255,8 @@ impl<C: ColumnKey> ConflictTarget<C::Table> for Column<C> {
 
 macro_rules! conflict_target_tuple {
     ($($name:ident),+) => {
-        // Elements constrained, or the seal admits a tuple of anything.
+        // Each element is bound to `T` on the seals too, not only on the
+        // trait impls: an unconstrained seal admits a tuple of anything.
         impl<T: Table, $($name: ColumnKey<Table = T>,)+> conflict_target::ColumnsSealed<T>
             for ($(Column<$name>,)+) {}
         impl<T: Table, $($name: ColumnKey<Table = T>,)+> conflict_target::Sealed<T>
@@ -286,8 +279,8 @@ macro_rules! conflict_target_tuple {
         }
     };
 }
-// Columns, not nested targets: a conflict target is a list of columns, and
-// letting it nest is what made the documented limit of three not one.
+// Tuples of columns, not of targets: a target nested in a tuple would let
+// `((a, b, c), d)` past the documented limit of three columns.
 conflict_target_tuple!(A);
 conflict_target_tuple!(A, B);
 conflict_target_tuple!(A, B, C);
@@ -348,8 +341,6 @@ impl<T: Table> ConflictTarget<T> for PartialIndex<T> {
     }
 }
 
-/// How the pseudo-table is spelled, in the one place a statement renders it
-/// and the one place the scope names it.
 pub(crate) const EXCLUDED: &str = "excluded";
 
 /// The row an `INSERT` proposed, as `ON CONFLICT DO UPDATE` sees it: a
@@ -542,9 +533,8 @@ fn render_conflict_clause<D: Dialect, T>(clause: &ConflictClause<D, T>, sink: &m
 }
 
 mod private {
-    /// The row's `(column, value)` pairs are what a statement writes;
-    /// `#[derive(Table)]` is what guarantees that, so it is the only thing
-    /// that can produce an `InsertRow`.
+    /// Sealed rather than open: only `#[derive(Table)]` guarantees a row's
+    /// cells name real columns of its table.
     pub trait Sealed {}
 }
 
@@ -604,8 +594,8 @@ impl<D, T: Table> InsertSeed<D, T> {
         Sel::Output: crate::row::SameShape<crate::row::Row<TargetRow<T, TgtIdx>>>,
     {
         InsertSelect {
-            // Read off the very row the query was checked against, the way
-            // a `WITH` header is: one fact rather than two that could name
+            // Read off the row the query was checked against rather than
+            // listed from `WrittenColumns` again: two lists could name
             // different columns.
             header: <TargetRow<T, TgtIdx> as crate::row::ColumnNames>::names(),
             body: query.fragment::<SelIdx>(),
@@ -633,18 +623,13 @@ impl<D, T: Table> InsertSeed<D, T> {
     }
 }
 
-/// The columns of a table an `INSERT` may name: all of them but the
-/// generated ones, which the database writes itself and refuses a value
-/// for. Emitted by `#[derive(Table)]` beside `select::AllColumns`, which is
-/// the other list: what a `SELECT` of the whole table reads.
+/// A list of its own rather than `select::AllColumns`: an `INSERT` may not
+/// name a generated column, which the database refuses a value for.
 #[doc(hidden)]
 pub trait WrittenColumns {
-    /// `Cons<Column<C>, ..>`, in the schema's own order.
     type Columns;
 }
 
-/// The row an `INSERT INTO t (..) SELECT ..` has to be handed: the target's
-/// writable columns, read in the one-table scope a write statement has.
 type TargetRow<T, Idx> = <<T as WrittenColumns>::Columns as crate::select::ColumnList<
     WrittenTable<T>,
     Idx,
@@ -709,15 +694,14 @@ fn render_values_clause<D: Dialect, R: InsertRow>(
     sink.text("INSERT INTO ");
     render_ident::<D>(sink, <R::Table as Table>::NAME);
 
-    // Header and values come from one chain, so a row has exactly one cell
-    // per column named: no reconciliation, nothing to drop.
+    // No check that each row has one cell per header column: both come from
+    // the one `R::Values` chain.
     let mut header = Vec::new();
     <R::Values as InsertValues>::push_names(&mut header);
 
-    // A table whose every column is generated leaves nothing to name, and
-    // an empty column list is a syntax error in two of the three dialects.
-    // One such row is all SQL can express, which is why `values`/`values_all`
-    // take `Insertable`.
+    // Not an empty `()` column list, which two of the three dialects reject.
+    // `INSERT_NO_COLUMNS` spells the one row SQL can express here, which is
+    // why the bulk paths take `Insertable`.
     if header.is_empty() {
         sink.text(D::INSERT_NO_COLUMNS);
         if let Some(clause) = on_conflict {

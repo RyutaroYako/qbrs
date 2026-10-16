@@ -26,10 +26,10 @@ macro_rules! prepare {
         impl $name {
             $(
                 pub fn $field() -> $crate::expr::Expr<$crate::scope::Nil, $ty> {
-                    // Qualified by where it was declared: `Params` is a free
-                    // parameter of `.prepare()`, so two `prepare!` structs
-                    // sharing a field name would otherwise fill each other's
-                    // placeholders with no complaint from anyone.
+                    // Named by module and struct, not by the field alone:
+                    // `Params` is a free parameter of `.prepare()`, so two
+                    // `prepare!` structs sharing a field name would silently
+                    // fill each other's placeholders.
                     $crate::expr::placeholder::<$ty>(::std::concat!(
                         ::std::module_path!(), "::", ::std::stringify!($name),
                         ".", ::std::stringify!($field)

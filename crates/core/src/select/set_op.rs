@@ -167,46 +167,31 @@ impl<D: Dialect, Output> SetOp<D, Output> {
         sink.finish()
     }
 
-    /// The set operation itself, without the ordering and paging applied to
-    /// its result. Those are what a count of it must leave out.
+    /// Stops before the compound's own `ORDER BY` and paging rather than
+    /// rendering them too: `count_sql` wraps this and must leave them out.
     fn render_branches(&self, sink: &mut QuerySink<D>) {
         let branch = |sink: &mut QuerySink<D>, sql: &Fragment| {
-            // A branch has to be shut off from the operator beside it:
-            // otherwise its `ORDER BY`/`LIMIT`, or its `WITH`, reads as the
-            // whole compound's and the statement doesn't parse. Where a
-            // dialect has no parentheses for that (SQLite), a derived table
-            // says the same thing. Saying it unconditionally is what keeps a
+            // Every branch is wrapped, not only one with an `ORDER BY`,
+            // `LIMIT` or `WITH` of its own: unwrapped, such a clause reads as
+            // the whole compound's, and wrapping unconditionally keeps a
             // clause added later from slipping through.
-            if D::PARENTHESIZED_SET_OP_BRANCHES {
-                sink.ch('(');
-                sql.splice_into(sink);
-                sink.ch(')');
-            } else {
-                sink.text("SELECT * FROM (");
-                sql.splice_into(sink);
-                sink.ch(')');
-            }
+            open_group::<D>(sink);
+            sql.splice_into(sink);
+            sink.ch(')');
         };
 
-        // The chain is a left fold, and SQL's own precedence is not:
-        // `INTERSECT` binds tighter than `UNION`/`EXCEPT`, so flat text
-        // would reassociate `a.union(&b).intersect(&c)` into
-        // `A UNION (B INTERSECT C)` on Postgres. SQLite reads compound
-        // operators left to right, so one flat text would mean two different
-        // things in the two dialects this crate executes. Parenthesising the
-        // accumulator wherever the operator changes says the fold outright,
-        // without encoding any dialect's precedence table.
+        // Not flat text: Postgres binds `INTERSECT` tighter than
+        // `UNION`/`EXCEPT` while SQLite reads left to right, so a flat
+        // `a.union(&b).intersect(&c)` would mean two things. Parenthesising
+        // the accumulator wherever the operator changes states the left fold
+        // in every dialect, with no precedence table.
         let changes = self
             .rest
             .windows(2)
             .filter(|pair| pair[0].0 != pair[1].0)
             .count();
         for _ in 0..changes {
-            if D::PARENTHESIZED_SET_OP_BRANCHES {
-                sink.ch('(');
-            } else {
-                sink.text("SELECT * FROM (");
-            }
+            open_group::<D>(sink);
         }
 
         branch(sink, &self.first);
@@ -231,6 +216,17 @@ impl<D: Dialect, Output> SetOp<D, Output> {
             }
         }
         crate::select::render_limit_offset::<D>(sink, self.limit.as_ref(), self.offset.as_ref());
+    }
+}
+
+/// Not always a parenthesis: SQLite's grammar has no place for a
+/// parenthesised `SELECT` around a set operator, so a derived table groups
+/// there instead.
+fn open_group<D: Dialect>(sink: &mut QuerySink<D>) {
+    if D::PARENTHESIZED_SET_OP_BRANCHES {
+        sink.ch('(');
+    } else {
+        sink.text("SELECT * FROM (");
     }
 }
 

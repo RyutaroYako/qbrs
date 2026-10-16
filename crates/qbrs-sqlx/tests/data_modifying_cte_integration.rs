@@ -1,19 +1,8 @@
-//! `WITH x AS (UPDATE .. RETURNING ..) SELECT ..` against a real Postgres.
-//!
-//! The shape exists to answer "write this row, and give me back a value the
-//! row itself doesn't hold" in one round-trip. Splitting it into a write and
-//! a read inside one transaction is correct but costs a round-trip on every
-//! write, and pins a function to a concrete `Transaction` so the same
-//! executor can be used twice.
-//!
-//! Two of its rules are Postgres's to confirm rather than the type system's:
-//! every part of the statement sees one snapshot, and a data-modifying
-//! `WITH` is legal only at the top level.
-
 mod common;
 
 use qbrs::prelude::*;
 use qbrs_sqlx::prelude::*;
+use sqlx::PgPool;
 
 #[derive(Table)]
 #[table(name = "realms")]
@@ -38,10 +27,8 @@ with! {
     struct updated { id: BigInt, name: Text, realm_id: Nullable<BigInt> }
 }
 
-/// What the outer query hands back: the written row, plus the joined name
-/// it doesn't hold.
 #[derive(qbrs::FromRow, Debug, PartialEq)]
-struct Renamed {
+struct RenamedWithRealm {
     #[from_row(from = updated::name)]
     name: String,
     #[from_row(from = realms::name)]
@@ -49,7 +36,7 @@ struct Renamed {
 }
 
 #[tokio::test]
-async fn a_write_runs_as_a_cte_body_and_the_query_reads_what_the_row_doesnt_hold() {
+async fn an_update_runs_as_a_cte_body_whose_rows_the_outer_query_joins_in_one_statement() {
     let (pool, guard) = common::test_pool("qbrs_data_modifying_cte").await;
 
     sqlx::query("DROP TABLE IF EXISTS campaigns")
@@ -95,84 +82,102 @@ async fn a_write_runs_as_a_cte_body_and_the_query_reads_what_the_row_doesnt_hold
         .expect("insert a campaign")
         .expect("returning row");
 
-    let rename = qbrs::update::update(campaigns::Table)
-        .set_to(campaigns::name, "summer")
+    a_cte_update_returns_its_row_joined_to_a_name_the_row_does_not_hold(&pool, campaign_id).await;
+    assert_eq!(stored_campaign_name(&pool, campaign_id).await, "summer");
+
+    the_outer_query_sees_the_written_table_as_it_was_before_the_cte_body_wrote_it(
+        &pool,
+        campaign_id,
+    )
+    .await;
+    assert_eq!(stored_campaign_name(&pool, campaign_id).await, "autumn");
+
+    a_left_join_on_a_cte_body_keeps_a_written_row_whose_foreign_key_is_null(&pool).await;
+
+    postgres_refuses_a_data_modifying_cte_below_the_top_level_though_the_types_allow_it(&pool)
+        .await;
+    assert_eq!(stored_campaign_name(&pool, campaign_id).await, "renamed");
+
+    common::shutdown(pool, guard).await;
+}
+
+fn campaign_update(new_name: &'static str) -> Update<Postgres, campaigns::Table> {
+    qbrs::update::update(campaigns::Table).set_to(campaigns::name, new_name)
+}
+
+async fn stored_campaign_name(pool: &PgPool, campaign_id: i64) -> String {
+    select(campaigns::name)
+        .from(campaigns::Table)
+        .filter(campaigns::id.eq(campaign_id))
+        .load_one(pool)
+        .await
+        .expect("read the campaign back")
+        .expect("one row")
+}
+
+async fn a_cte_update_returns_its_row_joined_to_a_name_the_row_does_not_hold(
+    pool: &PgPool,
+    campaign_id: i64,
+) {
+    let rename = campaign_update("summer")
         .filter(campaigns::id.eq(campaign_id))
         .returning((campaigns::id, campaigns::name, campaigns::realm_id));
 
-    let renamed: Renamed = select((updated::name, realms::name))
+    let renamed: RenamedWithRealm = select((updated::name, realms::name))
         .from(qbrs::cte::with(updated::Table, &rename))
         .inner_join(realms::Table, realms::id.eq(updated::realm_id))
-        .load_one(&pool)
+        .load_one(pool)
         .await
         .expect("rename and read the realm's name in one statement")
         .expect("one row")
         .into_struct();
     assert_eq!(
         renamed,
-        Renamed {
+        RenamedWithRealm {
             name: "summer".to_string(),
             realm_name: "west".to_string(),
         }
     );
+}
 
-    // The write really happened, and not only in the row the CTE returned.
-    let stored: String = select(campaigns::name)
-        .from(campaigns::Table)
-        .filter(campaigns::id.eq(campaign_id))
-        .load_one(&pool)
-        .await
-        .expect("read the campaign back")
-        .expect("one row");
-    assert_eq!(stored, "summer");
-
-    // One snapshot for the whole statement: the outer query joining the
-    // *written* table sees the row as it was before the body touched it,
-    // which is Postgres's rule and the reason the CTE returns its own rows.
+async fn the_outer_query_sees_the_written_table_as_it_was_before_the_cte_body_wrote_it(
+    pool: &PgPool,
+    campaign_id: i64,
+) {
     let before: String = select(campaigns::name)
         .from(qbrs::cte::with(
             updated::Table,
-            &qbrs::update::update(campaigns::Table)
-                .set_to(campaigns::name, "autumn")
+            &campaign_update("autumn")
                 .filter(campaigns::id.eq(campaign_id))
                 .returning((campaigns::id, campaigns::name, campaigns::realm_id)),
         ))
         .inner_join(campaigns::Table, campaigns::id.eq(updated::id))
-        .load_one(&pool)
+        .load_one(pool)
         .await
         .expect("read the written table from the same statement")
         .expect("one row");
     assert_eq!(before, "summer");
-    // The other half of that rule, and the one a body that returned rows
-    // without writing them would fail: the write did land, and the next
-    // statement is what sees it.
-    let after: String = select(campaigns::name)
-        .from(campaigns::Table)
-        .filter(campaigns::id.eq(campaign_id))
-        .load_one(&pool)
-        .await
-        .expect("read the campaign back")
-        .expect("one row");
-    assert_eq!(after, "autumn");
+}
 
-    // A row whose foreign key is NULL is the case the two-statement
-    // workaround handled by skipping its second query.
+async fn a_left_join_on_a_cte_body_keeps_a_written_row_whose_foreign_key_is_null(pool: &PgPool) {
     qbrs::insert::insert(campaigns::Table)
         .values(CampaignsInsert::builder().name("orphan").build())
-        .execute(&pool)
+        .execute(pool)
         .await
         .expect("insert a campaign with no realm");
 
     let both: Vec<(String, Option<String>)> = select((updated::name, realms::name))
         .from(qbrs::cte::with(
             updated::Table,
-            &qbrs::update::update(campaigns::Table)
-                .set_to(campaigns::name, "renamed")
-                .returning((campaigns::id, campaigns::name, campaigns::realm_id)),
+            &campaign_update("renamed").returning((
+                campaigns::id,
+                campaigns::name,
+                campaigns::realm_id,
+            )),
         ))
         .left_join(realms::Table, realms::id.eq(updated::realm_id))
         .order_by(updated::id.asc())
-        .load(&pool)
+        .load(pool)
         .await
         .expect("rename both and read whatever realm each has")
         .into_tuples();
@@ -183,36 +188,23 @@ async fn a_write_runs_as_a_cte_body_and_the_query_reads_what_the_row_doesnt_hold
             ("renamed".to_string(), None),
         ]
     );
+}
 
-    // Postgres takes a data-modifying `WITH` at the top level only, so the
-    // query binding one has to be the statement. Nothing in the types says
-    // so. This pins which error a nested one is, and that it is the
-    // server's rather than a wrong answer.
-    let nested = qbrs::update::update(campaigns::Table)
-        .set_to(campaigns::name, "winter")
-        .returning((campaigns::id, campaigns::name, campaigns::realm_id));
+async fn postgres_refuses_a_data_modifying_cte_below_the_top_level_though_the_types_allow_it(
+    pool: &PgPool,
+) {
+    let nested =
+        campaign_update("winter").returning((campaigns::id, campaigns::name, campaigns::realm_id));
     let inner = select((updated::id,)).from(qbrs::cte::with(updated::Table, &nested));
     let refused = select(realms::id)
         .from(realms::Table)
         .filter(inner.exists())
-        .load(&pool)
+        .load(pool)
         .await
         .expect_err("a write CTE below the top level");
     let qbrs_sqlx::Error::Sqlx(sqlx::Error::Database(db)) = refused else {
         panic!("expected a database error, got {refused:?}");
     };
-    assert_eq!(db.code().as_deref(), Some("0A000"));
-
-    // And it really was refused: the row still holds what the last write
-    // that did run left it.
-    let untouched: String = select(campaigns::name)
-        .from(campaigns::Table)
-        .filter(campaigns::id.eq(campaign_id))
-        .load_one(&pool)
-        .await
-        .expect("read the campaign back")
-        .expect("one row");
-    assert_eq!(untouched, "renamed");
-
-    common::shutdown(pool, guard).await;
+    let feature_not_supported = Some("0A000");
+    assert_eq!(db.code().as_deref(), feature_not_supported);
 }

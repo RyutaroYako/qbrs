@@ -8,9 +8,6 @@ use qbrs::prelude::*;
 use qbrs_examples::*;
 use qbrs_sqlx::prelude::*;
 
-/// Erasure keeps the row, so the return type has to name it. A row's type is
-/// its key list, which is long by construction, so an alias says it once.
-/// `clippy::type_complexity` counts the nesting, hence the allow.
 #[allow(clippy::type_complexity)]
 type UserRow =
     Row<RowCons<users::columns::id, i64, RowCons<users::columns::email, String, RowNil>>>;
@@ -20,10 +17,8 @@ fn page(include_orders: bool, page: u32) -> DynSelect<Postgres, UserRow> {
         .from(users::Table)
         .order_by(users::id.asc());
 
-    // `order_by` has to happen before `.erase()`: a sort key is a column
-    // reference, and the scope that justifies it is what erasure gives up.
-    // `limit`/`offset` reference nothing, so they survive it and the
-    // pagination tail isn't duplicated across the branches.
+    // Not after `.erase()` beside `limit`/`offset`: a sort key is a column
+    // reference, and erasure gives up the scope that justifies it.
     if include_orders {
         base.inner_join(orders::Table, orders::user_id.eq(users::id))
             .erase()
@@ -47,8 +42,9 @@ async fn main() {
         }
     }
 
-    // Both branches produce the same row, so anything that reads one reads
-    // the other. That is the whole point of erasing only the join skeleton.
     let joined = page(true, 0).load(&pool).await.expect("joined");
-    assert!(joined.iter().all(|row| *row.id() > 0));
+    assert!(
+        joined.iter().all(|row| *row.id() > 0),
+        "the joined branch reads through the same row type as the unjoined one"
+    );
 }

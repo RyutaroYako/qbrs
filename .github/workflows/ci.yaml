@@ -4,42 +4,35 @@ on:
   push:
     branches: [main]
   pull_request:
-  # `release.yaml` runs this same job on both halves of a release, so the gate
-  # a release passes is the gate every commit passes, from one file.
+  # Not copied into `release.yaml`: it calls this file, so a release passes the gate
+  # every commit passes.
   workflow_call:
 
 concurrency:
-  # A superseded PR run should cancel, which is what this exists for. A push
-  # to `main` never should: it's already merged, there's nothing to
-  # supersede it with, and a run killed mid-build can still save a corrupt
-  # cache (see the `save-if` note below). Grouping pushes by commit SHA
-  # gives each one its own group, so there's nothing for `cancel-in-progress`
-  # to act on even though the setting is harmless either way there.
+  # Not `cancel-in-progress: true` for a push to `main`: nothing supersedes it, and a run
+  # killed mid-build can still save a corrupt cache. Grouping pushes by SHA keeps them
+  # apart as well.
   group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.event.pull_request.number || github.sha }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
   CARGO_TERM_COLOR: always
 
-# Nothing here writes to the repository, and a third-party action runs in the
-# job (`taiki-e/install-action`), which reaches `github.token` whether or not
-# it is handed one. Unlisted permissions are dropped.
+# Not the default token permissions: `taiki-e/install-action` reaches `github.token`
+# whether or not it is handed one, and nothing here writes to the repository.
 permissions:
   contents: read
 
 jobs:
   check:
     runs-on: ubuntu-latest
-    # A stuck test is `.config/nextest.toml`'s job. This bounds everything
-    # else, so a hung build or doctest fails in half an hour rather than at
-    # GitHub's own six-hour limit.
+    # Not left to `.config/nextest.toml`, which bounds only tests: a hung build or doctest
+    # otherwise runs to GitHub's six-hour limit.
     timeout-minutes: 30
-    # No Postgres service: the real-DB tests start their own embedded
-    # Postgres (see crates/qbrs-sqlx/tests/common/mod.rs).
+    # No `services: postgres`: the real-DB tests start their own embedded Postgres.
     steps:
-      # actions/* are maintained by GitHub itself, so we track the latest
-      # release tag directly. Third-party actions below are pinned to a
-      # full commit SHA instead, per the project's supply-chain policy.
+      # A release tag here, but a full commit SHA for a third-party action: the
+      # supply-chain policy trusts GitHub's own `actions/*` releases and no one else's.
       - name: Checkout
         uses: actions/checkout@v7.0.1
         with:
@@ -51,10 +44,8 @@ jobs:
           toolchain: stable
           components: rustfmt, clippy
 
-      # `pglite-rs-sys` downloads its engine here and records the absolute
-      # path in `target/`, which the cargo cache below carries between runs.
-      # This directory is under `~/.cache`, which that cache does not cover,
-      # so it has to be restored alongside it or the two disagree.
+      # Not covered by the cargo cache below: it carries a `target/` that records the
+      # absolute path into this directory, but not the directory itself.
       - name: Cache the pglite engine
         uses: actions/cache@v6.1.0
         with:
@@ -65,30 +56,22 @@ jobs:
       - name: Cache cargo/target
         uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
-          # A PR run only restores; `main` is the one branch that saves. The
-          # cache key is derived from Cargo.lock, not the branch, so a save
-          # from a PR is a save every other PR then restores.
+          # Not saved from a PR: no other branch can restore a PR's cache, and its saves count
+          # against the repository's cache quota, evicting the `main` cache every PR restores.
           save-if: ${{ github.ref == 'refs/heads/main' }}
 
-      # The data directory every embedded Postgres is copied from, built by
-      # `initdb` once and reused (see `tests/embedded-pg`). Keyed on
-      # Cargo.lock with no `restore-keys`: a `pglite-rs` bump can move the
-      # PostgreSQL major, and a template built by the old one is a data
-      # directory the new server refuses to start on. Saved before the cargo
-      # cache prunes `target/`, which is why this step sits after it.
+      # No `restore-keys`: a template from an older `pglite-rs` can be a PostgreSQL major
+      # the new server refuses. Placed after the cargo cache so it saves before that
+      # cache prunes `target/`.
       - name: Cache the embedded-Postgres template
         uses: actions/cache@v6.1.0
         with:
           path: target/tmp/pg-template
           key: pg-template-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}
 
-      # Restoring `target/` without the engine it points at is the one state
-      # cargo cannot recover from on its own: `pglite-rs` re-runs its build
-      # script when the engine goes missing (it names the runtime tar in a
-      # `rerun-if-changed`) and panics, while `pglite-rs-sys`, which is what
-      # would download it again, declares no file inputs, stays fresh, and
-      # replays the stale path. Dropping both build directories is what makes
-      # the download happen.
+      # Not left to cargo: with the engine gone, `pglite-rs` re-runs its build script and
+      # panics, while `pglite-rs-sys`, which would download it, declares no file inputs
+      # and stays fresh. Dropping both build directories forces the download.
       - name: Re-download the engine if the cargo cache outlived it
         run: |
           if ! ls ~/.cache/pglite-rs/*/*/pglite-runtime.tar >/dev/null 2>&1; then
@@ -104,8 +87,8 @@ jobs:
       - name: Build
         run: cargo build --workspace --all-targets --locked
 
-      # nextest runs each test in its own process, so the embedded Postgres
-      # instances start in parallel instead of one test binary at a time.
+      # nextest rather than `cargo test`, which runs one test binary at a time and so
+      # starts each embedded Postgres in turn.
       - name: Install cargo-nextest
         uses: taiki-e/install-action@1168f6810a3cb30a3514bf5756a3b7f0422c6df8 # v2.87.28
         with:
@@ -114,12 +97,11 @@ jobs:
       - name: Test
         run: cargo nextest run --workspace --locked --all-features
 
-      # nextest does not run doctests; these are the same tests, not extras.
+      # Not a duplicate of the step above: nextest does not run doctests.
       - name: Doc tests
         run: cargo test --workspace --locked --all-features --doc
 
-  # The published crates build on the `rust-version` they declare. The test
-  # crates are left out: they need the pglite engine, and nothing ships them.
+  # Not `--workspace`: the test crates need the pglite engine, and nothing ships them.
   msrv:
     runs-on: ubuntu-latest
     timeout-minutes: 15

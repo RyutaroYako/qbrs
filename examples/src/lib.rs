@@ -68,7 +68,7 @@ pub async fn setup_db() -> (sqlx::PgPool, Db) {
     (pool, db)
 }
 
-/// Seeds a small, fixed dataset used by every example: three users (one
+/// Seeds a small, fixed dataset that most examples start from: three users (one
 /// inactive, one with no orders) and a handful of orders. That is enough to
 /// make filters/joins/nullability actually demonstrate something.
 pub async fn seed(pool: &sqlx::PgPool) {
@@ -98,9 +98,8 @@ pub async fn seed(pool: &sqlx::PgPool) {
         .load(pool)
         .await
         .expect("seed users");
+    let [ada, dan, grace]: [i64; 3] = ids.try_into().expect("three users seeded");
 
-    // Dan (ids[1]) intentionally gets no orders and active=false, so the
-    // examples have something interesting to filter/outer-join against.
     update(users::Table)
         .set(
             Assignments::from_row(UsersUpdate {
@@ -109,21 +108,21 @@ pub async fn seed(pool: &sqlx::PgPool) {
             })
             .expect("active is set"),
         )
-        .filter(users::id.eq(ids[1]))
+        .filter(users::id.eq(dan))
         .execute(pool)
         .await
         .expect("deactivate dan");
 
     insert(orders::Table)
-        .values(OrdersInsert::builder().user_id(ids[0]).total(1500).build())
+        .values(OrdersInsert::builder().user_id(ada).total(1500).build())
         .values(
             OrdersInsert::builder()
-                .user_id(ids[0])
+                .user_id(ada)
                 .total(2500)
                 .shipped(true)
                 .build(),
         )
-        .values(OrdersInsert::builder().user_id(ids[2]).total(999).build())
+        .values(OrdersInsert::builder().user_id(grace).total(999).build())
         .execute(pool)
         .await
         .expect("seed orders");

@@ -7,23 +7,20 @@ use std::marker::PhantomData;
 use crate::row::{Named, Row, RowCons, RowKey, RowNil};
 use crate::scope::{Find, Superset, Table, WrapNullable};
 
-/// Sealed for the reason `InsertRow` is: these traits pair a type-level
-/// claim (`Fields`/`Output`) with the runtime list of `SelectItem`s that is
-/// supposed to match it, and only the impls in this crate keep the two in
-/// step. A hand-written one could select a row that decodes transposed,
-/// which is the failure `row::SameShape` and column-keyed rows exist to stop.
+/// Sealed rather than open, for the reason `InsertRow` is: these traits
+/// pair a type-level claim (`Fields`/`Output`) with the runtime list of
+/// `SelectItem`s, and a hand-written impl could select a row that decodes
+/// transposed.
 mod private {
-    /// Carries the trait's own parameters, for the reason `scope::proof`
-    /// explains: `Self` can be an honest `Column<C>` while the free `Idx`
-    /// is the caller's own type, so a seal on `Self` alone admits the
-    /// forgery. A private proof *type* is no better: projection reaches it.
+    /// Carries the trait's own parameters rather than sealing `Self` alone,
+    /// for the reason `scope::proof` gives: `Self` can be an honest
+    /// `Column<C>` while the free `Idx` is the caller's own type.
     pub trait Sealed<Scope, Idx> {}
 }
 
-/// `AllColumns`/`CteShape` are emitted in the schema's own crate, so their
-/// seal has to be nameable there. It is a separate trait, because sharing
-/// `private::Sealed` would hand out the one line that unseals `Selection`
-/// too, and a hand-written `Selection` is exactly what the seal is for.
+/// A trait of its own rather than a re-export of `private::Sealed`, though
+/// `AllColumns`/`CteShape` need a seal nameable in the schema's crate:
+/// sharing it would hand out the one line that unseals `Selection` too.
 #[doc(hidden)]
 pub trait SelectableSealed {}
 
@@ -189,9 +186,9 @@ macro_rules! field_part {
         }
     };
 }
-/// Everything selectable on its own: as a whole list of one, and as one
-/// part of a longer list. Stated once, since a selectable that is one and
-/// not the other has never been a thing.
+/// Both impls from one macro rather than one invocation each: a selectable
+/// that is a whole list but not a part of one, or the reverse, does not
+/// exist.
 macro_rules! selectable {
     (impl[$($generics:tt)*] $ty:ty) => {
         scalar_selection!(impl[$($generics)*] $ty);
@@ -234,25 +231,30 @@ pub trait AllColumns: SelectableSealed {
     /// The table's columns as a type-level list, `Cons<Column<C>, ..>`.
     /// The row and the rendered items are both computed from it here, so a
     /// hand-written impl can name a different set of columns but can never
-    /// make the two disagree. While this trait stated the row and pushed the
-    /// items separately, a schema's own crate could.
+    /// make the two disagree. A trait that stated the row and pushed the items
+    /// separately would let a schema's own crate transpose them.
     type Columns;
 }
 
-/// The list `AllColumns` names, walked once for the row's fields and once
-/// for the items. Implemented for `Nil` and `Cons<Column<C>, Tail>` only,
-/// and only here. It is sealed because this trait *is* the pairing
-/// `AllColumns` was split up to remove: it states the row and pushes the
-/// items separately, so a hand-written impl could transpose them. Nothing
-/// outside this crate implements it, so an ordinary private supertrait is
-/// enough; no `Proof` is needed.
+/// Sealed on the trait's own parameters, for the reason `scope::proof` gives,
+/// rather than on `Self` alone: `Idx` is free, so a schema crate's own index
+/// type would license an impl stating a row that transposes the items.
 mod column_list {
-    pub trait Sealed {}
-    impl Sealed for crate::scope::Nil {}
-    impl<C: crate::expr::ColumnKey, Tail> Sealed for crate::scope::Cons<crate::expr::Column<C>, Tail> {}
+    use super::{ColumnList, RowField};
+    use crate::expr::{Column, ColumnKey};
+    use crate::scope::{Cons, Nil};
+
+    pub trait Sealed<Scope, Idx> {}
+    impl<Scope, Idx> Sealed<Scope, Idx> for Nil {}
+    impl<C: ColumnKey, Tail, Scope, Idx> Sealed<Scope, Idx> for Cons<Column<C>, Tail>
+    where
+        Column<C>: RowField<Scope, Idx>,
+        Tail: ColumnList<Scope, Idx>,
+    {
+    }
 }
 
-pub trait ColumnList<Scope, Idx>: column_list::Sealed {
+pub trait ColumnList<Scope, Idx>: column_list::Sealed<Scope, Idx> {
     type Fields<Tail>;
     fn push_items(out: &mut Vec<SelectItem>);
 }
@@ -296,9 +298,6 @@ where
     }
 }
 
-/// The fields a list contributes, nested in front of whatever follows it.
-/// `$tail` is `RowNil` for a whole selection and the rest of the outer list
-/// for a nested one, which is the only difference between the two.
 macro_rules! row_chain {
     ($tail:ty; $n:ident $i:ident) => {
         <$n as SelectionPart<Scope, $i>>::Fields<$tail>

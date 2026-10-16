@@ -1,0 +1,29 @@
+//! Deliberately broken: a window partitioned by a column of a table the query
+//! never joins. Shows the `Find` message the window's tables report through
+//! `Superset` at `.to_sql(..)`. Copy into `tests/compile-bench/examples/` and run:
+//!   cargo build -p compile-bench --example core_window_partitioned_outside_scope
+use qbrs::prelude::*;
+
+#[derive(Table)]
+#[table(name = "employees")]
+#[allow(dead_code)]
+struct Employees {
+    #[column(primary_key, generated)]
+    id: i64,
+    salary: i64,
+}
+
+#[derive(Table)]
+#[table(name = "orders")]
+#[allow(dead_code)]
+struct Orders {
+    #[column(primary_key, generated)]
+    id: i64,
+    total: i64,
+}
+
+fn main() {
+    let _ = select((row_number().over(window().partition_by(orders::total)),))
+        .from(employees::Table)
+        .to_sql(Postgres);
+}

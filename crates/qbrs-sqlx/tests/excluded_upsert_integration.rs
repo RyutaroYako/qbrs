@@ -1,13 +1,3 @@
-//! `ON CONFLICT DO UPDATE SET .. excluded.column ..` against a real
-//! Postgres.
-//!
-//! Passing the same Rust value to both halves of an upsert stands in for
-//! the proposed row only while every inserted value is a literal the caller
-//! already holds. What it cannot say is a column the *database* filled
-//! (a default, a sequence, `now()`) or an assignment that reads the
-//! conflicting row and the proposed one together. Both are what this asks
-//! Postgres about.
-
 mod common;
 
 use qbrs::prelude::*;
@@ -26,7 +16,7 @@ struct VisitCounts {
 }
 
 #[tokio::test]
-async fn an_upsert_reads_the_row_the_insert_proposed() {
+async fn an_upsert_accumulates_from_excluded_and_takes_the_default_the_server_filled() {
     let (pool, guard) = common::test_pool("qbrs_excluded").await;
 
     sqlx::query("DROP TABLE IF EXISTS visit_counts")
@@ -45,10 +35,7 @@ async fn an_upsert_reads_the_row_the_insert_proposed() {
     .await
     .expect("create visit_counts");
 
-    // `hits = hits + EXCLUDED.hits` and `label = EXCLUDED.label`: the
-    // first reads both rows at once, the second takes a value only the
-    // server has, since the insert left the column to its default.
-    let upsert = |hits: i64| {
+    let upsert_omitting_label = |hits: i64| {
         qbrs::insert::insert(visit_counts::Table)
             .values(
                 VisitCountsInsert::builder()
@@ -71,8 +58,8 @@ async fn an_upsert_reads_the_row_the_insert_proposed() {
             )
     };
 
-    // The row starts with a label the caller supplied, so what the update
-    // branch leaves behind says which of the two rows `excluded.label` read.
+    // Seeding with the column's default would make the existing row and the
+    // proposed one agree on `label`, hiding which of them `excluded` read.
     assert_eq!(
         qbrs::insert::insert(visit_counts::Table)
             .values(
@@ -87,22 +74,31 @@ async fn an_upsert_reads_the_row_the_insert_proposed() {
             .expect("first insert"),
         1
     );
-    assert_eq!(upsert(4).execute(&pool).await.expect("the upsert"), 1);
-    assert_eq!(upsert(5).execute(&pool).await.expect("once more"), 1);
+    assert_eq!(
+        upsert_omitting_label(4)
+            .execute(&pool)
+            .await
+            .expect("the upsert"),
+        1
+    );
+    assert_eq!(
+        upsert_omitting_label(5)
+            .execute(&pool)
+            .await
+            .expect("once more"),
+        1
+    );
 
-    let row: (i64, String) = select((visit_counts::hits, visit_counts::label))
+    let (hits, label): (i64, String) = select((visit_counts::hits, visit_counts::label))
         .from(visit_counts::Table)
         .load_one(&pool)
         .await
         .expect("read the row back")
         .expect("one row")
         .into_tuple();
-    // Accumulated rather than overwritten, which the value-in-both-halves
-    // workaround renders as `hits = $2` and cannot.
-    assert_eq!(row.0, 12);
-    // The default the server filled reached the update branch, having
-    // never passed through the caller's hands.
-    assert_eq!(row.1, "from the schema");
+    let hits_summed_over_the_insert_and_both_upserts = 3 + 4 + 5;
+    assert_eq!(hits, hits_summed_over_the_insert_and_both_upserts);
+    assert_eq!(label, "from the schema");
 
     common::shutdown(pool, guard).await;
 }

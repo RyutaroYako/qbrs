@@ -73,8 +73,9 @@ pub struct Cte<D, Marker> {
 }
 
 impl<D, Marker> Cte<D, Marker> {
-    /// The rendered body. What it is bound *as* comes from `Marker`, so a
-    /// `Cte` whose name disagrees with its marker is unrepresentable.
+    /// The body alone, with no name stored beside it: the name comes from
+    /// `Marker`, so a `Cte` whose name disagrees with its marker is
+    /// unrepresentable.
     pub(crate) fn into_body(self) -> Fragment {
         self.body
     }
@@ -112,8 +113,8 @@ pub trait CteBody<D, Idx>: cte_body::Sealed<D, Idx> {
 }
 
 mod cte_body {
-    /// Carries the trait's own parameters, so there is nothing to project
-    /// and nothing an outside crate can implement.
+    /// Carries the trait's own parameters rather than sealing `Self` alone,
+    /// for the reason `scope::proof` gives.
     pub trait Sealed<D, Idx> {}
 }
 

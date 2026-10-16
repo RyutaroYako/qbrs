@@ -7,6 +7,9 @@
 //! Known limitation: only niladic ranking functions so far.
 //! `sum(col) OVER (..)` needs the real function-call design already
 //! deferred for `count()`.
+//!
+//! `rank()` leaves a gap after ties where `dense_rank()` does not. The seed
+//! data has no ties, so the two agree here.
 //! Run: `cargo run -p qbrs-examples --example 13_window`
 
 use qbrs::prelude::*;
@@ -18,9 +21,7 @@ async fn main() {
     let (pool, _db) = setup_db().await;
     seed(&pool).await;
 
-    // Rank each user's own orders by size, largest first. `PARTITION BY`
-    // restarts the numbering for every user, exactly like the SQL itself.
-    let rows = select((
+    let ranked_within_user = select((
         users::email,
         orders::total,
         row_number().over(
@@ -37,15 +38,12 @@ async fn main() {
     .expect("ranked orders");
 
     println!("orders ranked within each user (email, total, row_number):");
-    for row in &rows {
+    for row in &ranked_within_user {
         println!("  {} {} {}", row.email(), row.total(), row.row_number());
     }
 
-    // Two `row_number()`s in one query would both want the same row key, so
-    // `.get()` on either would be ambiguous. `label!` declares names for
-    // them; the declared name reaches the SQL as the column's `AS` too.
-    // Declaring it here rather than at module level keeps it next to the
-    // query, and puts it out of reach of any local binding.
+    // Not left unlabelled: two `row_number()`s share one row key, so
+    // `.get()` on either would be ambiguous.
     label!(within_user, overall);
 
     let ranked = select((
@@ -79,9 +77,6 @@ async fn main() {
         );
     }
 
-    // `rank()` leaves a gap after ties where `dense_rank()` doesn't. With
-    // no ties in the seed data the two agree, but they are different
-    // functions and both are selectable in the same row.
     let overall = select((
         users::email,
         orders::total,

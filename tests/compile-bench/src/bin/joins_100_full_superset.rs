@@ -1,10 +1,8 @@
-// At ~100 nested tables, Superset's recursive resolution (which walks the
-// scope list once per required table, i.e. up to depth ~200 in the worst
-// case) exceeds rustc's default trait-recursion limit of 128. That is a
-// purely mechanical ceiling, not evidence of exponential blowup (see the
-// timing results this binary is used to produce). Real schemas joining 100
-// tables in one query are not a realistic case; this is deliberately over
-// the top to stress-test the design's scaling behavior.
+//! The worst case for `Superset`: a requirement naming all 100 tables, each of which
+//! walks the whole scope list on its own.
+
+// Dropping back to rustc's default limit of 128 fails the build, since `Superset` nests
+// about 200 obligations deep at 100 tables. That depth is linear, not a sign of blowup.
 #![recursion_limit = "1024"]
 
 use compile_bench::{
@@ -25,7 +23,7 @@ type Scope = scope_of!(
     T76, T77, T78, T79, T80, T81, T82, T83, T84, T85, T86, T87, T88, T89, T90, T91, T92, T93, T94,
     T95, T96, T97, T98, T99
 );
-type FullReq = req_of!(
+type EveryTable = req_of!(
     T00, T01, T02, T03, T04, T05, T06, T07, T08, T09, T10, T11, T12, T13, T14, T15, T16, T17, T18,
     T19, T20, T21, T22, T23, T24, T25, T26, T27, T28, T29, T30, T31, T32, T33, T34, T35, T36, T37,
     T38, T39, T40, T41, T42, T43, T44, T45, T46, T47, T48, T49, T50, T51, T52, T53, T54, T55, T56,
@@ -34,11 +32,12 @@ type FullReq = req_of!(
     T95, T96, T97, T98, T99
 );
 
+type FirstFromd = T00;
+type LastJoined = T99;
+
 fn main() {
-    assert_contains::<Scope, T00, _>(); // worst case for Find: last in the list, deepest recursion
-    assert_contains::<Scope, T99, _>(); // best case: first in the list (Here)
-    // Worst case for Superset: requires ALL 100 tables, each independently
-    // walking the scope list -> O(n^2) Find resolutions if merely polynomial.
-    assert_superset::<Scope, FullReq, _>();
+    assert_contains::<Scope, FirstFromd, _>();
+    assert_contains::<Scope, LastJoined, _>();
+    assert_superset::<Scope, EveryTable, _>();
     assert_map_nullable::<Scope>();
 }

@@ -2,27 +2,32 @@
 //! An export can then write as it reads rather than collecting first.
 //! Not a cursor: the server still produces the whole result and the
 //! connection is held until the stream ends; what this bounds is the
-//! client's memory.
+//! client's memory. The rows arrive as they are read, so the export below
+//! flushes them in batches and never holds more than one batch. Streaming and
+//! collecting differ in when the rows arrive, not in what they are.
 //! Run: `cargo run -p qbrs-examples --example 27_stream`
 
 use qbrs::prelude::*;
 use qbrs_examples::*;
-// `StreamExt::next` comes from the same prelude `.stream(..)` does.
+// Not a separate `futures::StreamExt` import: `next` comes from the same
+// prelude `.stream(..)` does.
 use qbrs_sqlx::prelude::*;
+
+const EXPORTED_TOTALS_FROM: i64 = 10_000;
+const BATCH_SIZE: usize = 64;
 
 #[tokio::main]
 async fn main() {
     let (pool, _db) = setup_db().await;
     seed(&pool).await;
 
-    // Enough rows that collecting them would be the wrong shape for an
-    // export, even though this one is small enough to check afterwards.
-    // Their totals start well above the seed's, so the filter below picks
-    // out exactly these.
     insert(orders::Table)
-        .values_all(
-            (0..200i64).map(|n| OrdersInsert::builder().user_id(1).total(10_000 + n).build()),
-        )
+        .values_all((0..200i64).map(|n| {
+            OrdersInsert::builder()
+                .user_id(1)
+                .total(EXPORTED_TOTALS_FROM + n)
+                .build()
+        }))
         .expect("two hundred orders")
         .execute(&pool)
         .await
@@ -30,11 +35,9 @@ async fn main() {
 
     let export = select((orders::id, orders::total))
         .from(orders::Table)
-        .filter(orders::total.gte(10_000i64))
+        .filter(orders::total.gte(EXPORTED_TOTALS_FROM))
         .order_by(orders::id.asc());
 
-    // The rows arrive as they are read. A real export would write each
-    // batch out and drop it; this one counts what it wrote.
     let mut rows = export.stream(&pool).expect("open the stream");
     let mut in_hand = Vec::new();
     let (mut written, mut flushes) = (0usize, 0usize);
@@ -42,8 +45,7 @@ async fn main() {
         let row = row.expect("decode a streamed row");
         in_hand.push(*row.get(orders::total));
         written += 1;
-        if in_hand.len() == 64 {
-            // ... write `in_hand` to the file or the upload ...
+        if in_hand.len() == BATCH_SIZE {
             flushes += 1;
             in_hand.clear();
         }
@@ -51,14 +53,14 @@ async fn main() {
     if !in_hand.is_empty() {
         flushes += 1;
     }
-    // The stream borrows the connection until it is done with it.
-    drop(rows);
 
-    println!("wrote {written} rows in {flushes} flushes, holding at most 64");
+    println!("wrote {written} rows in {flushes} flushes, holding at most {BATCH_SIZE}");
     assert_eq!(written, 200);
 
-    // The same query collected: streaming and collecting differ in when
-    // the rows arrive, not in what they are.
     let collected = export.load(&pool).await.expect("collect the same query");
-    assert_eq!(collected.len(), written);
+    assert_eq!(
+        collected.len(),
+        written,
+        "collecting the query yields the rows the stream did"
+    );
 }

@@ -1,0 +1,30 @@
+//! Deliberately broken: `.full_join(..)` on a MySQL query. Shows the
+//! `SupportsFullOuterJoin` gate, which MySQL lacks although it has
+//! `SupportsRightJoin`. Copy into `tests/compile-bench/examples/` and run:
+//!   cargo build -p compile-bench --example core_full_join_on_mysql
+use qbrs::prelude::*;
+
+#[derive(Table)]
+#[table(name = "users")]
+#[allow(dead_code)]
+struct Users {
+    #[column(primary_key, generated)]
+    id: i64,
+}
+
+#[derive(Table)]
+#[table(name = "orders")]
+#[allow(dead_code)]
+struct Orders {
+    #[column(primary_key, generated)]
+    id: i64,
+    user_id: i64,
+    total: i64,
+}
+
+fn main() {
+    let _ = select((users::id, orders::total))
+        .from::<MySql, _>(users::Table)
+        .full_join(orders::Table, orders::user_id.eq(users::id))
+        .to_sql(MySql);
+}

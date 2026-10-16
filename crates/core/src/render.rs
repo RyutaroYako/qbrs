@@ -7,17 +7,11 @@
 use crate::dialect::{Dialect, StringAggSyntax};
 use crate::expr::{BinOp, CastTarget, ExprKind, SortDir, Value};
 
-/// Where rendered SQL goes. A bind parameter is *told* to the sink rather
-/// than written as text, which is what lets the same renderer produce either
-/// a finished statement or a `Fragment` whose parameters aren't numbered
-/// yet. No character stands in for a parameter, so nothing has to be
-/// escaped.
-///
-/// `#[doc(hidden)] pub` because
+/// `#[doc(hidden)] pub` rather than private, because
 /// [`Statement::render_into`](crate::statement::Statement::render_into)
-/// names it, and sealed so that door stays a door: a foreign sink handed
-/// one could write a bind into the text, which is the one thing this trait
-/// exists to prevent.
+/// names it. Sealed rather than open: a bind is *told* to a sink so that no
+/// character in the text ever stands in for one, and a foreign sink could
+/// write it into the text anyway.
 #[doc(hidden)]
 pub trait Sink: sink::Sealed {
     fn text(&mut self, s: &str);
@@ -29,12 +23,11 @@ mod sink {
     pub trait Sealed {}
 }
 
-/// The parameters a statement has already bound, so a value bound again is
-/// named again rather than bound twice. Bucketed by hash and confirmed with
-/// `Value::binds_same_as`, since `Value` has no `Eq` to key a map on and
-/// `==` is too coarse to share a parameter on. A dialect whose placeholders
-/// are positional has no way to name a parameter twice, and so has no
-/// `BoundValues` at all rather than an index it never reads.
+/// Keyed by hash and confirmed with `Value::binds_same_as` rather than a
+/// `HashMap<Value, _>`: `Value` has no `Eq`, and `==` is too coarse to share
+/// a parameter on. A dialect with positional placeholders cannot name a
+/// parameter twice, so its `QuerySink` holds `None` rather than an index it
+/// never reads.
 struct BoundValues {
     by_key: std::collections::HashMap<u64, Vec<usize>>,
 }
@@ -53,8 +46,7 @@ impl BoundValues {
         hasher.finish()
     }
 
-    /// The 1-based position of a parameter already holding this value.
-    fn position_in(&self, params: &[Value], value: &Value) -> Option<usize> {
+    fn existing_placeholder_number(&self, params: &[Value], value: &Value) -> Option<usize> {
         self.by_key
             .get(&self.key(value))?
             .iter()
@@ -68,11 +60,10 @@ impl BoundValues {
     }
 }
 
-/// Builds a finished statement, numbering each parameter as it arrives.
-/// Where the dialect numbers them, a value already bound is named again
-/// instead. An expression carrying binds therefore renders the same text
-/// everywhere it recurs in one statement, which is what lets a `sql!{}`
-/// fragment be selected and grouped by.
+/// Names an already-bound value again rather than binding it afresh, where
+/// the dialect numbers its placeholders: a `sql!{}` fragment with binds then
+/// renders the same text everywhere it recurs, which Postgres's syntactic
+/// `GROUP BY` matching requires.
 #[doc(hidden)]
 pub struct QuerySink<D> {
     sql: String,
@@ -95,8 +86,7 @@ impl<D: Dialect> QuerySink<D> {
         (self.sql, self.params)
     }
 
-    /// Appends a parameter, returning its 1-based position.
-    fn push_param(&mut self, value: &Value) -> usize {
+    fn new_placeholder_number(&mut self, value: &Value) -> usize {
         self.params.push(value.clone());
         if let Some(bound) = &mut self.bound {
             bound.record(self.params.len() - 1, value);
@@ -118,17 +108,17 @@ impl<D: Dialect> Sink for QuerySink<D> {
         let already = self
             .bound
             .as_ref()
-            .and_then(|bound| bound.position_in(&self.params, value));
+            .and_then(|bound| bound.existing_placeholder_number(&self.params, value));
         let n = match already {
             Some(n) => n,
-            None => self.push_param(value),
+            None => self.new_placeholder_number(value),
         };
         D::write_placeholder(n, &mut self.sql);
     }
 }
 
-/// Builds a `Fragment`: a parameter starts a new segment instead of being
-/// written, so its eventual number is decided by whoever splices it.
+/// A bind starts a new segment rather than writing a placeholder: its number
+/// is not known until the fragment is spliced.
 pub(crate) struct FragmentSink(Fragment);
 
 impl FragmentSink {
@@ -287,8 +277,8 @@ pub(crate) fn render_expr<D: Dialect>(expr: &ExprKind, sink: &mut dyn Sink) {
             sink.text("))");
         }
         ExprKind::Template { head, rest } => {
-            // Same defensive parentheses as an embedded fragment: authored
-            // text has no precedence the renderer knows about.
+            // Parenthesised even where it looks redundant: authored text has
+            // no precedence the renderer knows about.
             sink.ch('(');
             sink.text(head);
             for (arg, text) in rest {
@@ -302,9 +292,9 @@ pub(crate) fn render_expr<D: Dialect>(expr: &ExprKind, sink: &mut dyn Sink) {
             partition_by,
             order_by,
         } => {
-            // No defensive parens here, unlike `Template`: `OVER` only attaches
-            // to a bare function-call syntax node, so `(row_number()) OVER
-            // (..)` would not be valid SQL.
+            // No parentheses around `func`, unlike `Template`: `OVER` attaches
+            // only to a bare function call, so `(row_number()) OVER (..)` is
+            // not valid SQL.
             sink.text(func);
             sink.text(" OVER (");
             render_expr_list::<D>(sink, "PARTITION BY ", partition_by);
@@ -321,9 +311,6 @@ pub(crate) fn render_expr<D: Dialect>(expr: &ExprKind, sink: &mut dyn Sink) {
 
 #[doc(hidden)]
 #[derive(Debug, Clone)]
-/// One item in a rendered `SELECT`/`RETURNING` list. `label` is `Some` only
-/// for an item given a `expr::LabelKey` label, which is the only thing that
-/// emits `AS`.
 pub struct SelectItem {
     pub(crate) kind: ExprKind,
     pub(crate) label: Option<&'static str>,
@@ -342,8 +329,6 @@ impl SelectItem {
     }
 }
 
-/// Renders a comma-separated `SELECT`/`RETURNING` list, emitting each item's
-/// `AS` label where it has one.
 pub(crate) fn render_select_list<D: Dialect>(items: &[SelectItem], sink: &mut dyn Sink) {
     for (i, item) in items.iter().enumerate() {
         if i > 0 {
@@ -357,13 +342,9 @@ pub(crate) fn render_select_list<D: Dialect>(items: &[SelectItem], sink: &mut dy
     }
 }
 
-/// A piece of SQL destined to be embedded in a larger query: a subquery, a
-/// CTE body, a set-operation branch. Held as the text *between* its bind
-/// parameters (`head`, then one `(param, text)` pair per parameter), so a
-/// parameter is a position rather than a character. Nothing has to be
-/// escaped, re-splicing an already-spliced fragment can't confuse text with
-/// a parameter, and there is no way to hold a parameter with no text on
-/// either side of it.
+/// Held as the text between its binds rather than as one string with a
+/// marker character per bind: a marker would need escaping, and re-splicing
+/// a spliced fragment could mistake text for a bind.
 #[derive(Debug, Clone)]
 pub(crate) struct Fragment {
     head: String,
@@ -378,8 +359,6 @@ impl Fragment {
         }
     }
 
-    /// Where the next text goes: after the last parameter, or in `head`
-    /// while there are none.
     fn tail(&mut self) -> &mut String {
         match self.rest.last_mut() {
             Some((_, text)) => text,
@@ -387,8 +366,6 @@ impl Fragment {
         }
     }
 
-    /// Appends this fragment to whatever is being rendered, handing each of
-    /// its parameters to the sink in turn.
     pub(crate) fn splice_into(&self, sink: &mut dyn Sink) {
         sink.text(&self.head);
         for (value, text) in &self.rest {
@@ -398,11 +375,9 @@ impl Fragment {
     }
 }
 
-/// Renders an identifier with the dialect's quoting.
-/// A dotted name is qualified, not one identifier: `analytics.events` is a
-/// table in a schema, and quoting it whole asks the database for a relation
-/// with a dot in its name. Only `#[table(name = "..")]` can contain one.
-/// Every other name here comes from a Rust identifier.
+/// Splits on `.` rather than quoting the whole name: `analytics.events`
+/// (which only `#[table(name = "..")]` can spell) is a table in a schema, and
+/// quoted whole it asks for a relation with a dot in its name.
 pub(crate) fn render_ident<D: Dialect>(sink: &mut dyn Sink, ident: &str) {
     for (i, part) in ident.split('.').enumerate() {
         if i > 0 {
@@ -412,11 +387,10 @@ pub(crate) fn render_ident<D: Dialect>(sink: &mut dyn Sink, ident: &str) {
     }
 }
 
-/// Writes a SQL string literal. The one place this crate writes a value
-/// into SQL instead of binding it, reached only by the one dialect whose
-/// grammar refuses a parameter where the value goes. A quote is escaped by
-/// doubling it; a backslash too where the dialect reads one as an escape,
-/// since a lone trailing one would carry the closing quote away.
+/// Writes the value into SQL rather than binding it, which only MySQL's
+/// `SEPARATOR` needs: its grammar refuses a parameter there. A backslash is
+/// doubled too where the dialect reads one as an escape, since a lone
+/// trailing one would carry the closing quote away.
 fn render_string_literal(sink: &mut dyn Sink, text: &str, backslash_escapes: bool) {
     sink.ch('\'');
     for c in text.chars() {
@@ -431,9 +405,9 @@ fn render_string_literal(sink: &mut dyn Sink, text: &str, backslash_escapes: boo
 fn render_ident_part<D: Dialect>(sink: &mut dyn Sink, ident: &str) {
     sink.ch(D::IDENTIFIER_QUOTE);
     for c in ident.chars() {
-        // A quote inside an identifier is escaped by doubling it, in every
-        // dialect this crate speaks. `#[table(name = "..")]` takes an
-        // arbitrary string, so an unescaped one would end the identifier.
+        // Doubled rather than passed through: `#[table(name = "..")]` takes
+        // an arbitrary string, and an unescaped quote would end the
+        // identifier.
         if c == D::IDENTIFIER_QUOTE {
             sink.ch(c);
         }
@@ -452,9 +426,8 @@ fn render_bool_pair<D: Dialect>(lhs: &ExprKind, joiner: &str, rhs: &ExprKind, si
     sink.ch(')');
 }
 
-/// How a sort direction is spelled. Shared by a statement's `ORDER BY`, a
-/// window's, and a set operation's. A set operation orders by ordinal
-/// position, so it can't go through `render_order_by`.
+/// Its own function rather than inlined into `render_order_by`: a set
+/// operation orders by ordinal position and cannot go through that.
 pub(crate) fn dir_keyword(dir: SortDir) -> &'static str {
     match dir {
         SortDir::Asc => " ASC",
@@ -462,9 +435,6 @@ pub(crate) fn dir_keyword(dir: SortDir) -> &'static str {
     }
 }
 
-/// `SELECT count(*) FROM (<query>) AS qbrs_total`: how this crate counts a
-/// query whose rows aren't one per matching row. Written once, since the
-/// alias is part of the shape.
 pub(crate) fn render_count_wrapped<D: Dialect>(
     sink: &mut QuerySink<D>,
     body: impl FnOnce(&mut QuerySink<D>),
@@ -475,8 +445,6 @@ pub(crate) fn render_count_wrapped<D: Dialect>(
     render_ident::<D>(sink, "qbrs_total");
 }
 
-/// A comma-separated expression list behind a keyword (`GROUP BY`,
-/// `PARTITION BY`), or nothing at all when there are none.
 pub(crate) fn render_expr_list<D: Dialect>(sink: &mut dyn Sink, keyword: &str, list: &[ExprKind]) {
     if list.is_empty() {
         return;
@@ -490,8 +458,6 @@ pub(crate) fn render_expr_list<D: Dialect>(sink: &mut dyn Sink, keyword: &str, l
     }
 }
 
-/// The same, with each key's sort direction: a statement's `ORDER BY` and a
-/// window's `OVER (.. ORDER BY ..)` are one clause written in two places.
 pub(crate) fn render_order_by<D: Dialect>(
     sink: &mut dyn Sink,
     keyword: &str,
@@ -510,9 +476,6 @@ pub(crate) fn render_order_by<D: Dialect>(
     }
 }
 
-/// `WHERE`/`HAVING`: a keyword, then the conditions AND-folded, or nothing
-/// at all when there are none. Shared by every statement that has such a
-/// clause, so all four spell it the same way.
 pub(crate) fn render_and_list<D: Dialect>(sink: &mut dyn Sink, keyword: &str, list: &[ExprKind]) {
     if list.is_empty() {
         return;
