@@ -8,7 +8,7 @@
 <a href="https://crates.io/crates/qbrs"><img src="https://img.shields.io/crates/v/qbrs.svg" alt="crates.io"></a>
 <a href="https://docs.rs/qbrs"><img src="https://docs.rs/qbrs/badge.svg" alt="docs.rs"></a>
 <a href="LICENSE-MIT"><img src="https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg" alt="License: MIT OR Apache-2.0"></a>
-<img src="https://img.shields.io/badge/rust-1.88%2B-orange.svg" alt="Rust 1.88+">
+<img src="https://img.shields.io/badge/rust-1.94%2B-orange.svg" alt="Rust 1.94+">
 </p>
 
 <p align="center">
