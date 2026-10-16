@@ -11,9 +11,8 @@ keywords = ["sql", "database", "query-builder", "postgres", "sqlx"]
 description = "sqlx-based execution integration for qbrs (Postgres)."
 
 [features]
-# Each mirrors the `qbrs-core` feature of the same name and turns on the
-# matching `sqlx` support, so a column type that renders can also be bound
-# and decoded.
+# Each turns on `sqlx`'s support as well as `qbrs-core`'s feature: without it, a column
+# type renders but cannot be bound or decoded.
 chrono = ["qbrs-core/chrono", "sqlx/chrono", "dep:chrono"]
 uuid = ["qbrs-core/uuid", "sqlx/uuid", "dep:uuid"]
 decimal = ["qbrs-core/decimal", "sqlx/rust_decimal", "dep:rust_decimal"]
@@ -22,8 +21,8 @@ json = ["qbrs-core/json", "sqlx/json", "dep:serde_json"]
 [dependencies]
 qbrs-core.workspace = true
 thiserror = "2"
-# The `Stream` trait `.stream()` returns, and the one adapter that maps a
-# row to what it decodes to. Already in the tree under `sqlx`.
+# `futures-util` rather than `futures`: it is already in the tree under `sqlx`, and
+# `.stream()` needs only its `Stream` and one adapter.
 futures-util = { version = "0.3", default-features = false }
 chrono = { version = "0.4", default-features = false, features = ["std"], optional = true }
 uuid = { version = "1", default-features = false, optional = true }

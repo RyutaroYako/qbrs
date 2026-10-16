@@ -11,7 +11,6 @@ keywords = ["sql", "database", "query-builder", "type-safe", "postgres"]
 description = "A Drizzle-flavored, type-safe SQL query builder for Rust."
 
 [features]
-# Column types that need a crate of their own to decode to; see `qbrs-core`.
 chrono = ["qbrs-core/chrono"]
 uuid = ["qbrs-core/uuid"]
 decimal = ["qbrs-core/decimal"]
@@ -21,20 +20,19 @@ json = ["qbrs-core/json"]
 qbrs-core.workspace = true
 qbrs-macros.workspace = true
 
-# Only the tests name a JSON document; a schema reaches the type through
-# its own dependency.
+# Not a normal dependency for the `json` feature: a schema reaches `serde_json::Value`
+# through its own dependency, and only the tests here name one.
 [dev-dependencies]
 serde_json = "1"
-# A test names the crate directly, beside the prelude's re-export of it, since
-# the two being one item is the thing to show.
+# Not redundant with the prelude's re-export: a test names the crate directly to show
+# that the two are one item.
 uuid = "1"
 
 [package.metadata.docs.rs]
 all-features = true
 
-# The root README's Install section pins both versions, so a minor/major
-# release needs the two lines updated too, or the example in the README
-# would ask for a version that no longer matches the one just published.
+# Without these, the root README's Install section still asks for the previous version
+# after a release.
 [[package.metadata.release.pre-release-replacements]]
 file = "../../README.md"
 search = 'qbrs = "\d+\.\d+(\.\d+)?"'

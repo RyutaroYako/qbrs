@@ -11,9 +11,8 @@ keywords = ["sql", "database", "query-builder", "type-safe", "postgres"]
 description = "Core type-level machinery for the qbrs query builder (scope tracking, expressions, builders)."
 
 [features]
-# Column types that need a crate of their own to decode to. Each pulls in that crate
-# whose type it decodes to, which is why none is on by default: `qbrs-core`
-# has no dependencies unless a schema asks for one.
+# None is on by default: each pulls in the crate its column type decodes to, and
+# `qbrs-core` has no dependencies unless a schema asks for one.
 chrono = ["dep:chrono"]
 uuid = ["dep:uuid"]
 decimal = ["dep:rust_decimal"]

@@ -1,7 +1,8 @@
-// Deliberately-broken example: an `EXISTS` built for one dialect, filtered
-// onto a statement of another. Used to eyeball `Condition`'s message. Not
-// meant to compile. Copy into `tests/compile-bench/examples/` and run:
-//   cargo build -p compile-bench --example exists_across_dialects
+//! Shows `Condition`'s "`Exists<Postgres, Nil>` isn't a condition" for an `EXISTS` built
+//! for Postgres and filtered onto a MySQL statement.
+//!
+//! Copy into `tests/compile-bench/examples/` and run
+//! `cargo build -p compile-bench --example exists_across_dialects`.
 use qbrs::prelude::*;
 
 #[derive(Table)]
@@ -17,6 +18,6 @@ fn main() {
     let (sql, _) = select((users::email,))
         .from::<MySql, _>(users::Table)
         .filter(subquery.exists())
-        .to_sql();
+        .to_sql(MySql);
     println!("{sql}");
 }

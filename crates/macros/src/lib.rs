@@ -30,15 +30,22 @@ pub fn derive_table(input: TokenStream) -> TokenStream {
 
 struct ColumnInfo {
     field_name: Ident,
-    /// The inner type with any `Option<..>` wrapper stripped off.
     base_ty: Type,
-    /// The `qbrs::expr` `SqlType` marker mapped from `base_ty` (e.g. `i64`
-    /// -> `BigInt`).
-    sql_type: TokenStream2,
+    sql_marker: TokenStream2,
     nullable: bool,
     primary_key: bool,
     generated: bool,
     has_default: bool,
+}
+
+impl ColumnInfo {
+    fn insertable(&self) -> bool {
+        !self.generated
+    }
+
+    fn assignable(&self) -> bool {
+        !self.generated && !self.primary_key
+    }
 }
 
 fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
@@ -83,8 +90,8 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
                     generated = true;
                 } else if meta.path.is_ident("default") {
                     has_default = true;
-                    // `default = "expr"` parses, but the expression is a
-                    // migration/DDL concern; nothing here needs its value.
+                    // Not rendered into an `INSERT`: the database applies its own
+                    // default, so `default = "expr"` only has to parse.
                     if meta.input.peek(syn::Token![=]) {
                         let _: syn::Expr = meta.value()?.parse()?;
                     }
@@ -94,14 +101,14 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
                 Ok(())
             })?;
         }
-        // A primary key is always NOT NULL by definition, regardless of
-        // how the field happens to be typed.
+        // An `Option<T>` primary key is not a nullable column, since SQL forbids NULL
+        // in a primary key.
         let nullable = nullable && !primary_key;
-        let sql_type = sql_type_for(&base_ty)?;
+        let sql_marker = sql_marker_for(&base_ty)?;
         columns.push(ColumnInfo {
             field_name,
             base_ty,
-            sql_type,
+            sql_marker,
             nullable,
             primary_key,
             generated,
@@ -113,9 +120,9 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
     let insert_struct = gen_insert_struct(struct_ident, &mod_ident, &columns);
     let update_struct = gen_update_struct(struct_ident, &mod_ident, &columns);
 
-    // The schema struct is a declaration, not a value: nothing constructs
-    // one, and `dead_code` would say so for every table in a binary crate.
-    // Only a literal counts as a construction, so this is what silences it.
+    // A derive cannot put `#[allow(dead_code)]` on the struct it is attached to, and a
+    // struct nothing constructs warns in every binary crate. Only a struct literal counts
+    // as a construction, so this function is what silences it.
     let field_names: Vec<&Ident> = columns.iter().map(|c| &c.field_name).collect();
     let never_constructed = quote! {
         const _: () = {
@@ -154,7 +161,6 @@ fn table_name_attr(input: &DeriveInput) -> syn::Result<Option<String>> {
     Ok(None)
 }
 
-/// `Option<T>` -> `(true, T)`; anything else -> `(false, original type)`.
 fn strip_option(ty: &Type) -> (bool, Type) {
     if let Type::Path(p) = ty
         && let Some(seg) = p.path.segments.last()
@@ -167,18 +173,16 @@ fn strip_option(ty: &Type) -> (bool, Type) {
     (false, ty.clone())
 }
 
-/// Maps a base (non-`Option`) native Rust type to its `qbrs_core::expr`
-/// `SqlType` marker path. A closed match, so an unsupported type is a clear
-/// compile error naming the type rather than a downstream failure.
-fn sql_type_for(ty: &Type) -> syn::Result<TokenStream2> {
+// A closed match rather than a trait projection such as `<T as HasSql>::Sql`, so an
+// unsupported type is an error naming the field's type, not a failed bound in
+// generated code.
+fn sql_marker_for(ty: &Type) -> syn::Result<TokenStream2> {
     if let Type::Path(p) = ty
         && let Some(seg) = p.path.segments.last()
     {
         let name = seg.ident.to_string();
-        // A `Vec` is only the type it looks like once its element is read:
-        // `Vec<u8>` is `bytea` and the rest are Postgres arrays. One match
-        // rather than a list of elements beside a list of markers, which
-        // could line up wrong.
+        // Element and marker in one pair rather than two parallel lists, which an edit
+        // could put out of line.
         if name == "Vec" {
             return [
                 ("u8", quote! { ::qbrs::expr::Bytes }),
@@ -188,7 +192,7 @@ fn sql_type_for(ty: &Type) -> syn::Result<TokenStream2> {
                 ("Uuid", quote! { ::qbrs::expr::UuidArray }),
             ]
             .into_iter()
-            .find_map(|(element, marker)| generic_argument_is(seg, element).then_some(marker))
+            .find_map(|(element, marker)| sole_generic_argument_is(seg, element).then_some(marker))
             .ok_or_else(|| {
                 syn::Error::new_spanned(
                     ty,
@@ -198,7 +202,7 @@ fn sql_type_for(ty: &Type) -> syn::Result<TokenStream2> {
                 )
             });
         }
-        if name == "DateTime" && !generic_argument_is(seg, "Utc") {
+        if name == "DateTime" && !sole_generic_argument_is(seg, "Utc") {
             return Err(syn::Error::new_spanned(
                 ty,
                 "unsupported column type: `DateTime` is a column type only as `DateTime<Utc>` \
@@ -211,15 +215,14 @@ fn sql_type_for(ty: &Type) -> syn::Result<TokenStream2> {
             "f64" => quote! { ::qbrs::expr::Real },
             "String" => quote! { ::qbrs::expr::Text },
             "bool" => quote! { ::qbrs::expr::Bool },
-            // Behind a feature in `qbrs-core`; naming one here without that
-            // feature is an unresolved-path error at the marker.
+            // No feature check here: a proc macro cannot see `qbrs`'s features, and
+            // without the feature these paths fail to resolve at the marker.
             "DateTime" => quote! { ::qbrs::expr::Timestamptz },
             "NaiveDate" => quote! { ::qbrs::expr::Date },
             "Uuid" => quote! { ::qbrs::expr::Uuid },
             "Decimal" => quote! { ::qbrs::expr::Numeric },
-            // Spelled with its crate, always: `Value` alone is this crate's
-            // own bind value, in the prelude every schema glob-imports, and
-            // a field of *that* type would otherwise pass for a JSON column.
+            // Not a bare `Value`: the prelude every schema glob-imports exports qbrs's
+            // own bind `Value`, which would then pass for a JSON column.
             "Value" if path_is_qualified_by(p, "serde_json") => quote! { ::qbrs::expr::Json },
             other => {
                 return Err(syn::Error::new_spanned(
@@ -238,16 +241,12 @@ fn sql_type_for(ty: &Type) -> syn::Result<TokenStream2> {
     Err(syn::Error::new_spanned(ty, "unsupported column type"))
 }
 
-/// Whether a path names the wanted crate immediately before its last
-/// segment, which is how a type that shares a name with one of this crate's
-/// own is told apart from it.
 fn path_is_qualified_by(p: &syn::TypePath, wanted: &str) -> bool {
     let segments = &p.path.segments;
     segments.len() >= 2 && segments[segments.len() - 2].ident == wanted
 }
 
-/// Whether a path segment's single generic argument is the named type.
-fn generic_argument_is(seg: &syn::PathSegment, wanted: &str) -> bool {
+fn sole_generic_argument_is(seg: &syn::PathSegment, wanted: &str) -> bool {
     let syn::PathArguments::AngleBracketed(args) = &seg.arguments else {
         return false;
     };
@@ -272,9 +271,7 @@ fn gen_schema_mod(
     let mut accessor_uses = Vec::new();
     for c in columns {
         let name = &c.field_name;
-        let base_sql_ty = &c.sql_type;
-        // A nullable schema column is `Nullable<X>`: the wrapper is what
-        // makes a real NULL decode as `None`.
+        let base_sql_ty = &c.sql_marker;
         let col_sql_ty = if c.nullable {
             quote! { ::qbrs::scope::Nullable<#base_sql_ty> }
         } else {
@@ -282,16 +279,14 @@ fn gen_schema_mod(
         };
         let col_name_str = sql_name(name);
         let type_name = type_level_name(&col_name_str);
-        // The same set `*Update` covers: a generated or primary-key column
-        // isn't something a statement assigns.
-        let writable = if c.generated || c.primary_key {
-            quote! {}
-        } else {
+        let writable = if c.assignable() {
             quote! {
                 #[doc(hidden)]
                 impl ::qbrs::expr::WritableSealed for #name {}
                 impl ::qbrs::expr::Writable for #name {}
             }
+        } else {
+            quote! {}
         };
         keys.push(quote! {
             #[derive(Clone, Copy)]
@@ -336,24 +331,15 @@ fn gen_schema_mod(
         )
     };
     let column_list = cons_list(&col_names);
-    // What an `INSERT` may name: a generated column is the database's to
-    // write, and naming one is an error it raises rather than a value it
-    // takes.
     let written_names: Vec<_> = columns
         .iter()
-        .filter(|c| !c.generated)
+        .filter(|c| c.insertable())
         .map(|c| c.field_name.clone())
         .collect();
     let written_list = cons_list(&written_names);
-    // `AllRow` is the row `select(<table>::All)` decodes to with the table
-    // joined not-null, so a stored `Prepared`/`DynSelect` field can name
-    // that type instead of spelling it by hand.
-    // Spelled through the column's own `Sql` type rather than by copying
-    // the field's tokens: this lands inside the generated module, where a
-    // parent's `use chrono::DateTime` is not in scope, so `DateTime<Utc>`
-    // would not resolve. The projection is all `::qbrs::` paths, and a
-    // nullable column's `Sql` is already `Nullable<..>`, whose `Native` is
-    // the `Option`.
+    // Projected through the column's `Sql` rather than copying the field's tokens, which
+    // resolve only in the caller's scope: a `use chrono::DateTime` there is not in scope
+    // inside the generated module.
     let all_row = columns
         .iter()
         .rev()
@@ -396,8 +382,6 @@ fn gen_schema_mod(
             /// rather than a hand-written `RowCons` chain.
             pub type AllRow = ::qbrs::row::Row<#all_row>;
 
-            // One `Idx` for the whole table: every column of it is found at
-            // the same place in the scope, with the same nullability.
             #[doc(hidden)]
             impl ::qbrs::select::SelectableSealed for Table {}
 
@@ -414,16 +398,11 @@ fn gen_schema_mod(
     })
 }
 
-/// One column's `row.<name>()` accessor. The `Idx` parameter is the same
-/// inferred lookup index `row::Field` and `scope::Find` carry; it can't be
-/// hidden, since an impl generic constrained only by a `where` clause isn't
-/// accepted. A helper reading two columns needs two of them: one index
-/// records one position.
-/// The bound stays on the impl, not on the method, unlike the execution
-/// terminals, where moving it is what makes the message render. Here an
-/// unconditional impl would put every schema's `.total()` on every `Row`,
-/// and two tables with a same-named column would make every call to it
-/// ambiguous. `row.get(users::total)` is the spelling that reports.
+// `Idx` is a trait parameter rather than hidden in the impl, since an impl generic
+// constrained only by a `where` clause is rejected.
+// The bound stays on the impl rather than moving to the method as the execution
+// terminals' does: an unconditional impl puts every schema's `.total()` on every `Row`,
+// and two tables with a same-named column make each call ambiguous.
 fn accessor_trait(trait_ident: &Ident, method: &Ident, key: &TokenStream2) -> TokenStream2 {
     quote! {
         pub trait #trait_ident<Idx> {
@@ -456,11 +435,10 @@ pub fn derive_from_row(input: TokenStream) -> TokenStream {
         .into()
 }
 
-/// How one field says which column fills it: by name (its own, or a
-/// `rename`), or by the column itself, which is the only way to say it when
-/// two selected columns share a name.
 enum FieldSource {
     Named(String),
+    // Not redundant with `Named`: when two selected columns share a name, only the
+    // column's identity tells them apart.
     Column(syn::Path),
 }
 
@@ -497,10 +475,6 @@ fn field_source(field: &syn::Field, field_name: &Ident) -> syn::Result<FieldSour
     }
 }
 
-/// `users::id` names the column; `users::columns::id` is its identity, the
-/// type a row is keyed by. `#[derive(Table)]` and `with!` put the two in
-/// that relation; a `label!` name is one item that is both, and is matched
-/// by name instead.
 fn column_key_path(path: &syn::Path) -> syn::Result<syn::Path> {
     let mut key = path.clone();
     let last = key
@@ -552,8 +526,8 @@ fn expand_from_row(input: DeriveInput) -> syn::Result<TokenStream2> {
         ));
     }
 
-    // Field markers live in their own module so a failed lookup reports
-    // `user_summary_fields::email` rather than the type-level spelling.
+    // Markers rather than bounds on the spelled name directly, so a failed lookup
+    // reports `user_summary_fields::email` instead of a `NameChar` chain.
     let fields_mod = format_ident!("{}_fields", to_snake_case(&struct_ident.to_string()));
 
     let mut markers = Vec::new();
@@ -567,8 +541,8 @@ fn expand_from_row(input: DeriveInput) -> syn::Result<TokenStream2> {
         let field_name = f.ident.clone().expect("named field");
         let field_ty = &f.ty;
         let idx = format_ident!("Idx{position}");
-        // Numbered bindings: a bare identifier pattern resolves to a unit
-        // struct of that name when one is in scope.
+        // Not the field's own name: a bare identifier pattern matches a unit struct or a
+        // `const` of that name when one is in scope, such as a schema's column.
         let binding = format_ident!("__field{position}");
 
         match field_source(f, &field_name)? {
@@ -619,9 +593,8 @@ fn expand_from_row(input: DeriveInput) -> syn::Result<TokenStream2> {
         #[doc(hidden)]
         #[allow(non_camel_case_types)]
         mod #fields_mod {
-            // The caller's imports, for the same reason `with!` needs them:
-            // a field's declared type is written in the caller's scope, and
-            // this module is not it.
+            // Not unused: a field's declared type is written in the caller's scope, which
+            // this module reaches only through `super`.
             #[allow(unused_imports)]
             use super::*;
 
@@ -683,6 +656,7 @@ fn expand_with(decl: CteDecl) -> TokenStream2 {
     let table_name = mod_ident.to_string();
 
     let mut keys = Vec::new();
+    let mut key_impls = Vec::new();
     let mut consts = Vec::new();
     let mut accessors = Vec::new();
     let mut accessor_uses = Vec::new();
@@ -691,14 +665,11 @@ fn expand_with(decl: CteDecl) -> TokenStream2 {
     for (field, ty) in &decl.fields {
         let field_str = sql_name(field);
         let type_name = type_level_name(&field_str);
-        // The marker lives in `columns`, its impls in the enclosing module:
-        // a declared column's type is written in the caller's scope, which
-        // `use super::*` reaches from here but not from a nested module.
         keys.push(quote! {
             #[derive(Clone, Copy)]
             pub struct #field;
         });
-        consts.push(quote! {
+        key_impls.push(quote! {
             impl ::qbrs::expr::ColumnKey for columns::#field {
                 type Table = Table;
                 type Sql = #ty;
@@ -756,9 +727,9 @@ fn expand_with(decl: CteDecl) -> TokenStream2 {
         pub mod #mod_ident {
             use super::*;
 
-            // Deliberately no `BaseTable`: a CTE's pseudo-table is reached
-            // through its `cte::with(..)` binding, which is what makes
-            // selecting from an unbound one unwritable.
+            // No `BaseTable` impl, unlike a schema's: the pseudo-table is reached through
+            // its `cte::with(..)` binding, which is what makes selecting from an unbound
+            // CTE unwritable.
             pub struct Table;
             impl ::qbrs::scope::Table for Table {
                 const NAME: &'static str = #table_name;
@@ -769,6 +740,10 @@ fn expand_with(decl: CteDecl) -> TokenStream2 {
                 #(#keys)*
             }
 
+            // The impls stay out of `columns`, unlike `#[derive(Table)]`'s: a declared
+            // type is written in the caller's scope, which `use super::*` reaches from
+            // here but not from a nested module.
+            #(#key_impls)*
             #(#consts)*
             #(#accessors)*
 
@@ -834,10 +809,6 @@ pub fn label(input: TokenStream) -> TokenStream {
         });
         uses.push(accessor);
     }
-    // The accessor traits sit beside the module rather than inside it with
-    // an anonymous re-export, as a schema's do: `label!` is meant to be
-    // invoked inside the function that runs the query, and a `use` in a
-    // function body cannot name a module declared in that same body.
     quote! {
         pub mod label {
             #(#decls)*
@@ -847,9 +818,6 @@ pub fn label(input: TokenStream) -> TokenStream {
     .into()
 }
 
-/// An identifier's type-level spelling, one `char` per cell. It is the
-/// bridge that lets a `#[derive(FromRow)]` field find a column it has never
-/// been told the path of.
 fn type_level_name(name: &str) -> TokenStream2 {
     let chars = name.chars();
     quote! { ::qbrs::type_name!(#(#chars),*) }
@@ -871,19 +839,13 @@ fn to_camel_case(s: &str) -> String {
     out
 }
 
-/// Field shape per column:
-/// generated              -> excluded entirely
-/// not_null, no default   -> `T` (required, so `build()` waits for it)
-/// not_null, has default  -> `Defaultable<T>`
-/// nullable, no default   -> `Option<T>`
-/// nullable, has default  -> `Defaultable<Option<T>>`
 fn gen_insert_struct(
     struct_ident: &Ident,
     mod_ident: &Ident,
     columns: &[ColumnInfo],
 ) -> TokenStream2 {
     let insert_ident = format_ident!("{}Insert", struct_ident);
-    let insertable: Vec<&ColumnInfo> = columns.iter().filter(|c| !c.generated).collect();
+    let insertable: Vec<&ColumnInfo> = columns.iter().filter(|c| c.insertable()).collect();
 
     let fields = insertable.iter().map(|c| {
         let name = &c.field_name;
@@ -902,10 +864,6 @@ fn gen_insert_struct(
         .filter(|c| !c.nullable && !c.has_default)
         .collect();
     let builder_ident = format_ident!("{}Builder", insert_ident);
-    // One type parameter per required column, `Missing<C>` until it is
-    // given a value and the column's own type after. `build()` therefore
-    // exists exactly when every required column has one, and no value is
-    // ever unwrapped.
     let slots: Vec<Ident> = required
         .iter()
         .map(|c| format_ident!("__Qbrs{}", to_camel_case(&sql_name(&c.field_name))))
@@ -929,15 +887,9 @@ fn gen_insert_struct(
         })
         .collect();
 
-    // No defaults on these parameters: a defaulted one is elided when the
-    // compiler prints the type, and the whole point of the slots is that the
-    // printed type says which column is still missing.
-    let builder_generics = if slots.is_empty() {
-        quote! {}
-    } else {
-        quote! { <#(#slots),*> }
-    };
-    let builder_args = if slots.is_empty() {
+    // No defaults on these parameters: the compiler elides a defaulted one when it prints
+    // the type, and the printed type is what says which column is still missing.
+    let slot_params = if slots.is_empty() {
         quote! {}
     } else {
         quote! { <#(#slots),*> }
@@ -951,8 +903,6 @@ fn gen_insert_struct(
         quote! { <#(#missing),*> }
     };
 
-    // Setting a required column moves its slot from `Missing<C>` to its
-    // type, leaving the others alone.
     let required_setters = required.iter().enumerate().map(|(i, c)| {
         let name = &c.field_name;
         let base = &c.base_ty;
@@ -1022,9 +972,8 @@ fn gen_insert_struct(
                 }
             }
         } else {
-            // Nullable *and* defaulted: three states, so the third one
-            // (an explicit NULL, as opposed to letting the schema's default
-            // stand) needs a way to be said.
+            // Not covered by `name(None)`, which leaves the default standing as `None` does at
+            // every setter, so an explicit NULL needs a setter of its own.
             let null_setter = format_ident!("{}_null", name);
             quote! {
                 pub fn #name(
@@ -1045,8 +994,8 @@ fn gen_insert_struct(
         }
     });
 
-    // A table whose every column is generated has one row to give, so it
-    // doesn't get the marker the bulk paths ask for.
+    // No `Insertable` for a table whose every column is generated: its one row is
+    // `DEFAULT VALUES`, which the bulk paths cannot repeat.
     let insertable_marker = if insertable.is_empty() {
         quote! {}
     } else {
@@ -1056,9 +1005,8 @@ fn gen_insert_struct(
             impl ::qbrs::insert::Insertable for #insert_ident {}
         }
     };
-    // The row's columns and values as one chain: the keys spell the header,
-    // the cells carry the values, and neither can outnumber the other.
-    // `insert::InsertValues` walks it for both.
+    // One chain rather than a header list beside a value list, which could disagree in
+    // length.
     let insert_values_ty =
         insertable
             .iter()
@@ -1075,7 +1023,7 @@ fn gen_insert_struct(
             });
     let cell_values: Vec<TokenStream2> = insertable.iter().map(|c| {
         let name = &c.field_name;
-        let sql_ty = &c.sql_type;
+        let sql_ty = &c.sql_marker;
         match (c.nullable, c.has_default) {
             (false, false) => quote! {
                 ::qbrs::insert::InsertValue::Value(::std::convert::Into::into(self.#name))
@@ -1099,7 +1047,6 @@ fn gen_insert_struct(
         }
     }).collect();
 
-    // Built from the tail up, so the chain nests the way its type does.
     let insert_values_expr = cell_values.iter().rev().fold(
         quote! { ::qbrs::row::RowNil },
         |tail, value| quote! { ::qbrs::row::RowCons::new(#value, #tail) },
@@ -1123,14 +1070,14 @@ fn gen_insert_struct(
             }
         }
 
-        pub struct #builder_ident #builder_generics {
+        pub struct #builder_ident #slot_params {
             #(#required_names: #slots,)*
             #(#optional_names: #optional_types,)*
         }
 
         #(#required_setters)*
 
-        impl #builder_args #builder_ident #builder_args {
+        impl #slot_params #builder_ident #slot_params {
             #(#setters)*
         }
 
@@ -1143,10 +1090,11 @@ fn gen_insert_struct(
             }
         )*
 
-        impl #builder_args #builder_ident #builder_args {
-            /// The bound is on the method rather than on the impl, so a row
-            /// that isn't complete says which column is missing instead of
-            /// making `build` disappear.
+        // The bound is on the method rather than the impl: on the impl, an incomplete row
+        // makes `build` disappear instead of naming the missing column.
+        impl #slot_params #builder_ident #slot_params {
+            /// Callable once every column without a default has a value. A missing one is
+            /// named in the error.
             pub fn build(self) -> #insert_ident
             where
                 #(#slots: ::qbrs::insert::Filled<
@@ -1176,20 +1124,13 @@ fn gen_insert_struct(
     }
 }
 
-/// Update struct: every field optional (untouched vs. touched); nullable
-/// columns get a doubly-nested `Option<Option<T>>` to distinguish
-/// "untouched" from "explicit NULL". Primary keys and generated columns are
-/// excluded; updating either isn't supported.
 fn gen_update_struct(
     struct_ident: &Ident,
     mod_ident: &Ident,
     columns: &[ColumnInfo],
 ) -> TokenStream2 {
     let update_ident = format_ident!("{}Update", struct_ident);
-    let updatable: Vec<&ColumnInfo> = columns
-        .iter()
-        .filter(|c| !c.generated && !c.primary_key)
-        .collect();
+    let updatable: Vec<&ColumnInfo> = columns.iter().filter(|c| c.assignable()).collect();
 
     let fields = updatable.iter().map(|c| {
         let name = &c.field_name;
@@ -1205,7 +1146,7 @@ fn gen_update_struct(
     let sets = updatable.iter().map(|c| {
         let name = &c.field_name;
         let col_name_str = sql_name(&c.field_name);
-        let sql_ty = &c.sql_type;
+        let sql_ty = &c.sql_marker;
         if c.nullable {
             quote! {
                 if let ::std::option::Option::Some(v) = self.#name {
@@ -1229,10 +1170,8 @@ fn gen_update_struct(
         let name = &c.field_name;
         let base = &c.base_ty;
         if c.nullable {
-            // `Option<T>` means the same here as at every other setter: a
-            // value, or nothing to say. A request field therefore maps
-            // across without the nesting the struct literal needs. The
-            // third state has its own name, as it does on an insert.
+            // Takes `Option<T>` rather than the field's `Option<Option<T>>`: `None` means
+            // nothing to set, as at every other setter, and an explicit NULL is `_null`.
             let null_setter = format_ident!("{}_null", name);
             quote! {
                 pub fn #name(
@@ -1303,9 +1242,6 @@ fn gen_update_struct(
     }
 }
 
-/// A field's SQL name. `r#type` is how Rust spells a column called `type`;
-/// the `r#` is the language's, not the database's, so it comes off before
-/// the name reaches SQL, a `Named::NAME`, or a generated trait name.
 fn sql_name(ident: &Ident) -> String {
     let spelled = ident.to_string();
     spelled

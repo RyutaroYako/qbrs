@@ -1,9 +1,8 @@
-// Deliberately-broken example: a write statement as a CTE body under a
-// dialect that has no data-modifying CTEs. Used to eyeball the
-// #[diagnostic::on_unimplemented] messages on `CteBody` and
-// `SupportsDataModifyingCte`. Not meant to compile. Copy into
-// tests/compile-bench/examples/ and run with:
-//   cargo build -p compile-bench --example data_modifying_cte_on_sqlite
+//! Shows `SupportsDataModifyingCte`'s "`Sqlite` has no data-modifying CTE" for an
+//! `UPDATE .. RETURNING` bound as a `WITH` body under SQLite.
+//!
+//! Copy into `tests/compile-bench/examples/` and run
+//! `cargo build -p compile-bench --example data_modifying_cte_on_sqlite`.
 use qbrs::dialect::Sqlite;
 use qbrs::prelude::*;
 use qbrs::update::update;
@@ -22,9 +21,6 @@ with! {
 }
 
 fn main() {
-    // error[E0277]: `Returning<Update<Sqlite, orders::Table>, ..>` isn't
-    //   something a `WITH` clause can bind
-    //   an `INSERT`/`UPDATE`/`DELETE` body is Postgres's alone
     let bump: qbrs::statement::Returning<_, _> = update(orders::Table)
         .set_to(orders::total, 1i64)
         .returning((orders::id, orders::total));

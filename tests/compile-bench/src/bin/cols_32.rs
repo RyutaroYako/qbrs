@@ -48,6 +48,9 @@ type Fields = row_of!(
     columns::c31,
 );
 
+type HeadField = columns::c00;
+type DeepestField = columns::c31;
+
 fn main() {
     let (sql, _) = select((
         c00, c01, c02, c03, c04, c05, c06, c07, c08, c09, c10, c11, c12, c13, c14, c15, c16, c17,
@@ -57,6 +60,6 @@ fn main() {
     .to_sql(Postgres);
     assert!(sql.starts_with("SELECT "));
 
-    assert_field::<Fields, columns::c00, _>(); // best case: head of the list
-    assert_field::<Fields, columns::c31, _>(); // worst case: deepest `There<..>`
+    assert_field::<Fields, HeadField, _>();
+    assert_field::<Fields, DeepestField, _>();
 }

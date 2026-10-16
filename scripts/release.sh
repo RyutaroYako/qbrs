@@ -1,17 +1,7 @@
 #!/usr/bin/env bash
-# Cuts a release of qbrs's four publishable crates (qbrs-core, qbrs-macros,
-# qbrs, qbrs-sqlx): one version across all four, one tag, pushed. See
-# release.toml at the workspace root for the shared config.
-#
-# It does not publish. `.github/workflows/release.yaml` reacts to the tag and
-# does that, authenticating to crates.io by OIDC, so no crates.io credential
-# has to exist on a laptop. That workflow can cut the tag too, dispatched from
-# `main` with a `bump`, which is the same release without a laptop.
-#
-# Prerequisite: on `main`, clean working tree, up to date with origin/main.
-#
-# Usage:
-#   ./scripts/release.sh <patch|minor|major|<exact-version>>
+# Stops at the tag rather than publishing: the tag push fires
+# `.github/workflows/release.yaml`, which authenticates to crates.io by OIDC, so no
+# crates.io credential has to exist on a laptop.
 set -euo pipefail
 
 usage() {

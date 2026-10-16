@@ -1,16 +1,5 @@
 name: Release
 
-# A tag is the release, and this owns both halves of making one. Dispatched
-# from the default branch with `bump`, it cuts the tag. Reached by that tag,
-# it publishes. `scripts/release.sh` cuts the same tag from a laptop.
-#
-# Dispatched against a tag with `packages`, it republishes just those crates.
-# That is the recovery door. `cargo publish --workspace` packages and verifies
-# all four crates before uploading any, so a failure almost always lands
-# before anything is published. What it cannot do is resume: a version
-# already on crates.io is an error rather than a skip. Re-running the failed
-# run replays the inputs it was started with, which are not the ones recovery
-# needs.
 on:
   push:
     tags: ["v*"]
@@ -25,11 +14,9 @@ on:
         required: false
         default: ""
 
-# Publishing cannot be undone, so one release runs at a time whatever the
-# tag. Not `cancel-in-progress`: a run killed between two uploads is the one
-# state this is here to avoid. A cut queues its own publish behind itself, so
-# waiting runs have to survive. `queue: max` keeps them in order, where the
-# default drops all but the newest.
+# Not `cancel-in-progress`: a run killed between two uploads is the state this group
+# exists to prevent. `queue: max` rather than the default, which keeps only the newest
+# waiting run and so can drop the publish a cut queues behind itself.
 concurrency:
   group: release
   cancel-in-progress: false
@@ -39,15 +26,13 @@ permissions:
   contents: read
 
 jobs:
-  # The same gate CI runs, from the same file, so the two cannot drift. A tag
-  # is cut from a green `main`, so this is belt and braces: cheap next to a
-  # publish that cannot be taken back.
+  # Not dropped as redundant with `main`'s own CI: it is cheap next to a publish that
+  # cannot be taken back.
   gate:
     uses: ./.github/workflows/ci.yaml
 
-  # Everything a run can be refused for without reading the tree. No `needs`,
-  # so a dispatch that cannot do anything is refused in seconds. The gate runs
-  # its course either way, and holds the concurrency slot until it does.
+  # No `needs: gate`, so a dispatch that cannot do anything is refused in seconds
+  # rather than after the gate.
   preflight:
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -82,16 +67,14 @@ jobs:
             exit 1
           fi
 
-  # Bump, commit, tag, push. The publish half then runs against that tag.
   cut:
     if: inputs.bump != ''
     needs: [gate, preflight]
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:
-      # The release commit and its tag.
       contents: write
-      # Starting the publish run below.
+      # Not removable as unused: `gh workflow run` below needs it.
       actions: write
     steps:
       - name: Install Rust
@@ -99,22 +82,22 @@ jobs:
         with:
           toolchain: stable
 
-      # Pinned, since it is the tool that decides what a release is. Built
-      # here, so the one job holding a write token runs no third party but
-      # the toolchain.
+      # Built from source rather than through `taiki-e/install-action`, so the one job
+      # holding a write token runs no third-party action. Pinned, since this tool decides
+      # what a release is.
       - name: Install cargo-release
         run: cargo install cargo-release --locked --version 1.1.6
 
-      # This job pushes, so the write token has to reach the git config.
-      # Nothing before this step is handed it.
+      # No `persist-credentials: false`, unlike every other checkout: this job pushes, so
+      # the write token has to reach the git config. It comes after the installs so
+      # nothing earlier is handed the token.
       - name: Checkout
         uses: actions/checkout@v7.0.1
         with:
           fetch-depth: 0
 
-      # `release.toml` decides what a release is, here as on a laptop: which
-      # crates move, the tag's name, and that nothing is published from the
-      # machine that cuts it.
+      # No flags beyond `--execute`: `release.toml` decides what a release is, the same
+      # here as on a laptop.
       - name: Cut the release
         env:
           BUMP: ${{ inputs.bump }}
@@ -123,16 +106,16 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           cargo release "$BUMP" --execute --no-confirm
 
-      # A tag pushed with `github.token` does not fire the `push` trigger.
-      # `workflow_dispatch` is exempt from that, so the publish half is
-      # started by name.
+      # Not left to the tag's `push` trigger, which a tag pushed with `github.token`
+      # does not fire. `workflow_dispatch` is exempt, so the publish half is started by
+      # name.
       - name: Start the publish run on the new tag
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           version="$(cargo metadata --no-deps --format-version 1 \
             | jq -r '.packages[] | select(.name == "qbrs") | .version')"
-          # The tag was pushed moments ago and the API can still 404 on it.
+          # Retried rather than run once: the API can still 404 on a tag pushed moments ago.
           for attempt in 1 2 3 4 5; do
             [ "$attempt" -eq 1 ] || sleep "$((attempt * 5))"
             gh workflow run release.yaml --ref "v$version" && exit 0
@@ -146,17 +129,13 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:
-      # crates.io Trusted Publishing: the OIDC claim is what authenticates,
-      # so no crates.io token is stored anywhere. The action's post step
-      # revokes the short-lived one it fetched.
+      # OIDC through Trusted Publishing rather than a stored crates.io token, so no
+      # credential outlives this job.
       id-token: write
-      # The GitHub release below.
       contents: write
     steps:
-      # `cargo publish` runs this workspace's build scripts and proc macros.
-      # Nothing here pushes, and the release below authenticates by `GH_TOKEN`,
-      # so the job's write token has no reason to sit in the git config while
-      # that code runs.
+      # Not persisted: `cargo publish` runs this workspace's build scripts and proc macros,
+      # nothing here pushes, and the release below authenticates by `GH_TOKEN`.
       - name: Checkout
         uses: actions/checkout@v7.0.1
         with:
@@ -167,10 +146,9 @@ jobs:
         with:
           toolchain: stable
 
-      # The tag names the version; the manifest is what gets published. A
-      # mistyped tag would otherwise publish something other than what it
-      # says, and crates.io keeps whatever it is handed. `preflight` has
-      # already checked that the ref is a tag.
+      # Not covered by `preflight`, which checks only that the ref is a tag: a mistyped
+      # tag would publish the manifest's version under a name it does not carry, and
+      # crates.io keeps whatever it is handed.
       - name: Check the tag names the version in the tree
         run: |
           tree="$(cargo metadata --no-deps --format-version 1 \
@@ -184,18 +162,18 @@ jobs:
         id: auth
         uses: rust-lang/crates-io-auth-action@c6f97d42243bad5fab37ca0427f495c86d5b1a18 # v1.0.5
 
-      # One command for all four: cargo orders them by dependency, waits on
-      # the index between them, and verifies each against the siblings being
-      # published beside it rather than against the last release.
+      # One `--workspace` command rather than a loop over the four: cargo then orders them
+      # by dependency, waits on the index between them, and verifies each against the
+      # siblings beside it rather than the last release.
       - name: Publish to crates.io
         env:
           CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
-          # Through the environment, not interpolated into the script: an
-          # input that reaches a shell as text is a shell it can rewrite.
+          # Through the environment rather than interpolated into the script, which an
+          # input reaching the shell as text could rewrite.
           PACKAGES: ${{ inputs.packages }}
         run: |
-          # The input is a list of names, so it is split into words. Globbing
-          # is off, so a name is never matched against a filename.
+          # Unquoted on purpose, to split the list into words. Globbing is off so a name is
+          # never matched against a filename.
           set -f
           set -- $PACKAGES
           set +f
@@ -207,8 +185,8 @@ jobs:
             cargo publish --workspace --locked
           fi
 
-      # After the upload, so a release never points at a version crates.io
-      # does not have. Tolerates the release already existing.
+      # Not before the upload, which could leave a release pointing at a version crates.io
+      # does not have. The `||` tolerates a release that already exists.
       - name: Create the GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
