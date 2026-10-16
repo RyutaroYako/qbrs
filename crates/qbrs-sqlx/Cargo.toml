@@ -2,7 +2,7 @@
 name = "qbrs-sqlx"
 version.workspace = true
 edition.workspace = true
-rust-version = "1.94"  # sqlx 0.9 requires it
+rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 readme.workspace = true

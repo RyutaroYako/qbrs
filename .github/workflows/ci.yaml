@@ -115,3 +115,20 @@ jobs:
       # nextest does not run doctests; these are the same tests, not extras.
       - name: Doc tests
         run: cargo test --workspace --locked --all-features --doc
+
+  # The published crates build on the `rust-version` they declare. The test
+  # crates are left out: they need the pglite engine, and nothing ships them.
+  msrv:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7.0.1
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master (2026-10-15)
+        with:
+          toolchain: "1.94"
+
+      - name: Check
+        run: cargo check -p qbrs-core -p qbrs-macros -p qbrs -p qbrs-sqlx --all-features --locked
