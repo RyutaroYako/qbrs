@@ -174,7 +174,7 @@ fn a_repeated_value_still_binds_once_per_position_where_placeholders_are_positio
 }
 
 #[test]
-fn a_sqlite_delete_renders_returning() {
+fn sqlite_takes_returning_after_a_deletes_where() {
     let (sql, _) = qbrs_core::delete::delete(users::Table)
         .filter(users::id.eq(1))
         .returning(users::id)
@@ -186,7 +186,7 @@ fn a_sqlite_delete_renders_returning() {
 }
 
 #[test]
-fn mysql_renders_a_right_join() {
+fn mysql_takes_a_right_join_and_keeps_a_double_quote_inside_backticks() {
     let (sql, _) = select((users::id,))
         .from::<MySql, _>(users::Table)
         .right_join(quoted::Table, quoted::id.eq(users::id))
@@ -198,7 +198,7 @@ fn mysql_renders_a_right_join() {
 }
 
 #[test]
-fn sqlite_renders_on_conflict_do_nothing() {
+fn sqlite_takes_on_conflict_do_nothing_after_its_values() {
     let (sql, _) = insert(users::Table)
         .values(UsersInsert {
             email: "a@example.com".into(),

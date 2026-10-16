@@ -284,9 +284,6 @@ fn a_single_column_set_operation_orders_without_naming_a_position() {
 
 #[test]
 fn a_chain_that_changes_operator_parenthesises_the_left_fold_so_far() {
-    // Parenthesised rather than flat: SQL binds `INTERSECT` tighter than
-    // `UNION`, and SQLite reads compound operators left to right, so flat
-    // text means a different query in each.
     let a = select((users::id,)).from(users::Table);
     let b = select((users::id,))
         .from(users::Table)

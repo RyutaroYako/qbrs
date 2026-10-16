@@ -142,6 +142,10 @@ async fn display_name_of(pool: &SqlitePool, email: &str) -> Option<String> {
     rows[0].get(0)
 }
 
+fn strings(rows: &[sqlx::sqlite::SqliteRow]) -> Vec<String> {
+    rows.iter().map(|row| row.get(0)).collect()
+}
+
 async fn single_i64(pool: &SqlitePool, statement: (String, Vec<Value>)) -> i64 {
     run(pool, statement).await[0].get::<i64, _>(0)
 }
@@ -420,7 +424,7 @@ async fn a_union_branch_applies_its_own_limit_rather_than_the_compounds() {
 }
 
 #[tokio::test]
-async fn a_union_branch_may_carry_its_own_order_by() {
+async fn a_union_branch_ordered_on_its_own_still_returns_both_branches_rows() {
     let pool = seeded().await;
     let ordered_union = run(
         &pool,
@@ -431,11 +435,13 @@ async fn a_union_branch_may_carry_its_own_order_by() {
             .to_sql(Sqlite),
     )
     .await;
-    assert_eq!(ordered_union.len(), 2);
+    let mut emails = strings(&ordered_union);
+    emails.sort_unstable();
+    assert_eq!(emails, ["ada@example.com", "dan@example.com"]);
 }
 
 #[tokio::test]
-async fn a_union_branch_may_carry_its_own_with_clause() {
+async fn a_union_branch_with_its_own_with_clause_returns_the_cte_rows_beside_the_other_branch() {
     let pool = seeded().await;
     let cte_branch = run(
         &pool,
@@ -450,11 +456,18 @@ async fn a_union_branch_may_carry_its_own_with_clause() {
                 ),
                 big_orders::user_id.eq(users::id),
             )
-            .union(&select((orders::user_id,)).from(orders::Table))
+            .filter(users::id.eq(1))
+            .union(
+                &select((orders::user_id,))
+                    .from(orders::Table)
+                    .filter(orders::total.lt(50)),
+            )
             .to_sql(Sqlite),
     )
     .await;
-    assert!(!cte_branch.is_empty());
+    let mut user_ids: Vec<i64> = cte_branch.iter().map(|row| row.get(0)).collect();
+    user_ids.sort_unstable();
+    assert_eq!(user_ids, [1, 2]);
 }
 
 #[tokio::test]
@@ -553,7 +566,10 @@ async fn a_set_operation_orders_by_ordinal_and_pages_its_combined_rows() {
             .to_sql(Sqlite),
     )
     .await;
-    assert_eq!(paged_union.len(), 2);
+    assert_eq!(
+        strings(&paged_union),
+        ["ada@example.com", "ada@example.com"]
+    );
 }
 
 #[tokio::test]
@@ -665,17 +681,17 @@ async fn a_labelled_row_number_over_a_partition_yields_one_row_per_order() {
 }
 
 #[tokio::test]
-async fn a_sql_fragment_binds_its_value_as_a_parameter() {
+async fn a_sql_fragment_filters_by_the_value_bound_into_its_slot() {
     let pool = seeded().await;
     let raw = run(
         &pool,
         select((users::email,))
             .from(users::Table)
-            .filter(sql!(Bool, "length(email) > ?", 3i64))
+            .filter(sql!(Bool, "email = ?", "dan@example.com"))
             .to_sql(Sqlite),
     )
     .await;
-    assert_eq!(raw.len(), 2);
+    assert_eq!(strings(&raw), ["dan@example.com"]);
 }
 
 #[tokio::test]
@@ -701,11 +717,14 @@ async fn select_distinct_sorts_by_a_key_taken_from_its_selection() {
         select((users::email, users::display_name))
             .from(users::Table)
             .distinct()
-            .order_by_selected(users::email, SortDir::Asc)
+            .order_by_selected(users::email, SortDir::Desc)
             .to_sql(Sqlite),
     )
     .await;
-    assert_eq!(distinct_sorted.len(), 2);
+    assert_eq!(
+        strings(&distinct_sorted),
+        ["dan@example.com", "ada@example.com"]
+    );
 }
 
 #[tokio::test]
@@ -805,7 +824,7 @@ async fn an_erased_select_applies_a_limit_given_after_erasure() {
 }
 
 #[tokio::test]
-async fn and_or_not_null_checks_comparisons_and_empty_folds_render_conditions_sqlite_accepts() {
+async fn conditions_built_from_and_or_not_null_checks_and_empty_folds_keep_the_rows_they_match() {
     let pool = seeded().await;
     let combined = run(
         &pool,
@@ -823,7 +842,7 @@ async fn and_or_not_null_checks_comparisons_and_empty_folds_render_conditions_sq
             .to_sql(Sqlite),
     )
     .await;
-    assert!(!combined.is_empty());
+    assert_eq!(strings(&combined), ["ada@example.com"]);
 }
 
 #[tokio::test]
@@ -843,7 +862,7 @@ async fn count_of_a_column_skips_the_nulls_that_count_counts() {
 }
 
 #[tokio::test]
-async fn avg_min_and_max_render_casts_sqlite_accepts() {
+async fn avg_min_and_max_return_the_mean_least_and_greatest_total() {
     let pool = seeded().await;
     let stats = run(
         &pool,
@@ -852,7 +871,14 @@ async fn avg_min_and_max_render_casts_sqlite_accepts() {
             .to_sql(Sqlite),
     )
     .await;
-    assert_eq!(stats.len(), 1);
+    assert_eq!(
+        (
+            stats[0].get::<f64, _>(0),
+            stats[0].get::<i64, _>(1),
+            stats[0].get::<i64, _>(2)
+        ),
+        (710.0, 30, 2000)
+    );
 }
 
 #[tokio::test]
@@ -920,10 +946,10 @@ async fn a_tuple_select_without_from_binds_its_arguments_positionally() {
     let pool = schema().await;
     let computed = single_i64(
         &pool,
-        select((sql!(BigInt, "(? + ?)", 2i64, 3i64),)).to_sql(Sqlite),
+        select((sql!(BigInt, "(? - ?)", 5i64, 3i64),)).to_sql(Sqlite),
     )
     .await;
-    assert_eq!(computed, 5);
+    assert_eq!(computed, 2);
 }
 
 #[tokio::test]
@@ -931,10 +957,10 @@ async fn a_bare_select_without_from_binds_its_arguments_positionally() {
     let pool = schema().await;
     let bare = single_i64(
         &pool,
-        select(sql!(BigInt, "(? * ?)", 6i64, 7i64)).to_sql(Sqlite),
+        select(sql!(BigInt, "(? / ?)", 42i64, 6i64)).to_sql(Sqlite),
     )
     .await;
-    assert_eq!(bare, 42);
+    assert_eq!(bare, 7);
 }
 
 #[tokio::test]

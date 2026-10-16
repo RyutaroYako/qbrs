@@ -39,8 +39,10 @@ struct Orders {
     total: i64,
 }
 
+// One test rather than one per step: each step reads the rows the step before
+// it wrote.
 #[tokio::test]
-async fn insert_select_update_delete_and_count_round_trip_through_postgres() {
+async fn rows_written_by_insert_update_and_delete_read_back_through_select_and_count_as_written() {
     let (pool, guard) = common::test_pool("qbrs_test").await;
 
     sqlx::query("DROP TABLE IF EXISTS orders")

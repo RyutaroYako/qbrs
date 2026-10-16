@@ -1157,7 +1157,8 @@ sql_leaf_type!(UuidArray, Vec<uuid::Uuid>, NullUuidArray);
 // **Known limitations**: a document is opaque. `->`, `->>`, `@>` and the
 // other operators that look inside one are deferred to `sql!{}` rather than
 // half-built. A `json` column binds and decodes through this `jsonb` marker
-// too, being one wire format and one Rust type, but `json` has neither an
+// too, since sqlx encodes one `serde_json::Value` for both and Postgres casts
+// between them, but `json` has neither an
 // equality nor an ordering operator. So `.eq(..)`, `.asc()` and `GROUP BY` on
 // one compile here and are rejected by the server. Which of the two a column
 // is, nothing in a query can read.

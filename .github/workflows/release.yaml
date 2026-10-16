@@ -186,7 +186,8 @@ jobs:
           fi
 
       # Not before the upload, which could leave a release pointing at a version crates.io
-      # does not have. The `||` tolerates a release that already exists.
+      # does not have. Not a bare `gh release create`, which fails on a release that
+      # already exists, such as one made by hand before a re-dispatch.
       - name: Create the GitHub release
         env:
           GH_TOKEN: ${{ github.token }}

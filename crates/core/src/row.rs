@@ -296,10 +296,11 @@ where
 pub trait SameShape<Other> {}
 
 // Walked cell by cell rather than compared as tuples, since the positional
-// view stops at 32 fields. The cons impl has no `do_not_recommend`, which
-// keeps the `SameNameAs` obligation the one that gets reported.
+// view stops at 32 fields.
 impl SameShape<RowNil> for RowNil {}
 
+// No `#[diagnostic::do_not_recommend]` here, unlike `SameNameAs`: it keeps the
+// `SameNameAs` obligation the one that gets reported.
 impl<K1, K2, V, Tail1, Tail2> SameShape<RowCons<K2, V, Tail2>> for RowCons<K1, V, Tail1>
 where
     K1: SameNameAs<K2>,

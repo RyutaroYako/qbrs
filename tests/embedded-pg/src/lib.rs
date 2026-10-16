@@ -28,7 +28,7 @@ pub async fn connect() -> (sqlx::PgPool, Db) {
     }
     // Rebuilding rather than reporting, since the template is only a cache of `initdb`. A
     // copy fails to start when a `pglite-rs` bump moved the PostgreSQL major, or when
-    // another run's `publish` deleted the template mid-copy.
+    // another run's rebuild deleted the template mid-copy.
     let _ = std::fs::remove_dir_all(template_path());
     start_from(&template().await)
         .await

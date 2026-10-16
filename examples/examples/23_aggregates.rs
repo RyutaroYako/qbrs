@@ -63,8 +63,8 @@ async fn main() {
         "Dan's LEFT JOIN yields one row holding no order"
     );
 
-    // The separator is a `&'static str` written into the SQL, not a bound
-    // value: MySQL's `SEPARATOR` takes a literal and rejects a parameter.
+    // Not a runtime `String`: MySQL's `SEPARATOR` takes only a literal, so the
+    // separator is a `&'static str` on every dialect, though Postgres binds it.
     let emails: Option<String> = select(string_agg(users::email, ", "))
         .from(users::Table)
         .filter(users::active.eq(true))

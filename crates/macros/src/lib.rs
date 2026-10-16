@@ -181,8 +181,6 @@ fn sql_marker_for(ty: &Type) -> syn::Result<TokenStream2> {
         && let Some(seg) = p.path.segments.last()
     {
         let name = seg.ident.to_string();
-        // Element and marker in one pair rather than two parallel lists, which an edit
-        // could put out of line.
         if name == "Vec" {
             return [
                 ("u8", quote! { ::qbrs::expr::Bytes }),
