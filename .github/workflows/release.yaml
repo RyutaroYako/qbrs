@@ -95,7 +95,7 @@ jobs:
       actions: write
     steps:
       - name: Install Rust
-        uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # master (2026-08-05)
+        uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master (2026-10-15)
         with:
           toolchain: stable
 
@@ -103,7 +103,7 @@ jobs:
       # here, so the one job holding a write token runs no third party but
       # the toolchain.
       - name: Install cargo-release
-        run: cargo install cargo-release --locked --version 1.1.5
+        run: cargo install cargo-release --locked --version 1.1.6
 
       # This job pushes, so the write token has to reach the git config.
       # Nothing before this step is handed it.
@@ -163,7 +163,7 @@ jobs:
           persist-credentials: false
 
       - name: Install Rust
-        uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # master (2026-08-05)
+        uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master (2026-10-15)
         with:
           toolchain: stable
 
