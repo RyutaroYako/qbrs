@@ -76,11 +76,13 @@ async fn array_columns_bind_and_decode_as_the_vec_the_schema_names() {
         let builder = builder.denied(Vec::<uuid::Uuid>::new());
         builder.build()
     };
-    qbrs::insert::insert(accounts::Table)
+    let empty_id: i64 = qbrs::insert::insert(accounts::Table)
         .values(empty_row)
-        .execute(&pool)
+        .returning(accounts::id)
+        .load_one(&pool)
         .await
-        .expect("insert empty arrays and a NULL one");
+        .expect("insert empty arrays and a NULL one")
+        .expect("one row");
 
     array_columns_fill_a_from_row_struct_by_name(&pool, id).await;
     an_empty_array_reads_back_as_an_empty_vec_apart_from_a_null_array(&pool).await;
@@ -88,8 +90,8 @@ async fn array_columns_bind_and_decode_as_the_vec_the_schema_names() {
     an_update_replaces_an_array_column_whole(&pool, id).await;
     #[cfg(feature = "uuid")]
     a_uuid_array_column_decodes_as_a_vec_of_uuid(&pool).await;
-    eq_any_finds_the_rows_whose_array_column_holds_a_value(&pool).await;
-    negated_eq_any_finds_the_rows_whose_array_column_holds_none_of_it(&pool).await;
+    eq_any_finds_the_rows_whose_array_column_holds_a_value(&pool, id).await;
+    negated_eq_any_finds_the_rows_whose_array_column_holds_none_of_it(&pool, empty_id).await;
     eq_any_over_a_null_array_is_null_so_its_row_is_in_neither_count(&pool).await;
     eq_any_against_a_bound_array_matches_a_column_in_one_parameter(&pool, id).await;
 
@@ -106,6 +108,19 @@ async fn count_accounts_where(pool: &PgPool, condition: Predicate<Postgres, Acco
         .await
         .expect("count the matching accounts")
         .expect("one row")
+}
+
+async fn ids_of_accounts_where(
+    pool: &PgPool,
+    condition: Predicate<Postgres, AccountsScope>,
+) -> Vec<i64> {
+    select(accounts::id)
+        .from(accounts::Table)
+        .filter(condition)
+        .order_by(accounts::id.asc())
+        .load(pool)
+        .await
+        .expect("select the matching accounts")
 }
 
 async fn array_columns_fill_a_from_row_struct_by_name(pool: &PgPool, id: i64) {
@@ -192,22 +207,25 @@ async fn a_uuid_array_column_decodes_as_a_vec_of_uuid(pool: &PgPool) {
     assert_eq!(denied, vec![vec![uuid::Uuid::nil()], vec![]]);
 }
 
-async fn eq_any_finds_the_rows_whose_array_column_holds_a_value(pool: &PgPool) {
-    let referencing = count_accounts_where(
+async fn eq_any_finds_the_rows_whose_array_column_holds_a_value(pool: &PgPool, sso_id: i64) {
+    let referencing = ids_of_accounts_where(
         pool,
         predicate("sso".to_string().eq_any(accounts::login_methods)),
     )
     .await;
-    assert_eq!(referencing, 1);
+    assert_eq!(referencing, vec![sso_id]);
 }
 
-async fn negated_eq_any_finds_the_rows_whose_array_column_holds_none_of_it(pool: &PgPool) {
-    let others = count_accounts_where(
+async fn negated_eq_any_finds_the_rows_whose_array_column_holds_none_of_it(
+    pool: &PgPool,
+    empty_id: i64,
+) {
+    let others = ids_of_accounts_where(
         pool,
         predicate(!"sso".to_string().eq_any(accounts::login_methods)),
     )
     .await;
-    assert_eq!(others, 1);
+    assert_eq!(others, vec![empty_id]);
 }
 
 async fn eq_any_over_a_null_array_is_null_so_its_row_is_in_neither_count(pool: &PgPool) {

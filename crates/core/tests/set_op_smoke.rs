@@ -182,13 +182,15 @@ fn a_selection_wider_than_the_32_field_positional_view_still_unions() {
         users::id,
         users::email,
         users::id,
-        users::email,
+        (users::email, users::id),
     ))
     .from(users::Table);
     let right = left.clone();
 
     let (sql, _params) = left.union(&right).to_sql(Postgres);
-    assert!(sql.contains(" UNION "), "{sql}");
+    let (left_branch, right_branch) = sql.split_once(" UNION ").unwrap_or_else(|| panic!("{sql}"));
+    assert_eq!(left_branch.matches("\"users\".\"").count(), 33, "{sql}");
+    assert_eq!(right_branch.matches("\"users\".\"").count(), 33, "{sql}");
 }
 
 #[test]

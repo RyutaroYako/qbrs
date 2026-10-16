@@ -251,9 +251,15 @@ fn a_bare_offset_gets_the_filler_limit_its_dialect_needs() {
         .offset(5)
         .to_sql(MySql)
         .0;
-    assert!(pg.ends_with("OFFSET 5"), "{pg}");
-    assert!(lite.ends_with("LIMIT -1 OFFSET 5"), "{lite}");
-    assert!(my.ends_with("LIMIT 18446744073709551615 OFFSET 5"), "{my}");
+    assert_eq!(pg, "SELECT \"users\".\"id\" FROM \"users\" OFFSET 5");
+    assert_eq!(
+        lite,
+        "SELECT \"users\".\"id\" FROM \"users\" LIMIT -1 OFFSET 5"
+    );
+    assert_eq!(
+        my,
+        "SELECT `users`.`id` FROM `users` LIMIT 18446744073709551615 OFFSET 5"
+    );
 }
 
 #[test]

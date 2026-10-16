@@ -80,8 +80,11 @@ async fn insert_select_copies_only_matching_rows_and_returns_the_generated_keys_
         .expect("read the archive")
         .into_tuples();
     assert_eq!(
-        archived.iter().map(|(_, s)| s.as_str()).collect::<Vec<_>>(),
-        vec!["stuck door", "dead battery"]
+        archived,
+        vec![
+            (1, "stuck door".to_string()),
+            (2, "dead battery".to_string())
+        ]
     );
 
     let second_pass: Vec<i64> = qbrs::insert::insert(archived_tickets::Table)
@@ -94,7 +97,7 @@ async fn insert_select_copies_only_matching_rows_and_returns_the_generated_keys_
         .load(&pool)
         .await
         .expect("copy the rest, returning their ids");
-    assert_eq!(second_pass.len(), 1);
+    assert_eq!(second_pass, vec![3]);
 
     common::shutdown(pool, guard).await;
 }

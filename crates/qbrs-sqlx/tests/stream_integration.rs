@@ -27,7 +27,7 @@ struct ReadingsStream {
 }
 
 #[tokio::test]
-async fn a_select_and_an_update_returning_both_stream_the_rows_load_would_collect() {
+async fn a_select_a_union_and_an_update_returning_each_stream_their_rows() {
     let (pool, guard) = common::test_pool("qbrs_stream").await;
 
     sqlx::query("DROP TABLE IF EXISTS readings_stream")
@@ -58,6 +58,7 @@ async fn a_select_and_an_update_returning_both_stream_the_rows_load_would_collec
         .expect("seed the readings");
 
     a_batching_consumer_streams_the_filtered_rows_in_order_and_load_collects_the_same(&pool).await;
+    a_union_streams_its_rows_like_a_select(&pool).await;
     an_update_returning_streams_its_rows_like_a_select(&pool).await;
 
     common::shutdown(pool, guard).await;
@@ -69,33 +70,34 @@ async fn a_batching_consumer_streams_the_filtered_rows_in_order_and_load_collect
     let query = select((readings_stream::label, readings_stream::value))
         .from(readings_stream::Table)
         .filter(readings_stream::value.gte(100i64))
-        .order_by(readings_stream::value.asc());
+        .order_by(readings_stream::value.desc());
 
     let mut rows = query.stream(pool).expect("open the stream");
     let mut batch = Vec::new();
     let mut batches = 0usize;
-    let mut seen = 0usize;
-    let mut first = None;
+    let mut streamed: Vec<(String, i64)> = Vec::new();
     while let Some(row) = rows.next().await {
-        let row = row.expect("decode a streamed row");
-        if first.is_none() {
-            first = Some(*row.get(readings_stream::value));
-        }
-        batch.push(row);
-        seen += 1;
+        batch.push(row.expect("decode a streamed row").into_tuple());
         if batch.len() == 100 {
             batches += 1;
-            batch.clear();
+            streamed.append(&mut batch);
         }
     }
     drop(rows);
-    assert_eq!(seen, 400);
+    streamed.append(&mut batch);
     assert_eq!(batches, 4);
-    assert_eq!(first, Some(100));
+    let expected: Vec<(String, i64)> = (100..500i64)
+        .rev()
+        .map(|n| (format!("row-{n}"), n))
+        .collect();
+    assert_eq!(streamed, expected);
 
-    let collected = query.load(pool).await.expect("collect the same query");
-    assert_eq!(collected.len(), seen);
-    assert_eq!(*collected[0].get(readings_stream::label), "row-100");
+    let collected: Vec<(String, i64)> = query
+        .load(pool)
+        .await
+        .expect("collect the same query")
+        .into_tuples();
+    assert_eq!(collected, streamed);
 }
 
 async fn an_update_returning_streams_its_rows_like_a_select(pool: &PgPool) {
@@ -118,6 +120,26 @@ async fn an_update_returning_streams_its_rows_like_a_select(pool: &PgPool) {
     drop(bumped);
     bumped_values.sort_unstable();
     assert_eq!(bumped_values, vec![0i64, 1, 2]);
+}
+
+async fn a_union_streams_its_rows_like_a_select(pool: &PgPool) {
+    let low = select((readings_stream::value,))
+        .from(readings_stream::Table)
+        .filter(readings_stream::value.lt(2i64));
+    let high = select((readings_stream::value,))
+        .from(readings_stream::Table)
+        .filter(readings_stream::value.gte(498i64));
+    let mut both = low
+        .union(&high)
+        .stream(pool)
+        .expect("open the union stream");
+    let mut values = Vec::new();
+    while let Some(row) = both.next().await {
+        values.push(*row.expect("decode a union row").get(readings_stream::value));
+    }
+    drop(both);
+    values.sort_unstable();
+    assert_eq!(values, vec![0, 1, 498, 499]);
 }
 
 #[tokio::test]
@@ -171,31 +193,6 @@ async fn a_stream_dropped_early_gives_the_only_connection_of_its_pool_back() {
         .expect("the pool's one connection is back");
     assert_eq!(all.len(), 50);
 
-    a_union_streams_its_rows_like_a_select(&one_at_a_time).await;
-
     one_at_a_time.close().await;
     common::shutdown(pool, guard).await;
-}
-
-async fn a_union_streams_its_rows_like_a_select(pool: &PgPool) {
-    let low = select((readings_stream_drop::value,))
-        .from(readings_stream_drop::Table)
-        .filter(readings_stream_drop::value.lt(2i64));
-    let high = select((readings_stream_drop::value,))
-        .from(readings_stream_drop::Table)
-        .filter(readings_stream_drop::value.gte(48i64));
-    let mut both = low
-        .union(&high)
-        .stream(pool)
-        .expect("open the union stream");
-    let mut values = Vec::new();
-    while let Some(row) = both.next().await {
-        values.push(
-            *row.expect("decode a union row")
-                .get(readings_stream_drop::value),
-        );
-    }
-    drop(both);
-    values.sort_unstable();
-    assert_eq!(values, vec![0, 1, 48, 49]);
 }

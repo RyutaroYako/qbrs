@@ -77,7 +77,8 @@ async fn rows_written_by_insert_update_and_delete_read_back_through_select_and_c
     .await
     .expect("create orders table");
 
-    let (ada_id, dan_id) = an_insert_returning_hands_back_one_generated_id_per_row(&pool).await;
+    let (ada_id, dan_id, eve_id) =
+        an_insert_returning_hands_back_one_generated_id_per_row(&pool).await;
 
     qbrs::insert::insert(orders::Table)
         .values(OrdersInsert::builder().user_id(ada_id).total(1000).build())
@@ -86,7 +87,7 @@ async fn rows_written_by_insert_update_and_delete_read_back_through_select_and_c
         .await
         .expect("insert orders");
 
-    a_select_with_where_order_by_and_limit_returns_the_matching_rows_in_order(&pool).await;
+    a_select_applies_its_where_then_its_order_by_then_its_limit(&pool).await;
     a_left_join_decodes_a_missing_right_row_as_none(&pool).await;
     an_update_from_a_row_changes_only_the_touched_column(&pool, ada_id).await;
     select_all_fills_a_from_row_struct_by_column_name(&pool, ada_id).await;
@@ -94,12 +95,12 @@ async fn rows_written_by_insert_update_and_delete_read_back_through_select_and_c
     postgres_accepts_order_by_selected_on_a_distinct_select(&pool).await;
     order_by_selected_counts_a_column_behind_an_all_element_where_postgres_does(&pool).await;
     a_count_ignores_the_order_by_and_limit_of_the_query_it_counts(&pool).await;
-    a_delete_removes_only_the_filtered_row(&pool, dan_id, ada_id).await;
+    a_delete_removes_only_the_filtered_row(&pool, dan_id, ada_id, eve_id).await;
 
     common::shutdown(pool, guard).await;
 }
 
-async fn an_insert_returning_hands_back_one_generated_id_per_row(pool: &PgPool) -> (i64, i64) {
+async fn an_insert_returning_hands_back_one_generated_id_per_row(pool: &PgPool) -> (i64, i64, i64) {
     let inserted_ids: Vec<i64> = qbrs::insert::insert(users::Table)
         .values(
             UsersInsert::builder()
@@ -108,29 +109,32 @@ async fn an_insert_returning_hands_back_one_generated_id_per_row(pool: &PgPool) 
                 .build(),
         )
         .values(UsersInsert::builder().email("dan@example.com").build())
+        .values(
+            UsersInsert::builder()
+                .email("eve@example.com")
+                .active(false)
+                .build(),
+        )
         .returning(users::id)
         .load(pool)
         .await
         .expect("insert users");
-    let [ada_id, dan_id] = inserted_ids[..] else {
-        panic!("expected two ids, got {inserted_ids:?}");
+    let [ada_id, dan_id, eve_id] = inserted_ids[..] else {
+        panic!("expected three ids, got {inserted_ids:?}");
     };
-    (ada_id, dan_id)
+    (ada_id, dan_id, eve_id)
 }
 
-async fn a_select_with_where_order_by_and_limit_returns_the_matching_rows_in_order(pool: &PgPool) {
+async fn a_select_applies_its_where_then_its_order_by_then_its_limit(pool: &PgPool) {
     let names: Vec<String> = select(users::email)
         .from(users::Table)
         .filter(users::active.eq(true))
-        .order_by(users::id.asc())
-        .limit(10)
+        .order_by(users::id.desc())
+        .limit(1)
         .load(pool)
         .await
         .expect("select users");
-    assert_eq!(
-        names,
-        vec!["ada@example.com".to_string(), "dan@example.com".to_string()]
-    );
+    assert_eq!(names, vec!["dan@example.com".to_string()]);
 }
 
 async fn a_left_join_decodes_a_missing_right_row_as_none(pool: &PgPool) {
@@ -239,7 +243,12 @@ async fn order_by_selected_counts_a_column_behind_an_all_element_where_postgres_
     assert_eq!(spends, vec![2500, 1000]);
 }
 
-async fn a_delete_removes_only_the_filtered_row(pool: &PgPool, dan_id: i64, ada_id: i64) {
+async fn a_delete_removes_only_the_filtered_row(
+    pool: &PgPool,
+    dan_id: i64,
+    ada_id: i64,
+    eve_id: i64,
+) {
     let deleted = qbrs::delete::delete(users::Table)
         .filter(users::id.eq(dan_id))
         .execute(pool)
@@ -249,10 +258,11 @@ async fn a_delete_removes_only_the_filtered_row(pool: &PgPool, dan_id: i64, ada_
 
     let remaining: Vec<i64> = select(users::id)
         .from(users::Table)
+        .order_by(users::id.asc())
         .load(pool)
         .await
         .expect("select remaining users");
-    assert_eq!(remaining, vec![ada_id]);
+    assert_eq!(remaining, vec![ada_id, eve_id]);
 }
 
 async fn a_count_ignores_the_order_by_and_limit_of_the_query_it_counts(pool: &PgPool) {
@@ -263,5 +273,5 @@ async fn a_count_ignores_the_order_by_and_limit_of_the_query_it_counts(pool: &Pg
         .count(pool)
         .await
         .expect("count users");
-    assert_eq!(total, 2);
+    assert_eq!(total, 3);
 }

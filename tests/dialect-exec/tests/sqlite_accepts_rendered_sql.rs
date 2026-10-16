@@ -153,8 +153,9 @@ async fn single_i64(pool: &SqlitePool, statement: (String, Vec<Value>)) -> i64 {
 #[tokio::test]
 async fn a_multi_row_insert_returns_one_id_per_row() {
     let pool = schema().await;
-    let ids = insert_named_ada_with_orders_of_100_and_2000_and_unnamed_dan_with_30(&pool).await;
-    assert_eq!(ids.len(), 3);
+    let rows = insert_named_ada_with_orders_of_100_and_2000_and_unnamed_dan_with_30(&pool).await;
+    let ids: Vec<i64> = rows.iter().map(|row| row.get(0)).collect();
+    assert_eq!(ids, [1, 2, 3]);
 }
 
 #[tokio::test]
@@ -350,17 +351,36 @@ async fn a_left_join_with_order_by_and_limit_returns_each_matching_order() {
 }
 
 #[tokio::test]
-async fn a_right_join_keeps_every_row_of_the_joined_table() {
+async fn a_right_join_keeps_the_joined_tables_row_that_matches_nothing_with_a_null_left_side() {
     let pool = seeded().await;
+    run(
+        &pool,
+        insert(users::Table)
+            .values(UsersInsert::builder().email("eve@example.com").build())
+            .to_sql(Sqlite),
+    )
+    .await;
     let right = run(
         &pool,
         select((users::email, orders::total))
             .from(orders::Table)
             .right_join(users::Table, orders::user_id.eq(users::id))
+            .order_by(users::id.asc())
+            .order_by(orders::total.asc())
             .to_sql(Sqlite),
     )
     .await;
-    assert_eq!(right.len(), 3);
+    let pairs: Vec<(String, Option<i64>)> =
+        right.iter().map(|row| (row.get(0), row.get(1))).collect();
+    assert_eq!(
+        pairs,
+        [
+            ("ada@example.com".to_string(), Some(100)),
+            ("ada@example.com".to_string(), Some(2000)),
+            ("dan@example.com".to_string(), Some(30)),
+            ("eve@example.com".to_string(), None),
+        ]
+    );
 }
 
 #[tokio::test]
@@ -504,7 +524,7 @@ async fn intersect_keeps_only_the_rows_both_branches_return() {
             .to_sql(Sqlite),
     )
     .await;
-    assert_eq!(intersected.len(), 1);
+    assert_eq!(strings(&intersected), ["ada@example.com"]);
 }
 
 #[tokio::test]
@@ -522,7 +542,7 @@ async fn except_drops_the_rows_the_second_branch_returns() {
             .to_sql(Sqlite),
     )
     .await;
-    assert_eq!(excepted.len(), 1);
+    assert_eq!(strings(&excepted), ["dan@example.com"]);
 }
 
 #[tokio::test]
@@ -593,15 +613,16 @@ async fn a_cte_joins_into_the_outer_query_like_a_table() {
 }
 
 #[tokio::test]
-async fn a_correlated_exists_keeps_the_users_with_an_order() {
+async fn a_correlated_exists_keeps_only_the_users_whose_own_orders_match_the_subquery() {
     let pool = seeded().await;
     let exists_q = select(users::email).from(users::Table);
     let correlated = exists_q
         .correlated(orders::Table, orders::id)
         .filter(orders::user_id.eq(users::id))
+        .filter(orders::total.gt(1000i64))
         .exists();
     let rows = run(&pool, exists_q.filter(correlated).to_sql(Sqlite)).await;
-    assert_eq!(rows.len(), 2);
+    assert_eq!(strings(&rows), ["ada@example.com"]);
 }
 
 #[tokio::test]
@@ -637,7 +658,7 @@ async fn in_subquery_keeps_only_the_users_the_subquery_selects() {
             .to_sql(Sqlite),
     )
     .await;
-    assert_eq!(contains_rows.len(), 1, "only Ada has an order over 50");
+    assert_eq!(strings(&contains_rows), ["ada@example.com"]);
 }
 
 #[tokio::test]
@@ -654,7 +675,7 @@ async fn not_in_subquery_keeps_only_the_users_the_subquery_does_not_select() {
             .to_sql(Sqlite),
     )
     .await;
-    assert_eq!(not_contains_rows.len(), 1, "only Dan has no order over 50");
+    assert_eq!(strings(&not_contains_rows), ["dan@example.com"]);
 }
 
 #[tokio::test]

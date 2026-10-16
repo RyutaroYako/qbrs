@@ -12,6 +12,7 @@ struct Users {
     #[column(primary_key, generated)]
     id: i64,
     email: String,
+    handle: String,
     display_name: Option<String>,
     #[column(default)]
     active: bool,
@@ -125,12 +126,12 @@ fn a_nested_selection_produces_the_same_sql_and_row_type_as_its_flat_spelling() 
 
 #[test]
 fn two_text_columns_of_one_table_are_read_by_key_whatever_their_position() {
-    let row = Row::new(RowCons::<users::columns::display_name, _, _>::new(
-        Some("Ada".to_string()),
+    let row = Row::new(RowCons::<users::columns::handle, _, _>::new(
+        "ada".to_string(),
         RowCons::<users::columns::email, _, _>::new("ada@example.com".to_string(), RowNil),
     ));
     assert_eq!(row.get(users::email), "ada@example.com");
-    assert_eq!(row.get(users::display_name), &Some("Ada".to_string()));
+    assert_eq!(row.get(users::handle), "ada");
 }
 
 #[test]
