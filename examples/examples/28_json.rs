@@ -4,7 +4,9 @@
 //! or ordering by a `json` column compiles and is then rejected by the
 //! server, which has those operators for `jsonb` alone; and the operators
 //! that look *inside* a document (`->`, `->>`, `@>`) are not built. Those
-//! go through `sql!{}`, as the last query shows.
+//! go through `sql!{}`, as the last query shows. An omitted nullable JSON
+//! column is a NULL of that type, which is a different thing from a document
+//! that *is* the JSON `null`.
 //! Run: `cargo run -p qbrs-examples --example 28_json`
 
 use qbrs::prelude::*;
@@ -23,7 +25,6 @@ struct Suppressions {
     notes: Option<serde_json::Value>,
 }
 
-/// A plain domain struct, filled by field name like any other row.
 #[derive(qbrs::FromRow, Debug)]
 struct Suppression {
     email: String,
@@ -59,8 +60,6 @@ async fn main() {
                 .notes(Some(json!({ "by": "ops" })))
                 .build(),
         )
-        // An omitted nullable JSON column is a NULL of that type, which is
-        // a different thing from a document that *is* the JSON `null`.
         .values(
             SuppressionsInsert::builder()
                 .email("dan@example.com")
@@ -81,14 +80,18 @@ async fn main() {
     for row in &rows {
         println!("{}: {} (notes {:?})", row.email, row.content, row.notes);
     }
-    assert_eq!(rows[1].content, json!(null));
-    assert_eq!(rows[1].notes, None);
+    assert_eq!(
+        rows[1].content,
+        json!(null),
+        "a JSON `null` document reads back as a document"
+    );
+    assert_eq!(
+        rows[1].notes, None,
+        "an omitted JSON column reads back NULL"
+    );
 
-    // Reading a key out is an operator, and those aren't built. The
-    // escape hatch takes the column and the key as slots, so both are
-    // still checked and bound. Postgres's `?` existence operator is the
-    // one thing that cannot be written there, since a `?` in a `sql!{}`
-    // text is a slot; `jsonb_exists(..)` is its function spelling.
+    // Not Postgres's `?` existence operator: a `?` in `sql!{}` text is a
+    // slot, so `jsonb_exists(..)` is its spelling here.
     let bounced: Vec<String> = select(suppressions::email)
         .from(suppressions::Table)
         .filter(sql!(

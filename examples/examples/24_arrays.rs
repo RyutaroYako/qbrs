@@ -3,7 +3,11 @@
 //! is the same shape as a `Vec<Uuid>` behind the `uuid` feature.
 //! `Vec<u8>` stays `bytea`: the element type is what decides.
 //! `.eq_any(..)` asks whether a value is one of an array column's elements
-//! (`x = ANY(arr)`).
+//! (`x = ANY(arr)`). That is the question `is_in` asks of a written-out list,
+//! asked of an array the database unnests, so the array can be a column.
+//! An array compares as a whole, as one bind parameter rather than a rendered
+//! list. An empty array is a value, and an omitted nullable one is a NULL of
+//! that array's own type. The two stay apart.
 //! Known limitation: the array *operators* (`@>`, `&&`, `array_append`) are
 //! not built; those go through `sql!{}`, as the last query shows.
 //! Run: `cargo run -p qbrs-examples --example 24_arrays`
@@ -25,7 +29,6 @@ struct MailingLists {
     cc: Option<Vec<String>>,
 }
 
-/// A plain domain struct, filled by field name like any other row.
 #[derive(qbrs::FromRow, Debug)]
 struct List {
     name: String,
@@ -37,9 +40,8 @@ struct List {
 async fn main() {
     let (pool, _db) = setup_db().await;
 
-    // `setup_db()` resets the shared schema; a table an example makes is
-    // its own to reset, or a second run against a `DATABASE_URL` server
-    // finds it already there.
+    // Not left to `setup_db()`: it resets only the shared schema, and a second
+    // run against a `DATABASE_URL` server would find this table already there.
     sqlx::query("DROP TABLE IF EXISTS mailing_lists")
         .execute(&pool)
         .await
@@ -71,8 +73,6 @@ async fn main() {
                 .cc(Some(vec!["cto@example.com".to_string()]))
                 .build(),
         )
-        // An empty array is a value; an omitted nullable one is a NULL of
-        // that array's own type, and the two stay apart.
         .values(
             MailingListsInsert::builder()
                 .name("quiet")
@@ -95,11 +95,16 @@ async fn main() {
     for list in &lists {
         println!("{}: {:?} (cc {:?})", list.name, list.recipients, list.cc);
     }
-    assert_eq!(lists[1].recipients, Vec::<String>::new());
-    assert_eq!(lists[1].cc, None);
+    assert_eq!(
+        lists[1].recipients,
+        Vec::<String>::new(),
+        "an empty array reads back empty"
+    );
+    assert_eq!(
+        lists[1].cc, None,
+        "an omitted nullable array reads back NULL"
+    );
 
-    // An array compares as a whole: one bind parameter against one column,
-    // not a rendered list.
     let exact: i64 = select(qbrs::expr::count())
         .from(mailing_lists::Table)
         .filter(mailing_lists::retry_delays.eq(vec![1, 5, 30]))
@@ -110,7 +115,6 @@ async fn main() {
     println!("lists whose retry schedule is exactly [1, 5, 30]: {exact}");
     assert_eq!(exact, 1);
 
-    // `BIGINT[]` is the same shape one element type over.
     let sent: Vec<Vec<i64>> = select(mailing_lists::sent_message_ids)
         .from(mailing_lists::Table)
         .order_by(mailing_lists::id.asc())
@@ -120,9 +124,6 @@ async fn main() {
     println!("message ids: {sent:?}");
     assert_eq!(sent, vec![vec![9_000_000_000i64, 9_000_000_001], vec![]]);
 
-    // "Is this value one of the elements" is the question `is_in` asks of
-    // a written-out list, asked of an array the database unnests. So the
-    // array can be a column, which a list cannot.
     let listing: Vec<String> = select(mailing_lists::name)
         .from(mailing_lists::Table)
         .filter(
@@ -136,9 +137,6 @@ async fn main() {
     println!("lists with sre@example.com as a recipient: {listing:?}");
     assert_eq!(listing, vec!["ops".to_string()]);
 
-    // Asking whether an array *contains* another is an operator, and those
-    // aren't built. The escape hatch takes the column and the value as
-    // slots, so both are still checked and bound.
     let containing: Vec<String> = select(mailing_lists::name)
         .from(mailing_lists::Table)
         .filter(qbrs::sql!(

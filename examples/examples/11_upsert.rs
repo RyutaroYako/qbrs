@@ -9,6 +9,10 @@
 //! of the statement cannot say. `.filter(..)` on that list decides whether
 //! the update fires at all: a rejected row is not counted, so a one-row
 //! upsert's `execute` answers "did this write anything".
+//!
+//! `DO UPDATE SET` takes the same `Assignments` an `UPDATE` does, so only the
+//! fields set on the `*Update` are written. A target of bare columns never
+//! infers a partial index: the database rejects it rather than picking another.
 //! Run: `cargo run -p qbrs-examples --example 11_upsert`
 
 use qbrs::prelude::*;
@@ -36,8 +40,6 @@ async fn main() {
         .into_tuple();
     println!("inserted: id={id} display_name={display_name:?}");
 
-    // `email` already exists, so DO NOTHING means this row is silently
-    // skipped and the original `display_name` survives untouched.
     insert(users::Table)
         .values(
             UsersInsert::builder()
@@ -57,12 +59,12 @@ async fn main() {
         .await
         .expect("query after do-nothing")
         .expect("row still exists");
-    assert_eq!(unchanged, display_name);
+    assert_eq!(
+        unchanged, display_name,
+        "DO NOTHING skips the conflicting row and keeps the original"
+    );
     println!("after DO NOTHING, display_name is still: {unchanged:?}");
 
-    // Same conflicting email, but this time DO UPDATE SET reuses the same
-    // `*Update` struct an `UPDATE` assigns from. Only the fields actually
-    // set on it are updated.
     let updated: Option<String> = insert(users::Table)
         .values(
             UsersInsert::builder()
@@ -88,12 +90,6 @@ async fn main() {
     println!("after DO UPDATE, display_name is now: {updated:?}");
     assert_eq!(updated, Some("Grace Brewster Hopper".to_string()));
 
-    // A conflict target of bare columns is inferred against an index over
-    // exactly those columns whose predicate the target's implies, and a
-    // target with no predicate implies nothing, so a *partial* unique index
-    // needs its own repeated. `orders` has no unique constraint on
-    // `user_id`, so the partial index below is the only one there is to
-    // infer.
     sqlx::query(
         "CREATE UNIQUE INDEX orders_one_open_per_user ON orders (user_id) WHERE NOT shipped",
     )
@@ -124,11 +120,6 @@ async fn main() {
     println!("the open order's total is now: {raised}");
     assert_eq!(raised, 250);
 
-    // Passing the same Rust value to both halves of an upsert stands in
-    // for the proposed row only while the value is one the caller holds.
-    // `excluded(..)` names that row itself, so the assignment can read it
-    // and the conflicting row together. Here that adds to a running total
-    // rather than replacing it.
     let accumulated: i64 = insert(orders::Table)
         .values(OrdersInsert::builder().user_id(id).total(75).build())
         .on_conflict_do_update(
@@ -151,10 +142,6 @@ async fn main() {
     println!("after adding the proposed row's total: {accumulated}");
     assert_eq!(accumulated, 325);
 
-    // A `WHERE` on the `DO UPDATE` itself: the row is touched only if the
-    // condition holds, and a rejected one is not counted, which is what
-    // lets a one-row upsert's count answer "was this already done?". An
-    // unconditional `DO UPDATE` always reports 1.
     let raise_once = |total: i64| {
         insert(orders::Table)
             .values(OrdersInsert::builder().user_id(id).total(total).build())
@@ -170,14 +157,17 @@ async fn main() {
         .expect("a higher total");
     let refused = raise_once(10).execute(&pool).await.expect("a lower total");
     println!("raising the total wrote {raised_again} row(s); lowering it wrote {refused}");
-    assert_eq!((raised_again, refused), (1, 0));
+    assert_eq!(
+        (raised_again, refused),
+        (1, 0),
+        "a DO UPDATE whose WHERE rejects the row counts nothing"
+    );
 
-    // Without the predicate there is no index over `user_id` alone to
-    // infer, and the database says so rather than picking another.
-    let unqualified = insert(orders::Table)
+    let no_index_over_user_id_alone = insert(orders::Table)
         .values(OrdersInsert::builder().user_id(id).total(999).build())
         .on_conflict_do_nothing(orders::user_id)
         .execute(&pool)
-        .await;
-    println!("without the index predicate: {}", unqualified.unwrap_err());
+        .await
+        .expect_err("a bare-column target does not infer the partial index");
+    println!("without the index predicate: {no_index_over_user_id_alone}");
 }

@@ -1,6 +1,10 @@
 //! Transactions: every `.load()`/`.execute()` method is generic over
 //! `sqlx::PgExecutor`, so a `sqlx::PgTransaction` works everywhere a
 //! `&PgPool` does. Pass `&mut *tx`, exactly like plain sqlx usage.
+//!
+//! An order exists only once the user that owns it does, so the committed
+//! transaction lands both inserts together or neither. A rollback, explicit
+//! or by dropping `tx`, undoes everything since `.begin()`.
 //! Run: `cargo run -p qbrs-examples --example 15_transaction`
 
 use qbrs::prelude::*;
@@ -11,8 +15,6 @@ use qbrs_sqlx::prelude::*;
 async fn main() {
     let (pool, _db) = setup_db().await;
 
-    // Commit: an order only exists once the user that owns it does, so both
-    // inserts either land together or not at all.
     let mut tx = pool.begin().await.expect("begin transaction");
 
     let user_id: i64 = insert(users::Table)
@@ -39,9 +41,6 @@ async fn main() {
     tx.commit().await.expect("commit transaction");
     println!("committed: user {user_id} with one order");
 
-    // Rollback: an error partway through leaves neither row behind. The
-    // dropped `tx` (implicit rollback) or an explicit `.rollback()` both
-    // undo everything since `.begin()`.
     let mut tx = pool.begin().await.expect("begin transaction");
 
     let doomed_id: i64 = insert(users::Table)
@@ -62,6 +61,6 @@ async fn main() {
         .load_one(&pool)
         .await
         .expect("select rolled-back user");
-    assert_eq!(still_there, None);
+    assert_eq!(still_there, None, "a rolled-back insert leaves no row");
     println!("rolled back: user {doomed_id} was not persisted");
 }

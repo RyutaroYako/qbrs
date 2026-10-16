@@ -1,5 +1,12 @@
 //! RIGHT JOIN / FULL JOIN: the table(s) already in scope retroactively
 //! become nullable, mirroring Drizzle's `AppendToNullabilityMap` rule.
+//!
+//! `orders` enters scope not-null as the FROM table, and the RIGHT JOIN flips
+//! it to nullable before adding `users`. So `orders::total` decodes as
+//! `Option<i64>` even though it was the FROM table. A FULL JOIN makes both
+//! sides nullable. The foreign key rules out an order with no user, so only
+//! the users side produces unmatched rows here. The type
+//! `(Option<String>, Option<i64>)` still states what a FULL JOIN can produce.
 //! Run: `cargo run -p qbrs-examples --example 08_right_full_join`
 
 use qbrs::prelude::*;
@@ -11,11 +18,6 @@ async fn main() {
     let (pool, _db) = setup_db().await;
     seed(&pool).await;
 
-    // FROM orders, RIGHT JOIN users: `orders` was in scope first (from the
-    // FROM clause) as not-null, but RIGHT JOIN flips every *already*-joined
-    // table to nullable before adding the new one. So `orders::total`
-    // decodes as `Option<i64>` here even though it was the FROM table,
-    // purely because of how it ends up on the outer side of this RIGHT JOIN.
     let mut rows: Vec<(String, Option<i64>)> = select((users::email, orders::total))
         .from(orders::Table)
         .right_join(users::Table, orders::user_id.eq(users::id))
@@ -29,15 +31,11 @@ async fn main() {
     for row in &rows {
         println!("  {row:?}");
     }
-    // Dan has no orders but must still appear (RIGHT JOIN keeps every user).
-    assert!(rows.contains(&("dan@example.com".to_string(), None)));
+    assert!(
+        rows.contains(&("dan@example.com".to_string(), None)),
+        "RIGHT JOIN keeps every user, Dan with no orders included"
+    );
 
-    // FULL JOIN: both sides become nullable. To see it produce a genuinely
-    // unmatched row we'd need an order with no matching user, which the
-    // schema's FK constraint rules out. So here every row still has both
-    // sides present, but the *type* (`Option<String>, Option<i64>`) is
-    // honest about what FULL JOIN can produce in general, independent of
-    // what today's data happens to contain.
     let mut full: Vec<(Option<String>, Option<i64>)> = select((users::email, orders::total))
         .from(users::Table)
         .full_join(orders::Table, orders::user_id.eq(users::id))
@@ -51,5 +49,8 @@ async fn main() {
     for row in &full {
         println!("  {row:?}");
     }
-    assert!(full.contains(&(Some("dan@example.com".to_string()), None)));
+    assert!(
+        full.contains(&(Some("dan@example.com".to_string()), None)),
+        "FULL JOIN keeps the user with no orders"
+    );
 }

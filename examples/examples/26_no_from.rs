@@ -2,7 +2,9 @@
 //! row it reads, such as `now()`, `current_setting('..')`, or an advisory
 //! lock. The seed goes straight to a terminal, and what makes that safe is
 //! the empty scope: a column has nowhere to resolve, so naming one does not
-//! compile.
+//! compile, as `tests/compile-bench/trybuild-drafts/column_without_from.rs.draft`
+//! shows. An advisory lock serialises a job across app instances with no
+//! table involved, just a function of a bound key.
 //! Run: `cargo run -p qbrs-examples --example 26_no_from`
 
 use qbrs::prelude::*;
@@ -13,9 +15,8 @@ use qbrs_sqlx::prelude::*;
 async fn main() {
     let (pool, _db) = setup_db().await;
 
-    // Serialising a job across app instances: no table is involved, just a
-    // function of a bound key. A session lock belongs to the connection
-    // that took it, so the run holds one for both statements.
+    // Not `&pool`: a session lock belongs to the connection that took it, and
+    // the pool could hand the unlock a different one.
     let mut conn = pool.acquire().await.expect("one connection");
     let job_key = 90_210_i64;
 
@@ -28,7 +29,6 @@ async fn main() {
     assert!(taken);
 
     if taken {
-        // ... the work this lock is serialising ...
         let released: bool = select(sql!(Bool, "pg_advisory_unlock(?)", job_key))
             .load_one(&mut *conn)
             .await
@@ -39,7 +39,6 @@ async fn main() {
     }
     drop(conn);
 
-    // A row of several computed values reads like any other row.
     let (zone, sum): (String, i64) = select((
         sql!(Text, "current_setting('TimeZone')"),
         sql!(BigInt, "(? + ?)", 20i64, 22i64),
@@ -51,9 +50,4 @@ async fn main() {
     .into_tuple();
     println!("server time zone {zone}, and 20 + 22 = {sum}");
     assert_eq!(sum, 42);
-
-    // A column would have nowhere to resolve, so this does not compile:
-    //
-    //     select((users::id,)).load(&pool)
-    //     // error: `users::Table` is not available in this query's scope
 }

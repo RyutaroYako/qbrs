@@ -3,6 +3,10 @@
 //! one plus its own table, which is what makes the outer column reference
 //! legal, and what tags the resulting condition with the tables it needs, so
 //! it can only be filtered back onto a query that has them.
+//!
+//! `.correlated(..)` borrows the outer query, so `users_query` survives to be
+//! filtered with the condition built from it. A subquery is a full builder,
+//! so `GROUP BY` and `HAVING` answer "users with more than one order".
 //! Run: `cargo run -p qbrs-examples --example 18_correlated_exists`
 
 use qbrs::prelude::*;
@@ -18,8 +22,6 @@ async fn main() {
         .from(users::Table)
         .order_by(users::id.asc());
 
-    // `.correlated(..)` borrows the outer query, so `users_query` survives to
-    // be filtered with the condition built from it.
     let has_order = users_query
         .correlated(orders::Table, (orders::id,))
         .filter(orders::user_id.eq(users::id));
@@ -44,12 +46,13 @@ async fn main() {
         .expect("users with no order")
         .into_tuples();
     println!("users with none: {without:?}");
-    assert!(without.contains(&("dan@example.com".to_string(),)));
+    assert!(
+        without.contains(&("dan@example.com".to_string(),)),
+        "Dan has no orders"
+    );
 
-    // A subquery is a full builder: `GROUP BY` and `HAVING` are available,
-    // which is what the textbook "users with more than one order" needs.
-    // The selection has to be the grouping key: `EXISTS` ignores what a
-    // subquery selects, but the database still checks it against `GROUP BY`.
+    // Not `(orders::id,)` as above: `EXISTS` ignores what a subquery selects,
+    // but the database still checks the selection against `GROUP BY`.
     let more_than_one = users_query
         .correlated(orders::Table, (orders::user_id,))
         .filter(orders::user_id.eq(users::id))
@@ -63,5 +66,8 @@ async fn main() {
         .expect("repeat customers")
         .into_tuples();
     println!("users with more than one order: {repeat:?}");
-    assert!(repeat.contains(&("ada@example.com".to_string(),)));
+    assert!(
+        repeat.contains(&("ada@example.com".to_string(),)),
+        "Ada has two orders"
+    );
 }

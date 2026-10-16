@@ -35,7 +35,9 @@ async fn main() {
         .into_tuples();
 
     println!("orders paired with a sibling order from the same user: {pairs:?}");
-    // Ada has two orders, so each is the other's sibling; Dan has none and
-    // Grace has exactly one, so neither appears on either side.
-    assert_eq!(pairs.len(), 2);
+    assert_eq!(
+        pairs.len(),
+        2,
+        "only Ada has two orders, each the other's sibling"
+    );
 }

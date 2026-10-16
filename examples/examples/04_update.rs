@@ -1,6 +1,14 @@
 //! UPDATE: only the fields a request actually set are sent, and a nullable
 //! column tells "leave alone" apart from "set to NULL". That is the
 //! builder's `.column(value)` vs `.column_null()`.
+//!
+//! A request field that was not sent is absent from the rendered SQL. It is
+//! neither set to NULL nor rewritten as a redundant `email = email`.
+//! `.set_to(..)` assigns a value the database computes, which never passes
+//! through this process. The struct literal spells "clear it" and "leave it
+//! alone" as `Some(None)` and `None`. `null::<T>()` is that NULL as an
+//! assignment, where an `Option` has no `None` to be. A column assigned twice
+//! keeps the last assignment.
 //! Run: `cargo run -p qbrs-examples --example 04_update`
 
 use qbrs::prelude::*;
@@ -20,16 +28,13 @@ async fn main() {
         .expect("query ada")
         .expect("ada exists");
 
-    // A request's fields, mapped across one for one: `email` was not sent,
-    // so it is absent from the rendered SQL. It is not set to NULL, and not
-    // left unchanged via a redundant `email = email` self-assignment.
-    let requested_email: Option<String> = None;
+    let email_not_in_request: Option<String> = None;
     let requested_name: Option<String> = Some("Ada, Countess of Lovelace".into());
     let affected = update(users::Table)
         .set(
             Assignments::from_row(
                 UsersUpdate::builder()
-                    .email(requested_email)
+                    .email(email_not_in_request)
                     .display_name(requested_name)
                     .build(),
             )
@@ -41,10 +46,7 @@ async fn main() {
         .expect("update display_name");
     println!("renamed {affected} row(s)");
 
-    // An assignment the database computes: the value never passes through
-    // this process, so `now()` is the database's clock and a counter can be
-    // bumped without reading it first.
-    let stamped = update(users::Table)
+    let lowercased_in_database = update(users::Table)
         .set(
             Assignments::from_row(UsersUpdate {
                 display_name: Some(Some("Ada L.".into())),
@@ -56,12 +58,9 @@ async fn main() {
         .filter(users::id.eq(ada_id))
         .execute(&pool)
         .await
-        .expect("stamp");
-    println!("normalised {stamped} row(s)");
+        .expect("lowercase email in the database");
+    println!("normalised {lowercased_in_database} row(s)");
 
-    // Clearing the column is its own call, distinct from having nothing to
-    // say about it. The struct literal spells those same two states
-    // `Some(None)` and `None`.
     let cleared = update(users::Table)
         .set(
             Assignments::from_row(UsersUpdate::builder().display_name_null().build())
@@ -75,9 +74,6 @@ async fn main() {
     println!("after clearing: {cleared:?}");
     assert_eq!(cleared, vec![None]);
 
-    // The same NULL as an assignment rather than a request field, which is
-    // where an `Option` has no `None` to be. Assigning a column twice keeps
-    // the last assignment, so this one wins over the request's.
     let relabelled = update(users::Table)
         .set(
             Assignments::from_row(UsersUpdate {
@@ -92,6 +88,10 @@ async fn main() {
         .load(&pool)
         .await
         .expect("null out display_name");
-    assert_eq!(relabelled, vec![None]);
+    assert_eq!(
+        relabelled,
+        vec![None],
+        "the later NULL assignment wins over the request's value"
+    );
     println!("still NULL after a layered assignment: {relabelled:?}");
 }
